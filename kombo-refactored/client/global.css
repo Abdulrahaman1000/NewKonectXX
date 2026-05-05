@@ -1,0 +1,188 @@
+/** @import must precede all other statements */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /**
+   * Tailwind CSS theme - Dark Luxury Premium
+   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
+   * A different format will require also updating the theme in tailwind.config.ts.
+  */
+  :root {
+    /* Dark Luxury Palette */
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 8%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 8%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Gold/Amber Premium Accent */
+    --primary: 45 93% 47%;
+    --primary-foreground: 240 10% 3.9%;
+
+    /* Subtle Steel Blue Secondary */
+    --secondary: 220 13% 20%;
+    --secondary-foreground: 45 93% 47%;
+
+    --muted: 220 13% 25%;
+    --muted-foreground: 0 0% 70%;
+
+    /* Gold accent for CTAs and highlights */
+    --accent: 45 93% 47%;
+    --accent-foreground: 240 10% 3.9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 13% 20%;
+    --input: 220 13% 15%;
+    --ring: 45 93% 47%;
+
+    --radius: 0.75rem;
+
+    /* Additional luxury colors */
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+
+    --sidebar-background: 240 10% 5%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 45 93% 47%;
+    --sidebar-primary-foreground: 240 10% 3.9%;
+    --sidebar-accent: 220 13% 20%;
+    --sidebar-accent-foreground: 45 93% 47%;
+    --sidebar-border: 220 13% 20%;
+    --sidebar-ring: 45 93% 47%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', system-ui, sans-serif;
+    @apply font-bold tracking-tight;
+  }
+
+  :where(p, span, li, a, button, label, td, th) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  pre,
+  code {
+    overflow-x: auto;
+    white-space: pre;
+  }
+}
+
+@layer components {
+  /* Glass Morphism Cards */
+  .glass-card {
+    @apply bg-[rgba(255,255,255,0.05)] backdrop-blur-xl border border-[rgba(255,255,255,0.1)] rounded-xl;
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300 hover:bg-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.15)];
+  }
+
+  /* Premium Button Base */
+  .btn-premium {
+    @apply px-8 py-3 rounded-lg font-semibold transition-all duration-300 tracking-wide;
+  }
+
+  .btn-primary {
+    @apply btn-premium bg-primary text-primary-foreground hover:bg-[#f0b000] shadow-lg hover:shadow-xl hover:shadow-[#ffd700]/20;
+  }
+
+  .btn-secondary {
+    @apply btn-premium bg-secondary text-secondary-foreground hover:bg-[#2a3a4a] border border-accent/30;
+  }
+
+  .btn-ghost {
+    @apply btn-premium text-foreground hover:bg-[rgba(255,255,255,0.1)] border border-[rgba(255,255,255,0.2)];
+  }
+
+  /* Section Spacing */
+  .section-padding {
+    @apply px-4 sm:px-6 md:px-8 py-16 sm:py-20 md:py-24;
+  }
+
+  /* Container */
+  .container-premium {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Gradient Text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-accent to-[#ffed4e] bg-clip-text text-transparent;
+  }
+
+  /* Smooth animations */
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade-in-down {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.8;
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.6s ease-out;
+  }
+
+  .animate-fade-in-down {
+    animation: fade-in-down 0.6s ease-out;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  .input-base {
+    @apply w-full px-4 py-2.5 rounded-lg bg-[rgba(255,255,255,0.04)] border border-white/10 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/40 transition-colors;
+  }
+
+  .skeleton {
+    @apply animate-pulse bg-white/5 rounded;
+  }
+}
