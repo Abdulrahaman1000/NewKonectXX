@@ -1,7 +1,11 @@
-import type { Testimonial } from '@/types/testimonial';
-import { getPublishedTestimonials } from '@/data/testimonials';
+import type { Testimonial } from "@/types/testimonial";
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
 
 export async function fetchTestimonials(): Promise<Testimonial[]> {
-  // TODO: return apiFetch<Testimonial[]>('/api/testimonials');
-  return Promise.resolve(getPublishedTestimonials());
+  const res = await apiFetch<ApiResponse<Testimonial[]>>("/api/testimonials");
+  return res.data;
 }

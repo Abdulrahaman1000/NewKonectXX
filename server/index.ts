@@ -1,6 +1,11 @@
 import express from "express";
 import cors from "cors";
 import { handleDemo } from "./routes/demo";
+import combosRouter from "./routes/combos";
+import settingsRouter from "./routes/settings";
+import heroSlidesRouter from "./routes/heroSlides";
+import testimonialsRouter from "./routes/testimonials";
+import faqsRouter from "./routes/faqs";
 import { connectDB } from "./db";
 
 export function createServer() {
@@ -14,13 +19,19 @@ export function createServer() {
   // Database
   connectDB();
 
-  // Example API routes
+  // Example/built-in routes
   app.get("/api/ping", (_req, res) => {
     const ping = process.env.PING_MESSAGE ?? "ping";
     res.json({ message: ping });
   });
-
   app.get("/api/demo", handleDemo);
+
+  // API routes
+  app.use("/api/combos", combosRouter);
+  app.use("/api/settings", settingsRouter);
+  app.use("/api/hero-slides", heroSlidesRouter);
+  app.use("/api/testimonials", testimonialsRouter);
+  app.use("/api/faqs", faqsRouter);
 
   return app;
 }

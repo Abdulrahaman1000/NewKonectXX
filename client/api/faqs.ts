@@ -1,7 +1,11 @@
-import type { FAQ } from '@/types/faq';
-import { getPublishedFaqs } from '@/data/faqs';
+import type { FAQ } from "@/types/faq";
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
 
 export async function fetchFaqs(): Promise<FAQ[]> {
-  // TODO: return apiFetch<FAQ[]>('/api/faqs');
-  return Promise.resolve(getPublishedFaqs());
+  const res = await apiFetch<ApiResponse<FAQ[]>>("/api/faqs");
+  return res.data;
 }

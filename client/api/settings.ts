@@ -1,7 +1,11 @@
-import type { SiteSettings } from '@/types/settings';
-import { SETTINGS } from '@/data/settings';
+import type { SiteSettings } from "@/types/settings";
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
 
 export async function fetchSettings(): Promise<SiteSettings> {
-  // TODO: return apiFetch<SiteSettings>('/api/settings');
-  return Promise.resolve(SETTINGS);
+  const res = await apiFetch<ApiResponse<SiteSettings>>("/api/settings");
+  return res.data;
 }

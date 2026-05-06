@@ -16,6 +16,7 @@ import { FinalCTA } from '@/sections/FinalCTA';
 import { fetchCombos, fetchFeaturedCombo } from '@/api/combos';
 import { fetchTestimonials } from '@/api/testimonials';
 import { fetchFaqs } from '@/api/faqs';
+import { fetchHeroSlides } from '@/api/heroSlides';
 import { useSettings } from '@/contexts/SettingsContext';
 
 export default function Index() {
@@ -41,6 +42,11 @@ export default function Index() {
     queryFn: fetchFaqs,
   });
 
+  const { data: heroSlides = [] } = useQuery({
+    queryKey: ['heroSlides'],
+    queryFn: fetchHeroSlides,
+  });
+
   // Wait for settings before first render — they drive most sections.
   if (settingsLoading || !settings) {
     return (
@@ -57,7 +63,7 @@ export default function Index() {
       <CartDrawer />
 
       <HeroCarousel
-        slides={settings.heroSlides}
+        slides={heroSlides}
         featuredCombo={featuredCombo ?? null}
         whatsappLink={settings.contact.whatsappLink}
         rating={settings.trustStats.rating}
