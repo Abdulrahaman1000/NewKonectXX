@@ -6,6 +6,7 @@ import settingsRouter from "./routes/settings";
 import heroSlidesRouter from "./routes/heroSlides";
 import testimonialsRouter from "./routes/testimonials";
 import faqsRouter from "./routes/faqs";
+import authRouter from "./routes/auth";
 import { connectDB } from "./db";
 
 export function createServer() {
@@ -27,6 +28,7 @@ export function createServer() {
   app.get("/api/demo", handleDemo);
 
   // API routes
+  app.use("/api/auth", authRouter);
   app.use("/api/combos", combosRouter);
   app.use("/api/settings", settingsRouter);
   app.use("/api/hero-slides", heroSlidesRouter);

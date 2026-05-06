@@ -1,33 +1,28 @@
 /**
- * Admin Dashboard — skeleton.
+ * Admin Dashboard.
  *
- * Currently shows the structure of what the admin panel will look like.
- * No real data — needs backend + auth before this becomes functional.
+ * Now wired to real auth: shows the logged-in admin's name and provides
+ * a logout button. The "Skeleton mode" warning is gone — auth is real.
  *
- * When backend lands, replace the mock numbers with real queries:
- *   const { data: stats } = useQuery({ queryKey: ['admin','stats'], queryFn: fetchAdminStats });
- *   const { data: recentOrders } = useQuery({ queryKey: ['admin','orders'], queryFn: fetchRecentOrders });
- *
- * Also: protect this route. Add ProtectedRoute wrapper checking for admin role.
+ * Uses an admin-only top bar instead of the public Header (no "Order Now"
+ * button on admin pages).
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
-  AlertTriangle,
   HelpCircle,
+  LogOut,
   Package,
   Settings,
   ShoppingBag,
   Users,
 } from 'lucide-react';
-import { Header } from '@/components/Header';
-import { Footer } from '@/components/Footer';
-import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
+import { useAuth } from '@/contexts/AuthContext';
 import { fetchCombos } from '@/api/combos';
 import { formatNaira } from '@/lib/format';
 
-// Mock stats — replace with real API call
 const MOCK_STATS = {
   ordersToday: 0,
   revenueToday: 0,
@@ -44,33 +39,62 @@ const QUICK_LINKS = [
 ];
 
 export default function AdminDashboard() {
+  const { user, logout } = useAuth();
   const { data: combos = [] } = useQuery({ queryKey: ['combos'], queryFn: fetchCombos });
+
+  const handleLogout = () => {
+    logout();
+    // useAuth.logout() clears state; AdminProtectedRoute will redirect to /admin/login
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <SEO title="Admin Dashboard" />
-      <Header />
-      <CartDrawer />
+
+      {/* Admin top bar */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">
+                Admin
+              </p>
+            </div>
+          </Link>
+
+          <div className="flex items-center gap-3">
+            <Link
+              to="/"
+              className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors"
+            >
+              View store
+            </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
 
       <main className="flex-1 section-padding py-10">
         <div className="container-premium">
-          <div className="flex items-start justify-between gap-4 mb-2">
-            <div>
-              <h1 className="text-2xl md:text-3xl font-black text-white mb-1">Admin Dashboard</h1>
-              <p className="text-white/45 text-sm">Manage your store</p>
-            </div>
-          </div>
-
-          {/* Auth notice — remove after auth is wired */}
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 flex items-start gap-3 mb-8">
-            <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <p className="font-semibold text-amber-200 mb-1">Skeleton mode</p>
-              <p className="text-amber-200/70 text-xs">
-                This page is a UI skeleton. Authentication, role checks, and real data hookups will be wired up
-                when the backend is built. Do not deploy this route to production without securing it.
-              </p>
-            </div>
+          <div className="mb-8">
+            <p className="text-xs uppercase tracking-[0.28em] text-primary/70 font-bold mb-2">
+              {user?.role === 'superadmin' ? 'Super Admin' : 'Admin'}
+            </p>
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-1">
+              Welcome back, {user?.name?.split(' ')[0] ?? 'there'} 👋
+            </h1>
+            <p className="text-white/45 text-sm">Here's what's happening with your store today.</p>
           </div>
 
           {/* Stats */}
@@ -153,10 +177,12 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
+
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
         </div>
       </main>
-
-      <Footer />
     </div>
   );
 }

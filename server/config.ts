@@ -34,8 +34,11 @@ export const config = {
   // Database
   mongodbUri: required("MONGODB_URI"),
 
+  // Auth
+  jwtSecret: required("JWT_SECRET"),
+  jwtExpiresIn: optional("JWT_EXPIRES_IN", "7d"),
+
   // Add more vars here as you go:
-  // jwtSecret: required("JWT_SECRET"),
   // paystackSecretKey: required("PAYSTACK_SECRET_KEY"),
   // cloudinaryCloudName: required("CLOUDINARY_CLOUD_NAME"),
 };
