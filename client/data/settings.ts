@@ -16,9 +16,7 @@ const promoEnd = new Date();
 promoEnd.setDate(promoEnd.getDate() + 5);
 promoEnd.setHours(23, 59, 59, 0);
 
-const WHATSAPP_NUMBER = '+2348142746379'; // ← REPLACE with real number before launch
-
-
+const WHATSAPP_NUMBER = '+2348142746379';
 const whatsappDigits = WHATSAPP_NUMBER.replace(/\D/g, '');
 
 export const SETTINGS: SiteSettings = {
@@ -39,24 +37,25 @@ export const SETTINGS: SiteSettings = {
   promo: {
     endsAt: promoEnd.toISOString(),
     enabled: true,
-    headline: 'Price goes back to ₦105,000 when timer hits zero',
+    headline: 'Price goes back to NGN105,000 when timer hits zero',
     subline: 'Only 15 combo packs left at this price',
   },
 
   contact: {
     whatsappNumber: WHATSAPP_NUMBER,
     whatsappLink: `https://wa.me/${whatsappDigits}`,
-    email: 'support@smartcombo.ng',
-    phone: '+234 (0) 123 456 7890',  // ← REPLACE with real phone before launch
+    email: 'adekeyeolawale123@gmail.com',
+    phone: '+234 814 274 6379',
     address: 'Ilorin, Kwara State, Nigeria',
   },
 
   video: {
-    // ← REPLACE with your actual product demo video before launch
-    url: 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1',
+    // Will be uploadable from admin panel after backend is built.
+    // For now, no video shown until you upload one.
+    url: '',
     thumbnail: '/images/hero_image.avif',
     title: 'Smart Combo — Product Demo',
-    duration: '2:30 min',
+    duration: '',
   },
 
   trustStats: {

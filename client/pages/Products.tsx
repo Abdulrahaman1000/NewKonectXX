@@ -4,6 +4,7 @@ import { ChevronRight, ShoppingBag } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
+import { ProductImageSlider } from '@/components/shared/ProductImageSlider';
 import { fetchCombos } from '@/api/combos';
 import { useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -45,10 +46,10 @@ export default function Products() {
           </div>
 
           {isLoading && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3].map((i) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
+              {[1, 2].map((i) => (
                 <div key={i} className="rounded-2xl border border-white/10 overflow-hidden">
-                  <div className="skeleton aspect-[4/3]" />
+                  <div className="skeleton h-64" />
                   <div className="p-5 space-y-3">
                     <div className="skeleton h-5 w-3/4" />
                     <div className="skeleton h-4 w-1/2" />
@@ -67,53 +68,75 @@ export default function Products() {
           )}
 
           {!isLoading && combos && combos.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div
+              className={
+                combos.length === 1
+                  ? 'flex justify-center'
+                  : 'grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto'
+              }
+            >
               {combos.map((combo) => {
-                const { percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
-                const heroImg = combo.items[0]?.images[0]?.url;
+                const { saving, percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
                 return (
                   <article
                     key={combo.id}
-                    className="rounded-2xl border border-white/10 hover:border-primary/30 transition-colors overflow-hidden flex flex-col"
+                    className={`rounded-2xl border border-primary/20 hover:border-primary/40 transition-colors overflow-hidden flex flex-col ${
+                      combos.length === 1 ? 'w-full max-w-3xl' : ''
+                    }`}
                     style={{ background: 'rgba(255,255,255,0.02)' }}
                   >
-                    {heroImg && (
-                      <div className="relative aspect-[4/3] overflow-hidden">
-                        <img
-                          src={heroImg}
-                          alt={combo.name}
-                          className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
-                        />
-                        <span className="absolute top-3 left-3 text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/90 text-primary-foreground">
-                          {combo.badge}
-                        </span>
-                        <span className="absolute top-3 right-3 text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/90 text-emerald-50">
-                          {percent}% OFF
-                        </span>
-                      </div>
-                    )}
+                    <div
+                      className="px-6 py-4 flex items-center justify-between border-b border-primary/15"
+                      style={{
+                        background: 'linear-gradient(to right, rgba(255,215,0,0.06), transparent)',
+                      }}
+                    >
+                      <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-primary/20 text-primary border border-primary/30">
+                        {combo.badge}
+                      </span>
+                      <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                        {percent}% OFF
+                      </span>
+                    </div>
+
+                    <div className="p-5 grid grid-cols-3 gap-3 bg-black/20">
+                      {combo.items.map((item) => (
+                        <div key={item.id} className="flex flex-col gap-2">
+                          <ProductImageSlider images={item.images} productName={item.name} />
+                          <p className="text-[9px] font-bold text-primary/80 text-center truncate">
+                            {item.badge}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
                     <div className="p-5 flex-1 flex flex-col">
-                      <h2 className="text-lg font-black text-white mb-1">{combo.name}</h2>
-                      <p className="text-sm text-white/45 mb-3">{combo.tagline}</p>
+                      <h2 className="text-xl font-black text-white mb-1">{combo.name}</h2>
+                      <p className="text-sm text-white/50 mb-3">{combo.tagline}</p>
                       <p className="text-xs text-white/40 mb-4">
                         Includes: {combo.items.map((i) => i.name).join(', ')}
                       </p>
-                      <div className="flex items-baseline gap-2 mb-4">
-                        <span className="text-2xl font-black text-primary">
+
+                      <div className="flex items-baseline gap-2 mb-2">
+                        <span className="text-3xl font-black text-primary">
                           {formatNaira(combo.totalPrice)}
                         </span>
                         <span className="text-sm text-white/30 line-through">
                           {formatNaira(combo.originalPrice)}
                         </span>
                       </div>
-                      <p className="text-[11px] text-amber-400/80 mb-4">
-                        Only {combo.stockLeft} packs remaining
+                      <p className="text-xs text-emerald-400 font-semibold mb-3">
+                        You save {formatNaira(saving)}
                       </p>
+                      <p className="text-[11px] text-amber-400/80 mb-4">
+                        ⚡ Only {combo.stockLeft} packs remaining
+                      </p>
+
                       <div className="mt-auto space-y-2">
                         <button
                           type="button"
                           onClick={() => handleAddToCart(combo)}
-                          className="btn-primary w-full flex items-center justify-center gap-2 group py-2.5 font-bold text-sm"
+                          className="btn-primary w-full flex items-center justify-center gap-2 group py-3 font-bold text-sm"
                         >
                           <ShoppingBag className="w-4 h-4" />
                           Add to Cart
@@ -129,12 +152,11 @@ export default function Products() {
                             Order via WhatsApp
                           </a>
                         )}
-                        {/* Future: Link to /combos/:slug for full detail page */}
                         <Link
-                          to={`/`}
+                          to="/"
                           className="block text-center text-xs text-white/40 hover:text-primary py-1 transition-colors"
                         >
-                          View details →
+                          View full details →
                         </Link>
                       </div>
                     </div>

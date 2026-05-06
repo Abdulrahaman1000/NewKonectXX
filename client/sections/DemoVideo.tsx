@@ -9,6 +9,9 @@ interface Props {
 export function DemoVideo({ video }: Props) {
   const [showModal, setShowModal] = useState(false);
 
+  // Hide entire section when no video uploaded yet.
+  if (!video.url) return null;
+
   return (
     <>
       {showModal && (
@@ -93,9 +96,11 @@ export function DemoVideo({ video }: Props) {
                 <p className="text-white font-bold text-lg">{video.title}</p>
                 <p className="text-white/50 text-sm">See the products in action</p>
               </div>
-              <span className="hidden sm:flex items-center gap-2 text-white/40 text-xs">
-                <Play className="w-3 h-3" /> {video.duration}
-              </span>
+              {video.duration && (
+                <span className="hidden sm:flex items-center gap-2 text-white/40 text-xs">
+                  <Play className="w-3 h-3" /> {video.duration}
+                </span>
+              )}
             </div>
           </button>
         </div>
