@@ -1,11 +1,9 @@
 /**
  * Admin Dashboard.
  *
- * Now wired to real auth: shows the logged-in admin's name and provides
- * a logout button. The "Skeleton mode" warning is gone — auth is real.
- *
- * Uses an admin-only top bar instead of the public Header (no "Order Now"
- * button on admin pages).
+ * Shows real stats from /api/admin/dashboard/stats.
+ * Orders tile links to /admin/orders.
+ * Other tiles still placeholder until their phases ship.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -21,30 +19,25 @@ import {
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchCombos } from '@/api/combos';
+import { getDashboardStats } from '@/api/adminOrders';
 import { formatNaira } from '@/lib/format';
-
-const MOCK_STATS = {
-  ordersToday: 0,
-  revenueToday: 0,
-  pendingOrders: 0,
-  customers: 0,
-};
-
-const QUICK_LINKS = [
-  { Icon: ShoppingBag, label: 'Combos',       href: '#combos',       desc: 'Add, edit, and manage combo products' },
-  { Icon: Package,     label: 'Orders',       href: '#orders',       desc: 'View, fulfill, and update orders' },
-  { Icon: Users,       label: 'Customers',    href: '#customers',    desc: 'Customer list and order history' },
-  { Icon: HelpCircle,  label: 'FAQs',         href: '#faqs',         desc: 'Manage FAQ entries shown on the site' },
-  { Icon: Settings,    label: 'Site Settings', href: '#settings',    desc: 'Hero slides, promo, contact info, video' },
-];
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
-  const { data: combos = [] } = useQuery({ queryKey: ['combos'], queryFn: fetchCombos });
+
+  const { data: combos = [] } = useQuery({
+    queryKey: ['combos'],
+    queryFn: fetchCombos,
+  });
+
+  const { data: stats } = useQuery({
+    queryKey: ['admin-stats'],
+    queryFn: getDashboardStats,
+    refetchInterval: 30000, // refresh every 30s
+  });
 
   const handleLogout = () => {
     logout();
-    // useAuth.logout() clears state; AdminProtectedRoute will redirect to /admin/login
   };
 
   return (
@@ -60,19 +53,11 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
-              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">
-                Admin
-              </p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
             </div>
           </Link>
-
           <div className="flex items-center gap-3">
-            <Link
-              to="/"
-              className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors"
-            >
-              View store
-            </Link>
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
             <button
               type="button"
               onClick={handleLogout}
@@ -99,29 +84,50 @@ export default function AdminDashboard() {
 
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-            <StatCard label="Orders today" value={MOCK_STATS.ordersToday.toString()} />
-            <StatCard label="Revenue today" value={formatNaira(MOCK_STATS.revenueToday)} />
-            <StatCard label="Pending orders" value={MOCK_STATS.pendingOrders.toString()} />
-            <StatCard label="Customers" value={MOCK_STATS.customers.toString()} />
+            <StatCard label="Orders today" value={(stats?.ordersToday ?? 0).toString()} />
+            <StatCard label="Revenue today" value={formatNaira(stats?.revenueToday ?? 0)} />
+            <StatCard label="Pending orders" value={(stats?.pendingOrders ?? 0).toString()} />
+            <StatCard label="Customers" value={(stats?.customers ?? 0).toString()} />
           </div>
 
           {/* Quick links */}
           <h2 className="text-base font-bold text-white mb-4">Manage</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
-            {QUICK_LINKS.map(({ Icon, label, desc }) => (
-              <button
-                key={label}
-                type="button"
-                className="text-left p-5 rounded-2xl border border-white/10 hover:border-primary/40 transition-colors"
-                style={{ background: 'rgba(255,255,255,0.02)' }}
-              >
-                <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center mb-3">
-                  <Icon className="w-4 h-4 text-primary" />
-                </div>
-                <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
-                <p className="text-xs text-white/50">{desc}</p>
-              </button>
-            ))}
+            <TileLink
+              to="/admin/orders"
+              Icon={Package}
+              label="Orders"
+              desc="View, fulfill, and update orders"
+              badge={stats?.pendingOrders ?? 0}
+            />
+            <TileLink
+              to="#combos"
+              Icon={ShoppingBag}
+              label="Combos"
+              desc="Add, edit, and manage combo products"
+              disabled
+            />
+            <TileLink
+              to="#customers"
+              Icon={Users}
+              label="Customers"
+              desc="Customer list and order history"
+              disabled
+            />
+            <TileLink
+              to="#faqs"
+              Icon={HelpCircle}
+              label="FAQs"
+              desc="Manage FAQ entries shown on the site"
+              disabled
+            />
+            <TileLink
+              to="#settings"
+              Icon={Settings}
+              label="Site Settings"
+              desc="Hero slides, promo, contact info, video"
+              disabled
+            />
           </div>
 
           {/* Combos table preview */}
@@ -196,5 +202,68 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] uppercase tracking-widest text-white/40 mb-1">{label}</p>
       <p className="text-2xl font-black text-white tabular-nums">{value}</p>
     </div>
+  );
+}
+
+function TileLink({
+  to,
+  Icon,
+  label,
+  desc,
+  disabled,
+  badge,
+}: {
+  to: string;
+  Icon: any;
+  label: string;
+  desc: string;
+  disabled?: boolean;
+  badge?: number;
+}) {
+  const content = (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+          <Icon className="w-4 h-4 text-primary" />
+        </div>
+        {!!badge && badge > 0 && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+            {badge} pending
+          </span>
+        )}
+        {disabled && (
+          <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">
+            Soon
+          </span>
+        )}
+      </div>
+      <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
+      <p className="text-xs text-white/50">{desc}</p>
+    </>
+  );
+
+  const baseCls = 'block text-left p-5 rounded-2xl border transition-colors';
+  const enabledCls = 'border-white/10 hover:border-primary/40 cursor-pointer';
+  const disabledCls = 'border-white/5 opacity-50 cursor-not-allowed';
+
+  if (disabled) {
+    return (
+      <div
+        className={`${baseCls} ${disabledCls}`}
+        style={{ background: 'rgba(255,255,255,0.02)' }}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      to={to}
+      className={`${baseCls} ${enabledCls}`}
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      {content}
+    </Link>
   );
 }

@@ -21,6 +21,8 @@ import OrderTracking from './pages/OrderTracking';
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminLogin from './pages/AdminLogin';
+import AdminOrders from './pages/AdminOrders';
+import AdminOrderDetail from './pages/AdminOrderDetail';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
 import Shipping from './pages/Shipping';
@@ -64,6 +66,22 @@ const App = () => (
                     element={
                       <AdminProtectedRoute>
                         <AdminDashboard />
+                      </AdminProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/orders"
+                    element={
+                      <AdminProtectedRoute>
+                        <AdminOrders />
+                      </AdminProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/orders/:id"
+                    element={
+                      <AdminProtectedRoute>
+                        <AdminOrderDetail />
                       </AdminProtectedRoute>
                     }
                   />
