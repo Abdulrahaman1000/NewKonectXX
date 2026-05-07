@@ -1,10 +1,17 @@
+/**
+ * Order Tracking page.
+ *
+ * Customer enters orderNumber + phone to look up an order.
+ * Now wired to the real /api/orders/track endpoint.
+ */
+
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Loader2, Package, Search } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
-import { fetchOrderByNumber } from '@/api/orders';
+import { trackOrder } from '@/api/orders';
 import { formatNaira } from '@/lib/format';
 import type { Order, OrderStatus } from '@/types/order';
 import { toast } from 'sonner';
@@ -32,8 +39,13 @@ export default function OrderTracking() {
     e.preventDefault();
     setLoading(true);
     try {
-      const result = await fetchOrderByNumber(orderNumber.trim(), phone.trim());
-      setOrder(result);
+      const result = await trackOrder(orderNumber.trim(), phone.trim());
+      if (!result) {
+        toast.error('No order matches those details');
+        setOrder(null);
+      } else {
+        setOrder(result);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Order not found';
       toast.error(msg);
@@ -43,12 +55,9 @@ export default function OrderTracking() {
     }
   };
 
-  // Auto-search if `order` came from query string
   useEffect(() => {
-    if (initialOrder && phone) {
-      // intentionally not auto-firing without a phone number
-    }
-  }, [initialOrder, phone]);
+    // Auto-fill order number from URL if present, but require user to add phone
+  }, [initialOrder]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -77,8 +86,8 @@ export default function OrderTracking() {
                 required
                 value={orderNumber}
                 onChange={(e) => setOrderNumber(e.target.value)}
-                className="input-base"
-                placeholder="SC-2026-001234"
+                className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors"
+                placeholder="SC-2026-000001"
               />
             </label>
 
@@ -89,8 +98,8 @@ export default function OrderTracking() {
                 required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="input-base"
-                placeholder="08012345678"
+                className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors"
+                placeholder="+2348012345678"
               />
             </label>
 
@@ -135,7 +144,7 @@ export default function OrderTracking() {
                     <li key={i} className="flex items-start gap-3 text-sm">
                       <Package className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                       <div className="flex-1">
-                        <p className="text-white/85">{item.comboName}</p>
+                        <p className="text-white/85">{item.name}</p>
                         <p className="text-white/40 text-xs">Qty: {item.quantity}</p>
                       </div>
                       <span className="text-white/70 tabular-nums">{formatNaira(item.subtotal)}</span>

@@ -7,6 +7,7 @@ import heroSlidesRouter from "./routes/heroSlides";
 import testimonialsRouter from "./routes/testimonials";
 import faqsRouter from "./routes/faqs";
 import authRouter from "./routes/auth";
+import ordersRouter from "./routes/orders";
 import { connectDB } from "./db";
 
 export function createServer() {
@@ -20,7 +21,7 @@ export function createServer() {
   // Database
   connectDB();
 
-  // Example/built-in routes
+  // Built-in routes
   app.get("/api/ping", (_req, res) => {
     const ping = process.env.PING_MESSAGE ?? "ping";
     res.json({ message: ping });
@@ -34,6 +35,7 @@ export function createServer() {
   app.use("/api/hero-slides", heroSlidesRouter);
   app.use("/api/testimonials", testimonialsRouter);
   app.use("/api/faqs", faqsRouter);
+  app.use("/api/orders", ordersRouter);
 
   return app;
 }

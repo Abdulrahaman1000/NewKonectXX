@@ -1,29 +1,66 @@
 /**
- * Orders API — stubs until backend exists.
- * These will throw until you implement the backend.
- * That's intentional: it forces you to wire them up before launch.
+ * Orders API — frontend client.
+ *
+ * Calls real /api/orders endpoints.
+ * The backend wants a slim payload: { comboId, quantity } per item.
+ * The cart stores richer items, so we map them down before sending.
  */
 
-import type { Order, OrderStatus, ShippingAddress, PaymentMethod, CartItem } from '@/types/order';
+import { apiFetch } from "./client";
+import type { CartItem } from "@/stores/cart";
+import type { Order, PaymentMethod } from "@/types/order";
 
-export interface CreateOrderInput {
+interface ApiResponse<T> {
+  data: T;
+}
+
+interface CreateOrderInput {
   items: CartItem[];
-  shipping: ShippingAddress;
+  shipping: {
+    fullName: string;
+    phone: string;
+    email: string;
+    state: string;
+    city: string;
+    street: string;
+    landmark?: string;
+  };
   paymentMethod: PaymentMethod;
   notes?: string;
 }
 
-export interface CreateOrderResponse {
-  order: Order;
-  paymentUrl?: string; // Paystack/Flutterwave checkout URL
+export async function createOrder(input: CreateOrderInput): Promise<Order> {
+  // Backend only needs comboId + quantity; the rest comes from the live combo doc.
+  const slimItems = input.items.map((it) => ({
+    comboId: it.comboId,
+    quantity: it.quantity,
+  }));
+
+  const res = await apiFetch<ApiResponse<Order>>("/api/orders", {
+    method: "POST",
+    body: JSON.stringify({
+      items: slimItems,
+      shipping: input.shipping,
+      paymentMethod: input.paymentMethod,
+      notes: input.notes,
+    }),
+  });
+  return res.data;
 }
 
-export async function createOrder(_input: CreateOrderInput): Promise<CreateOrderResponse> {
-  // TODO: return apiFetch<CreateOrderResponse>('/api/orders', { method: 'POST', body: JSON.stringify(input) });
-  throw new Error('Order API not yet implemented — backend coming next');
-}
-
-export async function fetchOrderByNumber(_orderNumber: string, _phone: string): Promise<Order> {
-  // TODO: return apiFetch<Order>(`/api/orders/track?orderNumber=${orderNumber}&phone=${phone}`);
-  throw new Error('Order tracking API not yet implemented — backend coming next');
+export async function trackOrder(
+  orderNumber: string,
+  phone: string,
+): Promise<Order | null> {
+  try {
+    const res = await apiFetch<ApiResponse<Order>>(
+      `/api/orders/track?orderNumber=${encodeURIComponent(
+        orderNumber,
+      )}&phone=${encodeURIComponent(phone)}`,
+    );
+    return res.data;
+  } catch (err: any) {
+    if (err?.status === 404) return null;
+    throw err;
+  }
 }

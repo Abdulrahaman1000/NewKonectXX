@@ -1,55 +1,61 @@
 /**
- * Order types — used by cart, checkout, order tracking, admin
+ * Order types — used by cart, checkout, order tracking, admin.
+ *
+ * Mirrors the backend Order model shape (server/models/Order.ts).
  */
 
 export type OrderStatus =
-  | 'pending'         // created, awaiting payment
-  | 'paid'            // payment confirmed
-  | 'processing'      // being prepared
-  | 'shipped'         // out for delivery
-  | 'delivered'       // received by customer
+  | 'pending'
+  | 'paid'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
   | 'cancelled'
   | 'refunded';
 
 export type PaymentMethod =
   | 'paystack'
   | 'flutterwave'
-  | 'bank_transfer'   // manual transfer
-  | 'cod';            // cash on delivery — Ilorin only
+  | 'bank_transfer'
+  | 'cod'
+  | 'whatsapp';
 
+/**
+ * Snapshot of an item at order time.
+ * Backend returns these fields: name, slug, comboId, thumbnailUrl, unitPrice, quantity, subtotal.
+ */
 export interface OrderItem {
   comboId: string;
-  comboName: string;
-  comboSlug: string;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
   unitPrice: number;
   quantity: number;
-  subtotal: number;          // unitPrice * quantity
-  itemsSnapshot: Array<{     // snapshot of what was in the combo at order time
-    name: string;
-    individualPrice: number;
-  }>;
+  subtotal: number;
 }
 
 export interface ShippingAddress {
   fullName: string;
   phone: string;
   email: string;
-  state: string;             // Nigerian state
+  state: string;
   city: string;
   street: string;
   landmark?: string;
 }
 
 export interface Order {
-  id: string;
-  orderNumber: string;       // human-readable, e.g. "SC-2026-001234"
+  _id?: string;
+  id?: string;
+  orderNumber: string;
   items: OrderItem[];
   subtotal: number;
   shippingFee: number;
   total: number;
   status: OrderStatus;
   paymentMethod: PaymentMethod;
-  paymentReference?: string; // from Paystack/Flutterwave
+  paymentReference?: string;
   paidAt?: string;
   shipping: ShippingAddress;
   notes?: string;
@@ -58,6 +64,10 @@ export interface Order {
   updatedAt: string;
 }
 
+/**
+ * What the cart store keeps for each item.
+ * Used during checkout, before the backend builds its snapshot.
+ */
 export interface CartItem {
   comboId: string;
   comboName: string;

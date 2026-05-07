@@ -13,10 +13,10 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
 import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
 
-// Pages
 import Index from './pages/Index';
 import Products from './pages/Products';
 import Checkout from './pages/Checkout';
+import OrderConfirmation from './pages/OrderConfirmation';
 import OrderTracking from './pages/OrderTracking';
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
@@ -32,7 +32,7 @@ import NotFound from './pages/NotFound';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 60 * 1000,         // 1 min
+      staleTime: 60 * 1000,
       retry: 1,
       refetchOnWindowFocus: false,
     },
@@ -53,6 +53,7 @@ const App = () => (
                   <Route path="/" element={<Index />} />
                   <Route path="/products" element={<Products />} />
                   <Route path="/checkout" element={<Checkout />} />
+                  <Route path="/order-confirmation/:orderNumber" element={<OrderConfirmation />} />
                   <Route path="/order-tracking" element={<OrderTracking />} />
                   <Route path="/dashboard" element={<Dashboard />} />
 

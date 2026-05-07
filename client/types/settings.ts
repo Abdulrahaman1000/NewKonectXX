@@ -34,11 +34,23 @@ export interface VideoSettings {
   duration: string;     // "2:30 min"
 }
 
+export interface BankAccount {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+}
+
+export interface ShippingConfig {
+  standardFee: number;
+  codCities: string[];
+  freeShippingThreshold: number;
+}
+
 export interface SiteSettings {
   storeName: string;          // "Smart Combo"
   tagline: string;            // "Premium lifestyle gadgets..."
   defaultHeroImage: string;   // fallback hero when no combo featured
-  heroSlides: HeroSlide[];
+  heroSlides?: HeroSlide[];   // legacy — now fetched separately
   promo: PromoSettings;
   contact: ContactSettings;
   video: VideoSettings;
@@ -46,4 +58,6 @@ export interface SiteSettings {
     rating: number;       // 4.9
     reviewCount: number;  // 2500
   };
+  bankAccount?: BankAccount;
+  shipping?: ShippingConfig;
 }

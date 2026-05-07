@@ -1,17 +1,18 @@
 /**
- * Checkout — real implementation.
+ * Checkout — real backend wired in.
  *
- * NOTE: This page collects shipping + payment method, but the actual
- * createOrder() call will throw until the backend is built.
- * That's intentional. When backend lands, Phase 2:
- *  1) Replace the throw in api/orders.ts with real apiFetch
- *  2) Handle the paymentUrl redirect (Paystack/Flutterwave)
- *  3) Test the full flow
+ * Flow:
+ *  1. Customer fills shipping + picks payment method
+ *  2. Submit calls POST /api/orders
+ *  3. On success, navigate to /order-confirmation/:orderNumber
+ *
+ * Shipping fee is computed on the BACKEND from settings + city + payment method.
+ * The frontend just shows an estimate so the customer isn't surprised.
  */
 
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
@@ -19,6 +20,7 @@ import { useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatNaira } from '@/lib/format';
 import { createOrder } from '@/api/orders';
+import { ApiError } from '@/api/client';
 import type { PaymentMethod } from '@/types/order';
 import { toast } from 'sonner';
 
@@ -36,7 +38,7 @@ export default function Checkout() {
   const { settings } = useSettings();
 
   const [submitting, setSubmitting] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paystack');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank_transfer');
   const [form, setForm] = useState({
     fullName: '',
     phone: '',
@@ -50,10 +52,32 @@ export default function Checkout() {
 
   const update = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  // Shipping fee: free for now (configure later from settings)
-  const shippingFee = 0;
-  const total = subtotal() + shippingFee;
-  const isIlorin = form.state === 'Kwara' && form.city.toLowerCase().includes('ilorin');
+  // Determine if customer qualifies for COD
+  const codCities = (settings?.shipping?.codCities ?? ['ilorin']).map((c) => c.toLowerCase());
+  const isCodEligible =
+    form.city.trim() !== '' &&
+    codCities.some((c) => form.city.toLowerCase().trim() === c);
+
+  // Estimated shipping (backend will calculate authoritatively)
+  const standardFee = settings?.shipping?.standardFee ?? 3500;
+  const estimatedShipping =
+    paymentMethod === 'cod' && isCodEligible ? 0 : standardFee;
+
+  const computedSubtotal = subtotal();
+  const total = computedSubtotal + estimatedShipping;
+
+  // If user picks COD but isn't in an eligible city, switch them
+  const handlePaymentChange = (method: PaymentMethod) => {
+    if (method === 'cod' && !isCodEligible) {
+      toast.error(
+        `Cash on delivery is only available in: ${codCities
+          .map((c) => c.charAt(0).toUpperCase() + c.slice(1))
+          .join(', ')}`,
+      );
+      return;
+    }
+    setPaymentMethod(method);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,35 +87,51 @@ export default function Checkout() {
       return;
     }
 
-    setSubmitting(true);
-    try {
-      const result = await createOrder({
-        items,
-        shipping: {
-          fullName: form.fullName,
-          phone: form.phone,
-          email: form.email,
-          state: form.state,
-          city: form.city,
-          street: form.street,
-          landmark: form.landmark || undefined,
-        },
-        paymentMethod,
-        notes: form.notes || undefined,
-      });
-
-      // When backend exists, redirect to the payment provider
-      if (result.paymentUrl) {
-        window.location.href = result.paymentUrl;
+    // Basic frontend validation
+    const requiredFields: (keyof typeof form)[] = [
+      'fullName',
+      'phone',
+      'email',
+      'state',
+      'city',
+      'street',
+    ];
+    for (const f of requiredFields) {
+      if (!form[f]?.trim()) {
+        toast.error(`Please fill in: ${f.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
         return;
       }
+    }
 
+    setSubmitting(true);
+    try {
+      const order = await createOrder({
+        items,
+        shipping: {
+          fullName: form.fullName.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim(),
+          state: form.state,
+          city: form.city.trim(),
+          street: form.street.trim(),
+          landmark: form.landmark?.trim() || undefined,
+        },
+        paymentMethod,
+        notes: form.notes?.trim() || undefined,
+      });
+
+      // Clear cart and navigate to confirmation
       clear();
-      toast.success('Order placed!');
-      navigate(`/order-tracking?order=${result.order.orderNumber}`);
+      toast.success(`Order ${order.orderNumber} placed!`);
+      navigate(`/order-confirmation/${order.orderNumber}`, {
+        state: { order, phone: form.phone.trim() },
+      });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Something went wrong';
-      toast.error(msg);
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error('Something went wrong. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -102,13 +142,19 @@ export default function Checkout() {
       <div className="min-h-screen bg-background text-foreground flex flex-col">
         <Header />
         <CartDrawer />
-        <main className="flex-1 flex items-center justify-center section-padding">
-          <div className="container-premium max-w-md text-center space-y-6">
-            <div className="text-6xl">🛒</div>
-            <h1 className="text-3xl font-bold">Your cart is empty</h1>
-            <p className="text-foreground/60">Add a combo to get started.</p>
-            <Link to="/" className="btn-primary inline-flex items-center gap-2">
-              <ArrowLeft className="w-4 h-4" /> Back to Shop
+        <main className="flex-1 section-padding py-20">
+          <div className="container-premium text-center">
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-2">
+              Your cart is empty
+            </h1>
+            <p className="text-white/50 mb-6">
+              Add a combo to your cart to continue.
+            </p>
+            <Link
+              to="/products"
+              className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold"
+            >
+              View products
             </Link>
           </div>
         </main>
@@ -122,71 +168,63 @@ export default function Checkout() {
       <Header />
       <CartDrawer />
 
-      <main className="flex-1 section-padding py-12">
-        <div className="container-premium max-w-6xl">
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-5xl">
           <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-sm text-white/60 hover:text-primary mb-6 transition-colors"
+            to="/products"
+            className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-6"
           >
-            <ArrowLeft className="w-4 h-4" /> Continue shopping
+            <ArrowLeft className="w-3 h-3" />
+            Back to products
           </Link>
 
-          <h1 className="text-3xl md:text-4xl font-black mb-2 text-white">Checkout</h1>
-          <p className="text-white/50 mb-8">Almost there — just a few details to complete your order.</p>
+          <h1 className="text-2xl md:text-3xl font-black text-white mb-2">Checkout</h1>
+          <p className="text-white/50 text-sm mb-8">
+            Confirm your details and place your order. We'll contact you shortly.
+          </p>
 
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left — form */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Shipping */}
-              <section
-                className="rounded-2xl border border-white/10 p-6 space-y-4"
-                style={{ background: 'rgba(255,255,255,0.02)' }}
-              >
-                <h2 className="text-lg font-bold text-white">Shipping Information</h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Field label="Full name" required>
-                    <input
-                      type="text"
-                      required
-                      value={form.fullName}
-                      onChange={(e) => update('fullName', e.target.value)}
-                      className="input-base"
-                      placeholder="Aisha Mohammed"
-                    />
-                  </Field>
-
-                  <Field label="Phone (WhatsApp preferred)" required>
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
+            {/* Left: Form */}
+            <div className="space-y-6">
+              <Section title="Contact information">
+                <Field label="Full name" required>
+                  <input
+                    type="text"
+                    value={form.fullName}
+                    onChange={(e) => update('fullName', e.target.value)}
+                    className={inputCls}
+                    placeholder="Aisha Mohammed"
+                  />
+                </Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Phone" required>
                     <input
                       type="tel"
-                      required
                       value={form.phone}
                       onChange={(e) => update('phone', e.target.value)}
-                      className="input-base"
-                      placeholder="08012345678"
-                      pattern="[0-9+\s]{10,15}"
+                      className={inputCls}
+                      placeholder="+234 800 000 0000"
+                    />
+                  </Field>
+                  <Field label="Email" required>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => update('email', e.target.value)}
+                      className={inputCls}
+                      placeholder="you@example.com"
                     />
                   </Field>
                 </div>
+              </Section>
 
-                <Field label="Email" required>
-                  <input
-                    type="email"
-                    required
-                    value={form.email}
-                    onChange={(e) => update('email', e.target.value)}
-                    className="input-base"
-                    placeholder="you@example.com"
-                  />
-                </Field>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Section title="Delivery address">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="State" required>
                     <select
-                      required
                       value={form.state}
                       onChange={(e) => update('state', e.target.value)}
-                      className="input-base"
+                      className={inputCls}
                     >
                       <option value="">Select state</option>
                       {NIGERIAN_STATES.map((s) => (
@@ -194,167 +232,140 @@ export default function Checkout() {
                       ))}
                     </select>
                   </Field>
-
                   <Field label="City" required>
                     <input
                       type="text"
-                      required
                       value={form.city}
                       onChange={(e) => update('city', e.target.value)}
-                      className="input-base"
+                      className={inputCls}
                       placeholder="Ilorin"
                     />
                   </Field>
                 </div>
-
                 <Field label="Street address" required>
                   <input
                     type="text"
-                    required
                     value={form.street}
                     onChange={(e) => update('street', e.target.value)}
-                    className="input-base"
-                    placeholder="House number, street name, area"
+                    className={inputCls}
+                    placeholder="No 12, Tanke road"
                   />
                 </Field>
-
                 <Field label="Landmark (optional)">
                   <input
                     type="text"
                     value={form.landmark}
                     onChange={(e) => update('landmark', e.target.value)}
-                    className="input-base"
-                    placeholder="Near filling station, by the junction, etc."
+                    className={inputCls}
+                    placeholder="Near Diamond Bank"
                   />
                 </Field>
-
                 <Field label="Order notes (optional)">
                   <textarea
                     value={form.notes}
                     onChange={(e) => update('notes', e.target.value)}
-                    className="input-base min-h-[80px] resize-y"
-                    placeholder="Any delivery instructions?"
+                    rows={2}
+                    className={inputCls}
+                    placeholder="Anything we should know?"
                   />
                 </Field>
-              </section>
+              </Section>
 
-              {/* Payment */}
-              <section
-                className="rounded-2xl border border-white/10 p-6 space-y-4"
-                style={{ background: 'rgba(255,255,255,0.02)' }}
-              >
-                <h2 className="text-lg font-bold text-white">Payment Method</h2>
-
-                <div className="space-y-3">
-                  <PaymentOption
-                    value="paystack"
-                    selected={paymentMethod}
-                    onChange={setPaymentMethod}
-                    title="Paystack"
-                    desc="Card · Bank Transfer · USSD · Mobile Money"
-                  />
-                  <PaymentOption
-                    value="flutterwave"
-                    selected={paymentMethod}
-                    onChange={setPaymentMethod}
-                    title="Flutterwave"
-                    desc="Card · Bank Transfer · USSD · Mobile Money"
-                  />
+              <Section title="Payment method">
+                <div className="space-y-2">
                   <PaymentOption
                     value="bank_transfer"
                     selected={paymentMethod}
-                    onChange={setPaymentMethod}
-                    title="Direct Bank Transfer"
-                    desc="Manual transfer — we'll send account details"
+                    onSelect={handlePaymentChange}
+                    title="Bank transfer"
+                    description="Pay to our account, we confirm and ship."
                   />
-                  {isIlorin && (
-                    <PaymentOption
-                      value="cod"
-                      selected={paymentMethod}
-                      onChange={setPaymentMethod}
-                      title="Cash on Delivery"
-                      desc="Ilorin only — pay when you receive"
-                    />
-                  )}
+                  <PaymentOption
+                    value="cod"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Cash on delivery"
+                    description={
+                      isCodEligible
+                        ? 'Pay when delivered. Free shipping in your area.'
+                        : `Only available in: ${codCities.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`
+                    }
+                    disabled={!isCodEligible}
+                  />
+                  <PaymentOption
+                    value="whatsapp"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Pay via WhatsApp"
+                    description="We'll DM you with payment options."
+                  />
                 </div>
-              </section>
+              </Section>
             </div>
 
-            {/* Right — summary */}
-            <aside className="lg:col-span-1">
-              <div
-                className="rounded-2xl border border-primary/20 p-6 sticky top-24"
-                style={{ background: 'rgba(255,215,0,0.02)' }}
-              >
-                <h2 className="text-lg font-bold text-white mb-5">Order Summary</h2>
+            {/* Right: Order summary */}
+            <aside
+              className="rounded-2xl border border-primary/20 p-5 h-fit lg:sticky lg:top-24"
+              style={{ background: 'rgba(255,255,255,0.02)' }}
+            >
+              <h2 className="text-sm font-black text-white mb-4">Order summary</h2>
 
-                <ul className="space-y-3 mb-5">
-                  {items.map((item) => (
-                    <li key={item.comboId} className="flex justify-between text-sm">
-                      <div className="flex-1 pr-2">
-                        <p className="text-white/85 font-medium">{item.comboName}</p>
-                        <p className="text-white/40 text-xs">Qty: {item.quantity}</p>
-                      </div>
-                      <span className="text-white/70 tabular-nums">
+              <div className="space-y-3 mb-4 max-h-72 overflow-y-auto">
+                {items.map((item) => (
+                  <div key={item.comboId} className="flex gap-3">
+                    {item.image && (
+                      <img
+                        src={item.image}
+                        alt={item.comboName}
+                        className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
+                      <p className="text-[10px] text-white/40">Qty {item.quantity}</p>
+                      <p className="text-xs text-primary font-bold">
                         {formatNaira(item.unitPrice * item.quantity)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-                <div className="border-t border-white/10 pt-4 space-y-2">
-                  <Row label="Subtotal" value={formatNaira(subtotal())} />
-                  {savings() > 0 && (
-                    <Row
-                      label="You save"
-                      value={`− ${formatNaira(savings())}`}
-                      valueClass="text-emerald-400"
-                    />
-                  )}
-                  <Row
-                    label="Shipping"
-                    value={shippingFee === 0 ? 'Free' : formatNaira(shippingFee)}
-                    valueClass={shippingFee === 0 ? 'text-emerald-400' : ''}
-                  />
-                </div>
-
-                <div className="border-t border-white/10 mt-4 pt-4 flex justify-between items-baseline">
-                  <span className="font-bold text-white">Total</span>
-                  <span className="text-2xl font-black text-primary">{formatNaira(total)}</span>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn-primary w-full mt-6 py-3.5 font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      Place Order
-                    </>
-                  )}
-                </button>
-
-                {settings && (
-                  <p className="text-[11px] text-white/40 text-center mt-4">
-                    Need help?{' '}
-                    <a
-                      href={settings.contact.whatsappLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Chat with us on WhatsApp
-                    </a>
-                  </p>
+              <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
+                <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
+                <Row
+                  label="Shipping (estimate)"
+                  value={estimatedShipping === 0 ? 'Free' : formatNaira(estimatedShipping)}
+                />
+                {savings() > 0 && (
+                  <Row label="You save" value={formatNaira(savings())} accent="emerald" />
                 )}
               </div>
+              <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+                <span className="text-sm text-white/70 font-bold">Total</span>
+                <span className="text-lg text-primary font-black tabular-nums">
+                  {formatNaira(total)}
+                </span>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn-primary w-full mt-5 py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Placing order...
+                  </>
+                ) : (
+                  <>Place order — {formatNaira(total)}</>
+                )}
+              </button>
+
+              <p className="mt-3 text-[10px] text-white/30 text-center">
+                Final shipping fee confirmed by us based on your delivery zone.
+              </p>
             </aside>
           </form>
         </div>
@@ -365,26 +376,49 @@ export default function Checkout() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local components
-// ──────────────────────────────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <h2 className="text-sm font-black text-white mb-4">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="block text-xs font-semibold text-white/60 mb-1.5">
-        {label} {required && <span className="text-red-400">*</span>}
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} {required && <span className="text-primary/70">*</span>}
       </span>
       {children}
     </label>
   );
 }
 
-function Row({ label, value, valueClass = '' }: { label: string; value: string; valueClass?: string }) {
+const inputCls =
+  'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+
+function Row({ label, value, accent }: { label: string; value: string; accent?: 'emerald' }) {
   return (
-    <div className="flex justify-between text-sm">
-      <span className="text-white/60">{label}</span>
-      <span className={`text-white/80 tabular-nums ${valueClass}`}>{value}</span>
+    <div className="flex items-center justify-between">
+      <span className="text-white/50">{label}</span>
+      <span
+        className={`tabular-nums font-medium ${accent === 'emerald' ? 'text-emerald-400' : 'text-white/80'}`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -392,37 +426,45 @@ function Row({ label, value, valueClass = '' }: { label: string; value: string; 
 function PaymentOption({
   value,
   selected,
-  onChange,
+  onSelect,
   title,
-  desc,
+  description,
+  disabled,
 }: {
   value: PaymentMethod;
   selected: PaymentMethod;
-  onChange: (v: PaymentMethod) => void;
+  onSelect: (m: PaymentMethod) => void;
   title: string;
-  desc: string;
+  description: string;
+  disabled?: boolean;
 }) {
   const isSelected = selected === value;
   return (
-    <label
-      className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-colors ${
+    <button
+      type="button"
+      onClick={() => !disabled && onSelect(value)}
+      disabled={disabled}
+      className={`w-full text-left p-3 rounded-lg border transition-colors ${
         isSelected
-          ? 'border-primary/60 bg-primary/5'
-          : 'border-white/10 hover:border-white/25'
+          ? 'border-primary/50 bg-primary/5'
+          : disabled
+          ? 'border-white/5 bg-white/[0.01] opacity-50 cursor-not-allowed'
+          : 'border-white/10 hover:border-white/30'
       }`}
     >
-      <input
-        type="radio"
-        name="payment"
-        value={value}
-        checked={isSelected}
-        onChange={() => onChange(value)}
-        className="mt-1 accent-primary"
-      />
-      <div className="flex-1">
-        <p className="font-semibold text-white text-sm">{title}</p>
-        <p className="text-xs text-white/50">{desc}</p>
+      <div className="flex items-start gap-3">
+        <div
+          className={`w-4 h-4 rounded-full border flex-shrink-0 mt-0.5 ${
+            isSelected ? 'border-primary bg-primary' : 'border-white/30'
+          }`}
+        >
+          {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-bold text-white">{title}</p>
+          <p className="text-xs text-white/50">{description}</p>
+        </div>
       </div>
-    </label>
+    </button>
   );
 }

@@ -1,11 +1,8 @@
 /**
- * SiteSettings model.
+ * SiteSettings model — single document collection.
  *
- * Single-document collection — only ONE settings document ever exists.
- * Use SiteSettings.findOne() or our helper getSettings() to read it.
- *
- * Hero slides have moved to their own collection (see HeroSlide.ts).
- * They're no longer stored inside settings.
+ * Includes bank account info (for bank transfer payments) and shipping fees
+ * (used to calculate order totals).
  */
 
 import { Schema, model, Document } from "mongoose";
@@ -35,6 +32,16 @@ export interface SiteSettingsDocument extends Document {
   trustStats: {
     rating: number;
     reviewCount: number;
+  };
+  bankAccount: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  };
+  shipping: {
+    standardFee: number;
+    codCities: string[];        // case-insensitive city names with COD + free shipping
+    freeShippingThreshold: number; // 0 = disabled
   };
   updatedAt: Date;
 }
@@ -69,6 +76,18 @@ const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
     trustStats: {
       rating: { type: Number, default: 4.9, min: 0, max: 5 },
       reviewCount: { type: Number, default: 0, min: 0 },
+    },
+
+    bankAccount: {
+      bankName: { type: String, default: "" },
+      accountName: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+    },
+
+    shipping: {
+      standardFee: { type: Number, default: 3500, min: 0 },
+      codCities: { type: [String], default: ["ilorin"] },
+      freeShippingThreshold: { type: Number, default: 0, min: 0 },
     },
   },
   { timestamps: true },
