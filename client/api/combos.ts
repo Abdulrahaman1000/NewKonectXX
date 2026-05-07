@@ -1,11 +1,8 @@
 /**
  * Combos API — frontend client.
  *
- * Calls the real backend at /api/combos.
- *
- * MongoDB documents come back with `_id` (24-char hex). The frontend Combo
- * type uses `id`. We normalize once here so the rest of the app doesn't
- * need to think about it.
+ * MongoDB returns `_id`. We normalize to `id` here so the rest of the app
+ * doesn't need to think about it. Now supports filtering by category slug.
  */
 
 import type { Combo } from "@/types/combo";
@@ -24,16 +21,17 @@ function normalizeCombo(raw: BackendCombo): Combo {
   return { ...rest, id: _id };
 }
 
-export async function fetchCombos(): Promise<Combo[]> {
-  const res = await apiFetch<ApiResponse<BackendCombo[]>>("/api/combos");
+export async function fetchCombos(category?: string): Promise<Combo[]> {
+  const url = category
+    ? `/api/combos?category=${encodeURIComponent(category)}`
+    : "/api/combos";
+  const res = await apiFetch<ApiResponse<BackendCombo[]>>(url);
   return res.data.map(normalizeCombo);
 }
 
 export async function fetchFeaturedCombo(): Promise<Combo | null> {
   try {
-    const res = await apiFetch<ApiResponse<BackendCombo>>(
-      "/api/combos/featured",
-    );
+    const res = await apiFetch<ApiResponse<BackendCombo>>("/api/combos/featured");
     return normalizeCombo(res.data);
   } catch (err: any) {
     if (err?.status === 404) return null;
@@ -43,9 +41,7 @@ export async function fetchFeaturedCombo(): Promise<Combo | null> {
 
 export async function fetchComboBySlug(slug: string): Promise<Combo | null> {
   try {
-    const res = await apiFetch<ApiResponse<BackendCombo>>(
-      `/api/combos/${slug}`,
-    );
+    const res = await apiFetch<ApiResponse<BackendCombo>>(`/api/combos/${slug}`);
     return normalizeCombo(res.data);
   } catch (err: any) {
     if (err?.status === 404) return null;

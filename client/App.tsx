@@ -15,6 +15,8 @@ import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
 
 import Index from './pages/Index';
 import Products from './pages/Products';
+import Categories from './pages/Categories';
+import CategoryPage from './pages/CategoryPage';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import OrderTracking from './pages/OrderTracking';
@@ -23,6 +25,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import AdminLogin from './pages/AdminLogin';
 import AdminOrders from './pages/AdminOrders';
 import AdminOrderDetail from './pages/AdminOrderDetail';
+import AdminCategories from './pages/AdminCategories';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
 import Shipping from './pages/Shipping';
@@ -54,6 +57,8 @@ const App = () => (
                 <Routes>
                   <Route path="/" element={<Index />} />
                   <Route path="/products" element={<Products />} />
+                  <Route path="/categories" element={<Categories />} />
+                  <Route path="/categories/:slug" element={<CategoryPage />} />
                   <Route path="/checkout" element={<Checkout />} />
                   <Route path="/order-confirmation/:orderNumber" element={<OrderConfirmation />} />
                   <Route path="/order-tracking" element={<OrderTracking />} />
@@ -61,30 +66,10 @@ const App = () => (
 
                   {/* Admin routes */}
                   <Route path="/admin/login" element={<AdminLogin />} />
-                  <Route
-                    path="/admin"
-                    element={
-                      <AdminProtectedRoute>
-                        <AdminDashboard />
-                      </AdminProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/admin/orders"
-                    element={
-                      <AdminProtectedRoute>
-                        <AdminOrders />
-                      </AdminProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/admin/orders/:id"
-                    element={
-                      <AdminProtectedRoute>
-                        <AdminOrderDetail />
-                      </AdminProtectedRoute>
-                    }
-                  />
+                  <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
+                  <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
 
                   {/* Footer pages */}
                   <Route path="/faq" element={<FAQ />} />

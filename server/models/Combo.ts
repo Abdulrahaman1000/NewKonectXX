@@ -1,45 +1,27 @@
 /**
- * Combo Mongoose model.
+ * Combo model.
  *
- * This is the database schema for combos (bundle products).
- * It MUST stay in sync with `client/types/combo.ts` — the frontend type.
+ * Now includes categorySlugs[] — a combo can belong to multiple categories.
+ * Categories are referenced by slug (not ObjectId) for URL stability.
  *
- * When the API returns a Combo, the frontend Combo type receives it directly.
- *
- * Why a separate sub-schema for items?
- * Mongoose lets us nest documents inside documents. Items in a combo are
- * tightly bound to the combo (they don't exist on their own), so they live
- * as embedded documents instead of a separate collection.
+ * NOTE: Removed Mongoose `versionKey` index conflicts and kept structure same.
  */
 
-import { Schema, model, Document, Types } from "mongoose";
+import { Schema, model, Document } from "mongoose";
 
-// ──────────────────────────────────────────────────────────────────────────
-// Sub-schemas (embedded documents)
-// ──────────────────────────────────────────────────────────────────────────
+export interface ProductImage {
+  url: string;
+  alt?: string;
+}
 
-const ProductImageSchema = new Schema(
-  {
-    url: { type: String, required: true },
-    alt: { type: String },
-  },
-  { _id: false }, // don't generate _id for image objects — they're just data
-);
-
-const ComboItemSchema = new Schema(
-  {
-    name: { type: String, required: true },
-    badge: { type: String, required: true },
-    individualPrice: { type: Number, required: true, min: 0 },
-    images: { type: [ProductImageSchema], default: [] },
-    description: { type: String },
-  },
-  { _id: false },
-);
-
-// ──────────────────────────────────────────────────────────────────────────
-// Main Combo schema
-// ──────────────────────────────────────────────────────────────────────────
+export interface ComboItem {
+  id: string;
+  name: string;
+  badge: string;
+  individualPrice: number;
+  images: ProductImage[];
+  description?: string;
+}
 
 export interface ComboDocument extends Document {
   slug: string;
@@ -51,17 +33,32 @@ export interface ComboDocument extends Document {
   stockLeft: number;
   isFeatured: boolean;
   isActive: boolean;
-  items: Array<{
-    name: string;
-    badge: string;
-    individualPrice: number;
-    images: Array<{ url: string; alt?: string }>;
-    description?: string;
-  }>;
+  items: ComboItem[];
   heroImage?: string;
+  categorySlugs: string[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+const ProductImageSchema = new Schema<ProductImage>(
+  {
+    url: { type: String, required: true },
+    alt: { type: String },
+  },
+  { _id: false },
+);
+
+const ComboItemSchema = new Schema<ComboItem>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    individualPrice: { type: Number, required: true, min: 0 },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+  },
+  { _id: false },
+);
 
 const ComboSchema = new Schema<ComboDocument>(
   {
@@ -71,29 +68,25 @@ const ComboSchema = new Schema<ComboDocument>(
       unique: true,
       lowercase: true,
       trim: true,
+      index: true,
     },
     name: { type: String, required: true, trim: true },
-    tagline: { type: String, required: true, trim: true },
-
+    tagline: { type: String, default: "", trim: true },
     totalPrice: { type: Number, required: true, min: 0 },
     originalPrice: { type: Number, required: true, min: 0 },
-
     badge: { type: String, default: "" },
     stockLeft: { type: Number, default: 0, min: 0 },
-
     isFeatured: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
-
     items: { type: [ComboItemSchema], default: [] },
-
     heroImage: { type: String },
+    categorySlugs: {
+      type: [String],
+      default: [],
+      index: true,
+    },
   },
-  {
-    timestamps: true, // adds createdAt + updatedAt automatically
-  },
+  { timestamps: true },
 );
-
-// Composite index for "show me featured + active combos"
-ComboSchema.index({ isFeatured: 1, isActive: 1 });
 
 export const Combo = model<ComboDocument>("Combo", ComboSchema);

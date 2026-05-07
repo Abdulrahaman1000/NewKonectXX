@@ -1,9 +1,7 @@
 /**
- * Combo + Product types
+ * Combo + Product types.
  *
- * These shapes mirror what the MongoDB API will return.
- * When the backend is ready, the only thing that changes is the source
- * (api/combos.ts will fetch from /api/combos instead of importing data/combos.ts).
+ * Now includes categorySlugs[] — combos can belong to multiple categories.
  */
 
 export interface ProductImage {
@@ -14,25 +12,26 @@ export interface ProductImage {
 export interface ComboItem {
   id: string;
   name: string;
-  badge: string;          // e.g. "SMART WATCH"
+  badge: string;
   individualPrice: number;
-  images: ProductImage[]; // first image is the primary
+  images: ProductImage[];
   description?: string;
 }
 
 export interface Combo {
   id: string;
-  slug: string;           // for URL: /combos/:slug
+  slug: string;
   name: string;
   tagline: string;
   totalPrice: number;
   originalPrice: number;
-  badge: string;          // e.g. "🔥 BEST SELLER"
+  badge: string;
   stockLeft: number;
-  isFeatured: boolean;    // shown on homepage
-  isActive: boolean;      // hide without deleting
+  isFeatured: boolean;
+  isActive: boolean;
   items: ComboItem[];
-  heroImage?: string;     // optional combo-specific hero
+  heroImage?: string;
+  categorySlugs?: string[];
   createdAt?: string;
   updatedAt?: string;
 }

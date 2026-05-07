@@ -1,15 +1,13 @@
 /**
  * Admin Dashboard.
- *
- * Shows real stats from /api/admin/dashboard/stats.
- * Orders tile links to /admin/orders.
- * Other tiles still placeholder until their phases ship.
+ * Now: Categories tile enabled (links to /admin/categories).
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   HelpCircle,
+  LayoutGrid,
   LogOut,
   Package,
   Settings,
@@ -27,24 +25,19 @@ export default function AdminDashboard() {
 
   const { data: combos = [] } = useQuery({
     queryKey: ['combos'],
-    queryFn: fetchCombos,
+    queryFn: () => fetchCombos(),
   });
 
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: getDashboardStats,
-    refetchInterval: 30000, // refresh every 30s
+    refetchInterval: 30000,
   });
-
-  const handleLogout = () => {
-    logout();
-  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <SEO title="Admin Dashboard" />
 
-      {/* Admin top bar */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
         <div className="container-premium flex items-center justify-between py-3">
           <Link to="/admin" className="flex items-center gap-2 group">
@@ -60,7 +53,7 @@ export default function AdminDashboard() {
             <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={logout}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -82,7 +75,6 @@ export default function AdminDashboard() {
             <p className="text-white/45 text-sm">Here's what's happening with your store today.</p>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
             <StatCard label="Orders today" value={(stats?.ordersToday ?? 0).toString()} />
             <StatCard label="Revenue today" value={formatNaira(stats?.revenueToday ?? 0)} />
@@ -90,47 +82,16 @@ export default function AdminDashboard() {
             <StatCard label="Customers" value={(stats?.customers ?? 0).toString()} />
           </div>
 
-          {/* Quick links */}
           <h2 className="text-base font-bold text-white mb-4">Manage</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
-            <TileLink
-              to="/admin/orders"
-              Icon={Package}
-              label="Orders"
-              desc="View, fulfill, and update orders"
-              badge={stats?.pendingOrders ?? 0}
-            />
-            <TileLink
-              to="#combos"
-              Icon={ShoppingBag}
-              label="Combos"
-              desc="Add, edit, and manage combo products"
-              disabled
-            />
-            <TileLink
-              to="#customers"
-              Icon={Users}
-              label="Customers"
-              desc="Customer list and order history"
-              disabled
-            />
-            <TileLink
-              to="#faqs"
-              Icon={HelpCircle}
-              label="FAQs"
-              desc="Manage FAQ entries shown on the site"
-              disabled
-            />
-            <TileLink
-              to="#settings"
-              Icon={Settings}
-              label="Site Settings"
-              desc="Hero slides, promo, contact info, video"
-              disabled
-            />
+            <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
+            <TileLink to="#combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" disabled />
+            <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
+            <TileLink to="#faqs" Icon={HelpCircle} label="FAQs" desc="Manage FAQ entries shown on the site" disabled />
+            <TileLink to="#settings" Icon={Settings} label="Site Settings" desc="Hero slides, promo, contact info, video" disabled />
           </div>
 
-          {/* Combos table preview */}
           <h2 className="text-base font-bold text-white mb-4">Combos ({combos.length})</h2>
           <div
             className="rounded-2xl border border-white/10 overflow-hidden"
@@ -140,10 +101,10 @@ export default function AdminDashboard() {
               <thead className="bg-white/5">
                 <tr className="text-left text-xs uppercase text-white/50 tracking-wide">
                   <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Categories</th>
                   <th className="px-4 py-3">Price</th>
                   <th className="px-4 py-3">Stock</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -160,6 +121,22 @@ export default function AdminDashboard() {
                       <p className="text-white font-medium">{combo.name}</p>
                       <p className="text-white/40 text-xs">{combo.tagline}</p>
                     </td>
+                    <td className="px-4 py-3">
+                      {(combo.categorySlugs ?? []).length === 0 ? (
+                        <span className="text-white/30 text-xs">—</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {(combo.categorySlugs ?? []).map((slug) => (
+                            <span
+                              key={slug}
+                              className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/60"
+                            >
+                              {slug}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-white/70 tabular-nums">{formatNaira(combo.totalPrice)}</td>
                     <td className="px-4 py-3 text-white/70 tabular-nums">{combo.stockLeft}</td>
                     <td className="px-4 py-3">
@@ -172,11 +149,6 @@ export default function AdminDashboard() {
                       >
                         {combo.isActive ? 'ACTIVE' : 'HIDDEN'}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button type="button" className="text-xs text-primary hover:underline">
-                        Edit
-                      </button>
                     </td>
                   </tr>
                 ))}
@@ -248,21 +220,14 @@ function TileLink({
 
   if (disabled) {
     return (
-      <div
-        className={`${baseCls} ${disabledCls}`}
-        style={{ background: 'rgba(255,255,255,0.02)' }}
-      >
+      <div className={`${baseCls} ${disabledCls}`} style={{ background: 'rgba(255,255,255,0.02)' }}>
         {content}
       </div>
     );
   }
 
   return (
-    <Link
-      to={to}
-      className={`${baseCls} ${enabledCls}`}
-      style={{ background: 'rgba(255,255,255,0.02)' }}
-    >
+    <Link to={to} className={`${baseCls} ${enabledCls}`} style={{ background: 'rgba(255,255,255,0.02)' }}>
       {content}
     </Link>
   );
