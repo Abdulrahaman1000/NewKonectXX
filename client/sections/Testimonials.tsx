@@ -3,12 +3,12 @@ import type { Testimonial } from '@/types/testimonial';
 
 interface Props {
   testimonials: Testimonial[];
-  rating: number;
-  reviewCount: number;
+  rating?: number;
+  reviewCount?: number;
 }
 
-export function Testimonials({ testimonials, rating, reviewCount }: Props) {
-  if (testimonials.length === 0) return null;
+export function Testimonials({ testimonials, rating = 4.9, reviewCount = 0 }: Props) {
+  if (!testimonials || testimonials.length === 0) return null;
 
   return (
     <section className="section-padding py-24">
@@ -20,6 +20,7 @@ export function Testimonials({ testimonials, rating, reviewCount }: Props) {
             Real reviews from verified buyers across Nigeria
           </p>
         </div>
+
         <div className="flex items-center justify-center gap-4 mb-12">
           <div className="flex gap-1">
             {[...Array(5)].map((_, i) => (
@@ -27,8 +28,13 @@ export function Testimonials({ testimonials, rating, reviewCount }: Props) {
             ))}
           </div>
           <span className="text-2xl font-black text-white">{rating}</span>
-          <span className="text-white/35 text-sm">from {reviewCount.toLocaleString()}+ verified buyers</span>
+          {reviewCount > 0 && (
+            <span className="text-white/35 text-sm">
+              from {reviewCount.toLocaleString()}+ verified buyers
+            </span>
+          )}
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {testimonials.map((t) => (
             <article
@@ -44,7 +50,7 @@ export function Testimonials({ testimonials, rating, reviewCount }: Props) {
               <p className="text-[14px] text-white/65 leading-relaxed italic flex-1">"{t.text}"</p>
               <div className="flex items-center gap-3 mt-6 pt-5 border-t border-white/8">
                 <div className="w-9 h-9 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center text-sm font-black text-primary">
-                  {t.name[0]}
+                  {t.name?.[0] ?? '?'}
                 </div>
                 <div>
                   <p className="text-[13px] font-semibold text-white">{t.name}</p>

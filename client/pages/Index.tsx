@@ -29,7 +29,7 @@ export default function Index() {
 
   const { data: combos = [] } = useQuery({
     queryKey: ['combos'],
-    queryFn: fetchCombos,
+    queryFn: () => fetchCombos(),
   });
 
   const { data: testimonials = [] } = useQuery({
@@ -61,7 +61,6 @@ export default function Index() {
       <SEO />
       <Header />
       <CartDrawer />
-
       <HeroCarousel
         slides={heroSlides}
         featuredCombo={featuredCombo ?? null}
@@ -69,32 +68,19 @@ export default function Index() {
         rating={settings.trustStats.rating}
         reviewCount={settings.trustStats.reviewCount}
       />
-
       <TrustBar />
-
       <PromoCountdown promo={settings.promo} />
-
       <ComboShowcase combos={combos} whatsappLink={settings.contact.whatsappLink} />
-
       <DemoVideo video={settings.video} />
-
       <Features />
-
       <WhyChooseUs />
-
       <Testimonials
         testimonials={testimonials}
         rating={settings.trustStats.rating}
         reviewCount={settings.trustStats.reviewCount}
       />
-
-      <FAQSection faqs={faqs} whatsappLink={settings.contact.whatsappLink} />
-
-      <FinalCTA
-        featuredCombo={featuredCombo ?? null}
-        whatsappLink={settings.contact.whatsappLink}
-      />
-
+      <FAQSection faqs={faqs} />
+      <FinalCTA whatsappLink={settings.contact.whatsappLink} />
       <Footer />
     </div>
   );

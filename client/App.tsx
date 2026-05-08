@@ -26,6 +26,7 @@ import AdminLogin from './pages/AdminLogin';
 import AdminOrders from './pages/AdminOrders';
 import AdminOrderDetail from './pages/AdminOrderDetail';
 import AdminCategories from './pages/AdminCategories';
+import AdminTestUpload from './pages/AdminTestUpload';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
 import Shipping from './pages/Shipping';
@@ -70,6 +71,7 @@ const App = () => (
                   <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
                   <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
                   <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
+                  <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
 
                   {/* Footer pages */}
                   <Route path="/faq" element={<FAQ />} />
