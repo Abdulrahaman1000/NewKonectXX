@@ -14,6 +14,7 @@ import adminOrdersRouter from "./routes/admin/orders";
 import adminDashboardRouter from "./routes/admin/dashboard";
 import adminCategoriesRouter from "./routes/admin/categories";
 import adminCombosRouter from "./routes/admin/combos";
+import adminHeroSlidesRouter from "./routes/admin/heroSlides";
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
 
@@ -54,6 +55,7 @@ export function createServer() {
   app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
   app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
   app.use("/api/admin/combos", requireAuth, adminCombosRouter);
+  app.use("/api/admin/hero-slides", requireAuth, adminHeroSlidesRouter);
 
   return app;
 }

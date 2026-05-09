@@ -1,12 +1,13 @@
 /**
  * Admin Dashboard.
- * Combos tile now enabled (links to /admin/combos).
+ * Hero Slides tile now enabled.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   HelpCircle,
+  Image as ImageIcon,
   LayoutGrid,
   LogOut,
   Package,
@@ -87,9 +88,10 @@ export default function AdminDashboard() {
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
+            <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
             <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
             <TileLink to="#faqs" Icon={HelpCircle} label="FAQs" desc="Manage FAQ entries shown on the site" disabled />
-            <TileLink to="#settings" Icon={Settings} label="Site Settings" desc="Hero slides, promo, contact info, video" disabled />
+            <TileLink to="#settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" disabled />
           </div>
 
           <h2 className="text-base font-bold text-white mb-4">Combos ({combos.length})</h2>
@@ -181,12 +183,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 function TileLink({
-  to,
-  Icon,
-  label,
-  desc,
-  disabled,
-  badge,
+  to, Icon, label, desc, disabled, badge,
 }: {
   to: string;
   Icon: any;
@@ -207,9 +204,7 @@ function TileLink({
           </span>
         )}
         {disabled && (
-          <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">
-            Soon
-          </span>
+          <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">Soon</span>
         )}
       </div>
       <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
