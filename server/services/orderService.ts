@@ -1,10 +1,5 @@
 /**
  * Order service — business logic for orders.
- *
- * Why this lives in services/ instead of routes/:
- * Route handlers should be thin. They parse HTTP, call a service, return
- * a response. Business logic — generating order numbers, decrementing stock,
- * computing totals — lives here so it's reusable and testable.
  */
 
 import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
@@ -34,21 +29,12 @@ export class OrderError extends Error {
   }
 }
 
-/**
- * Generates an order number like "SC-2026-001234".
- * Counter is per-year so numbers reset Jan 1 (cleaner for accounting).
- */
 async function generateOrderNumber(): Promise<string> {
   const year = new Date().getFullYear();
   const seq = await nextSeq(`order:${year}`);
   return `SC-${year}-${String(seq).padStart(6, "0")}`;
 }
 
-/**
- * Calculates shipping fee based on customer location and settings.
- *  - COD payment + COD-eligible city -> free
- *  - else: standard fee from settings
- */
 async function calculateShippingFee(
   paymentMethod: PaymentMethod,
   city: string,
@@ -68,10 +54,6 @@ async function calculateShippingFee(
   return settings.shipping?.standardFee ?? 0;
 }
 
-/**
- * Validates that the requested combos exist, are active, and have stock.
- * Builds a price-locked snapshot of items from the live combo data.
- */
 async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[]> {
   if (!items?.length) {
     throw new OrderError(400, "EMPTY_CART", "Order has no items");
@@ -102,9 +84,7 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
       );
     }
 
-    // Use first image of first item as a thumbnail
-    const thumbnailUrl =
-      combo.items?.[0]?.images?.[0]?.url ?? "";
+    const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
 
     snapshots.push({
       comboId: combo._id,
@@ -121,10 +101,6 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
   return snapshots;
 }
 
-/**
- * Decrements stock atomically for all items.
- * Uses findOneAndUpdate with a stock check filter to prevent overselling.
- */
 async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
   for (const item of items) {
     const updated = await Combo.findOneAndUpdate(
@@ -142,10 +118,8 @@ async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
 }
 
 export async function createOrder(input: CreateOrderInput) {
-  // 1. Build snapshots (validates combos, throws if anything's wrong)
   const items = await buildItemSnapshots(input.items);
 
-  // 2. Calculate amounts
   const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
   const shippingFee = await calculateShippingFee(
     input.paymentMethod,
@@ -153,13 +127,12 @@ export async function createOrder(input: CreateOrderInput) {
   );
   const total = subtotal + shippingFee;
 
-  // 3. Generate order number
   const orderNumber = await generateOrderNumber();
 
-  // 4. Decrement stock BEFORE creating order so we don't have ghost orders if stock fails
   await decrementStock(items);
 
-  // 5. Create order. COD orders skip "pending" → go straight to "processing"
+  // COD orders skip "pending" → go straight to "processing".
+  // Online payments (paystack/flutterwave) start as "pending" until verified.
   const initialStatus: OrderStatus =
     input.paymentMethod === "cod" ? "processing" : "pending";
 
@@ -183,5 +156,46 @@ export async function findByNumberAndPhone(orderNumber: string, phone: string) {
     orderNumber: orderNumber.trim().toUpperCase(),
     "shipping.phone": phone.trim(),
   }).lean();
+  return order;
+}
+
+export async function findByOrderNumber(orderNumber: string) {
+  return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
+}
+
+/**
+ * Marks an order as paid. Idempotent — safe to call multiple times
+ * (since webhooks can fire repeatedly).
+ *
+ * Returns the updated order, or null if not found.
+ */
+export async function markOrderPaid(
+  orderNumber: string,
+  paymentReference: string,
+): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  // If already paid (or beyond), skip — don't overwrite a shipped/delivered status
+  if (
+    order.status === "paid" ||
+    order.status === "processing" ||
+    order.status === "shipped" ||
+    order.status === "delivered"
+  ) {
+    // Just save the payment reference if we haven't yet
+    if (!order.paymentReference) {
+      order.paymentReference = paymentReference;
+      await order.save();
+    }
+    return order;
+  }
+
+  order.status = "paid";
+  order.paidAt = new Date();
+  order.paymentReference = paymentReference;
+  await order.save();
   return order;
 }

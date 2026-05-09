@@ -17,6 +17,7 @@ import Index from './pages/Index';
 import Products from './pages/Products';
 import Categories from './pages/Categories';
 import CategoryPage from './pages/CategoryPage';
+import ComboDetail from './pages/ComboDetail';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import OrderTracking from './pages/OrderTracking';
@@ -26,6 +27,8 @@ import AdminLogin from './pages/AdminLogin';
 import AdminOrders from './pages/AdminOrders';
 import AdminOrderDetail from './pages/AdminOrderDetail';
 import AdminCategories from './pages/AdminCategories';
+import AdminCombos from './pages/AdminCombos';
+import AdminComboEdit from './pages/AdminComboEdit';
 import AdminTestUpload from './pages/AdminTestUpload';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
@@ -58,6 +61,7 @@ const App = () => (
                 <Routes>
                   <Route path="/" element={<Index />} />
                   <Route path="/products" element={<Products />} />
+                  <Route path="/combos/:slug" element={<ComboDetail />} />
                   <Route path="/categories" element={<Categories />} />
                   <Route path="/categories/:slug" element={<CategoryPage />} />
                   <Route path="/checkout" element={<Checkout />} />
@@ -71,6 +75,9 @@ const App = () => (
                   <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
                   <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
                   <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
                   <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
 
                   {/* Footer pages */}

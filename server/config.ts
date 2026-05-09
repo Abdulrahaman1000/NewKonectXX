@@ -1,44 +1,34 @@
 /**
- * Central env var access.
+ * Server config — single source of truth for environment variables.
  *
- * Importing from here gives us:
- *  - One place to see all required env vars
- *  - Fail-fast: if a required var is missing, the app refuses to start
- *  - Type-safety: the values are typed strings, not `string | undefined`
- *
- * Add new env vars here as the backend grows.
+ * Fail-fast on missing required vars so we never silently run with bad config.
  */
 
-import "dotenv/config";
-
-function required(name: string): string {
+const required = (name: string): string => {
   const value = process.env[name];
   if (!value) {
-    throw new Error(
-      `Missing required environment variable: ${name}\n` +
-        `Make sure it's defined in your .env file.`,
-    );
+    console.error(`❌ Missing required env var: ${name}`);
+    console.error(`   Add it to your .env file, then restart the server.`);
+    process.exit(1);
   }
   return value;
-}
+};
 
-function optional(name: string, fallback: string): string {
+const optional = (name: string, fallback = ""): string => {
   return process.env[name] ?? fallback;
-}
+};
 
 export const config = {
-  // Server
-  nodeEnv: optional("NODE_ENV", "development"),
-  port: parseInt(optional("PORT", "8080"), 10),
-
-  // Database
   mongodbUri: required("MONGODB_URI"),
-
-  // Auth
   jwtSecret: required("JWT_SECRET"),
   jwtExpiresIn: optional("JWT_EXPIRES_IN", "7d"),
 
-  // Add more vars here as you go:
-  // paystackSecretKey: required("PAYSTACK_SECRET_KEY"),
-  // cloudinaryCloudName: required("CLOUDINARY_CLOUD_NAME"),
+  paystack: {
+    secretKey: optional("PAYSTACK_SECRET_KEY"),
+    publicKey: optional("PAYSTACK_PUBLIC_KEY"),
+  },
+
+  // Public site URL — used to build redirect callbacks for the gateway.
+  // Defaults to localhost in dev. Set this when deploying.
+  siteUrl: optional("SITE_URL", "http://localhost:8080"),
 };

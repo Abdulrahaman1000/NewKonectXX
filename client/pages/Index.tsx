@@ -6,7 +6,7 @@ import { SEO } from '@/components/shared/SEO';
 import { HeroCarousel } from '@/sections/HeroCarousel';
 import { TrustBar } from '@/sections/TrustBar';
 import { PromoCountdown } from '@/sections/PromoCountdown';
-import { ComboShowcase } from '@/sections/ComboShowcase';
+import { ComboList } from '@/sections/ComboList';
 import { DemoVideo } from '@/sections/DemoVideo';
 import { Features } from '@/sections/Features';
 import { WhyChooseUs } from '@/sections/WhyChooseUs';
@@ -47,7 +47,6 @@ export default function Index() {
     queryFn: fetchHeroSlides,
   });
 
-  // Wait for settings before first render — they drive most sections.
   if (settingsLoading || !settings) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -70,7 +69,7 @@ export default function Index() {
       />
       <TrustBar />
       <PromoCountdown promo={settings.promo} />
-      <ComboShowcase combos={combos} whatsappLink={settings.contact.whatsappLink} />
+      <ComboList combos={combos} whatsappLink={settings.contact.whatsappLink} />
       <DemoVideo video={settings.video} />
       <Features />
       <WhyChooseUs />

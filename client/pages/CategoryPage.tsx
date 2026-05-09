@@ -1,7 +1,6 @@
 /**
  * Single category page — /categories/:slug
- *
- * Uses the full ComboShowcase design (same as homepage).
+ * Uses ComboList which auto-switches between rich showcase and grid.
  */
 
 import { Link, useParams } from 'react-router-dom';
@@ -11,7 +10,7 @@ import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
-import { ComboShowcase } from '@/sections/ComboShowcase';
+import { ComboList } from '@/sections/ComboList';
 import { fetchCategoryBySlug } from '@/api/categories';
 import { fetchCombos } from '@/api/combos';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -55,10 +54,7 @@ export default function CategoryPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <SEO
-        title={category?.name ?? 'Category'}
-        description={category?.description}
-      />
+      <SEO title={category?.name ?? 'Category'} description={category?.description} />
       <Header />
       <CartDrawer />
 
@@ -98,15 +94,12 @@ export default function CategoryPage() {
           combos.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-white/50 mb-4">No combos in this category yet.</p>
-              <Link
-                to="/products"
-                className="text-primary text-sm hover:underline"
-              >
+              <Link to="/products" className="text-primary text-sm hover:underline">
                 Browse all combos →
               </Link>
             </div>
           ) : (
-            <ComboShowcase combos={combos} whatsappLink={whatsappLink} />
+            <ComboList combos={combos} whatsappLink={whatsappLink} />
           )
         )}
       </main>

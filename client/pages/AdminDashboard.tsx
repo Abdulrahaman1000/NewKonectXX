@@ -1,6 +1,6 @@
 /**
  * Admin Dashboard.
- * Now: Categories tile enabled (links to /admin/categories).
+ * Combos tile now enabled (links to /admin/combos).
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -85,8 +85,8 @@ export default function AdminDashboard() {
           <h2 className="text-base font-bold text-white mb-4">Manage</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
-            <TileLink to="#combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" disabled />
             <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
             <TileLink to="#faqs" Icon={HelpCircle} label="FAQs" desc="Manage FAQ entries shown on the site" disabled />
             <TileLink to="#settings" Icon={Settings} label="Site Settings" desc="Hero slides, promo, contact info, video" disabled />
@@ -111,7 +111,10 @@ export default function AdminDashboard() {
                 {combos.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-white/40 text-sm">
-                      No combos yet.
+                      No combos yet.{' '}
+                      <Link to="/admin/combos/new" className="text-primary hover:underline">
+                        Create one →
+                      </Link>
                     </td>
                   </tr>
                 )}

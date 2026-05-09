@@ -9,9 +9,11 @@ import testimonialsRouter from "./routes/testimonials";
 import faqsRouter from "./routes/faqs";
 import authRouter from "./routes/auth";
 import ordersRouter from "./routes/orders";
+import paymentsRouter from "./routes/payments";
 import adminOrdersRouter from "./routes/admin/orders";
 import adminDashboardRouter from "./routes/admin/dashboard";
 import adminCategoriesRouter from "./routes/admin/categories";
+import adminCombosRouter from "./routes/admin/combos";
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
 
@@ -19,8 +21,14 @@ export function createServer() {
   const app = express();
 
   app.use(cors());
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+
+  // JSON body parsing — but skip the Paystack webhook route so it can
+  // use raw body for HMAC verification.
+  app.use((req, res, next) => {
+    if (req.originalUrl === "/api/payments/webhook/paystack") return next();
+    return express.json({ limit: "2mb" })(req, res, next);
+  });
+  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
   connectDB();
 
@@ -39,11 +47,13 @@ export function createServer() {
   app.use("/api/testimonials", testimonialsRouter);
   app.use("/api/faqs", faqsRouter);
   app.use("/api/orders", ordersRouter);
+  app.use("/api/payments", paymentsRouter);
 
   // Admin API routes (protected)
   app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
   app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
   app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
+  app.use("/api/admin/combos", requireAuth, adminCombosRouter);
 
   return app;
 }

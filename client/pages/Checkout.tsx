@@ -1,18 +1,16 @@
 /**
- * Checkout — real backend wired in.
+ * Checkout — now includes Paystack online payment option.
  *
  * Flow:
  *  1. Customer fills shipping + picks payment method
- *  2. Submit calls POST /api/orders
- *  3. On success, navigate to /order-confirmation/:orderNumber
- *
- * Shipping fee is computed on the BACKEND from settings + city + payment method.
- * The frontend just shows an estimate so the customer isn't surprised.
+ *  2. Submit calls POST /api/orders → creates order
+ *  3. If method is "paystack": redirect to Paystack checkout
+ *     Otherwise: navigate straight to /order-confirmation/:orderNumber
  */
 
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, CreditCard, Loader2 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
@@ -20,6 +18,7 @@ import { useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatNaira } from '@/lib/format';
 import { createOrder } from '@/api/orders';
+import { initializePaystack } from '@/api/payments';
 import { ApiError } from '@/api/client';
 import type { PaymentMethod } from '@/types/order';
 import { toast } from 'sonner';
@@ -38,7 +37,7 @@ export default function Checkout() {
   const { settings } = useSettings();
 
   const [submitting, setSubmitting] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank_transfer');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paystack');
   const [form, setForm] = useState({
     fullName: '',
     phone: '',
@@ -52,13 +51,11 @@ export default function Checkout() {
 
   const update = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  // Determine if customer qualifies for COD
   const codCities = (settings?.shipping?.codCities ?? ['ilorin']).map((c) => c.toLowerCase());
   const isCodEligible =
     form.city.trim() !== '' &&
     codCities.some((c) => form.city.toLowerCase().trim() === c);
 
-  // Estimated shipping (backend will calculate authoritatively)
   const standardFee = settings?.shipping?.standardFee ?? 3500;
   const estimatedShipping =
     paymentMethod === 'cod' && isCodEligible ? 0 : standardFee;
@@ -66,7 +63,6 @@ export default function Checkout() {
   const computedSubtotal = subtotal();
   const total = computedSubtotal + estimatedShipping;
 
-  // If user picks COD but isn't in an eligible city, switch them
   const handlePaymentChange = (method: PaymentMethod) => {
     if (method === 'cod' && !isCodEligible) {
       toast.error(
@@ -87,14 +83,8 @@ export default function Checkout() {
       return;
     }
 
-    // Basic frontend validation
     const requiredFields: (keyof typeof form)[] = [
-      'fullName',
-      'phone',
-      'email',
-      'state',
-      'city',
-      'street',
+      'fullName', 'phone', 'email', 'state', 'city', 'street',
     ];
     for (const f of requiredFields) {
       if (!form[f]?.trim()) {
@@ -105,6 +95,7 @@ export default function Checkout() {
 
     setSubmitting(true);
     try {
+      // 1. Create the order in our DB
       const order = await createOrder({
         items,
         shipping: {
@@ -120,7 +111,37 @@ export default function Checkout() {
         notes: form.notes?.trim() || undefined,
       });
 
-      // Clear cart and navigate to confirmation
+      // 2. If Paystack, get checkout URL and redirect
+      if (paymentMethod === 'paystack') {
+        try {
+          const init = await initializePaystack(order.orderNumber);
+          // Save phone so the confirmation page can fall back to tracking
+          sessionStorage.setItem(
+            `order:${order.orderNumber}:phone`,
+            form.phone.trim(),
+          );
+          // Clear cart before leaving (order is created either way)
+          clear();
+          // Redirect to Paystack — they'll come back via callback URL
+          window.location.href = init.authorizationUrl;
+          return;
+        } catch (err) {
+          // If Paystack init fails, fall through to confirmation page —
+          // customer can still see their order and try paying again from there.
+          if (err instanceof ApiError) {
+            toast.error(`Payment setup failed: ${err.message}`);
+          } else {
+            toast.error('Could not start payment. Try again from the order page.');
+          }
+          clear();
+          navigate(`/order-confirmation/${order.orderNumber}`, {
+            state: { order, phone: form.phone.trim() },
+          });
+          return;
+        }
+      }
+
+      // 3. Other payment methods — straight to confirmation
       clear();
       toast.success(`Order ${order.orderNumber} placed!`);
       navigate(`/order-confirmation/${order.orderNumber}`, {
@@ -147,9 +168,7 @@ export default function Checkout() {
             <h1 className="text-2xl md:text-3xl font-black text-white mb-2">
               Your cart is empty
             </h1>
-            <p className="text-white/50 mb-6">
-              Add a combo to your cart to continue.
-            </p>
+            <p className="text-white/50 mb-6">Add a combo to your cart to continue.</p>
             <Link
               to="/products"
               className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold"
@@ -184,36 +203,17 @@ export default function Checkout() {
           </p>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
-            {/* Left: Form */}
             <div className="space-y-6">
               <Section title="Contact information">
                 <Field label="Full name" required>
-                  <input
-                    type="text"
-                    value={form.fullName}
-                    onChange={(e) => update('fullName', e.target.value)}
-                    className={inputCls}
-                    placeholder="Aisha Mohammed"
-                  />
+                  <input type="text" value={form.fullName} onChange={(e) => update('fullName', e.target.value)} className={inputCls} placeholder="Aisha Mohammed" />
                 </Field>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Phone" required>
-                    <input
-                      type="tel"
-                      value={form.phone}
-                      onChange={(e) => update('phone', e.target.value)}
-                      className={inputCls}
-                      placeholder="+234 800 000 0000"
-                    />
+                    <input type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value)} className={inputCls} placeholder="+234 800 000 0000" />
                   </Field>
                   <Field label="Email" required>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => update('email', e.target.value)}
-                      className={inputCls}
-                      placeholder="you@example.com"
-                    />
+                    <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} className={inputCls} placeholder="you@example.com" />
                   </Field>
                 </div>
               </Section>
@@ -221,63 +221,41 @@ export default function Checkout() {
               <Section title="Delivery address">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="State" required>
-                    <select
-                      value={form.state}
-                      onChange={(e) => update('state', e.target.value)}
-                      className={inputCls}
-                    >
+                    <select value={form.state} onChange={(e) => update('state', e.target.value)} className={inputCls}>
                       <option value="">Select state</option>
-                      {NIGERIAN_STATES.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
+                      {NIGERIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </Field>
                   <Field label="City" required>
-                    <input
-                      type="text"
-                      value={form.city}
-                      onChange={(e) => update('city', e.target.value)}
-                      className={inputCls}
-                      placeholder="Ilorin"
-                    />
+                    <input type="text" value={form.city} onChange={(e) => update('city', e.target.value)} className={inputCls} placeholder="Ilorin" />
                   </Field>
                 </div>
                 <Field label="Street address" required>
-                  <input
-                    type="text"
-                    value={form.street}
-                    onChange={(e) => update('street', e.target.value)}
-                    className={inputCls}
-                    placeholder="No 12, Tanke road"
-                  />
+                  <input type="text" value={form.street} onChange={(e) => update('street', e.target.value)} className={inputCls} placeholder="No 12, Tanke road" />
                 </Field>
                 <Field label="Landmark (optional)">
-                  <input
-                    type="text"
-                    value={form.landmark}
-                    onChange={(e) => update('landmark', e.target.value)}
-                    className={inputCls}
-                    placeholder="Near Diamond Bank"
-                  />
+                  <input type="text" value={form.landmark} onChange={(e) => update('landmark', e.target.value)} className={inputCls} placeholder="Near Diamond Bank" />
                 </Field>
                 <Field label="Order notes (optional)">
-                  <textarea
-                    value={form.notes}
-                    onChange={(e) => update('notes', e.target.value)}
-                    rows={2}
-                    className={inputCls}
-                    placeholder="Anything we should know?"
-                  />
+                  <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} rows={2} className={inputCls} placeholder="Anything we should know?" />
                 </Field>
               </Section>
 
               <Section title="Payment method">
                 <div className="space-y-2">
                   <PaymentOption
+                    value="paystack"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Pay online (card, transfer, USSD)"
+                    description="Secure payment via Paystack. Fastest confirmation."
+                    badge="RECOMMENDED"
+                  />
+                  <PaymentOption
                     value="bank_transfer"
                     selected={paymentMethod}
                     onSelect={handlePaymentChange}
-                    title="Bank transfer"
+                    title="Direct bank transfer"
                     description="Pay to our account, we confirm and ship."
                   />
                   <PaymentOption
@@ -303,7 +281,6 @@ export default function Checkout() {
               </Section>
             </div>
 
-            {/* Right: Order summary */}
             <aside
               className="rounded-2xl border border-primary/20 p-5 h-fit lg:sticky lg:top-24"
               style={{ background: 'rgba(255,255,255,0.02)' }}
@@ -314,18 +291,12 @@ export default function Checkout() {
                 {items.map((item) => (
                   <div key={item.comboId} className="flex gap-3">
                     {item.image && (
-                      <img
-                        src={item.image}
-                        alt={item.comboName}
-                        className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0"
-                      />
+                      <img src={item.image} alt={item.comboName} className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
                       <p className="text-[10px] text-white/40">Qty {item.quantity}</p>
-                      <p className="text-xs text-primary font-bold">
-                        {formatNaira(item.unitPrice * item.quantity)}
-                      </p>
+                      <p className="text-xs text-primary font-bold">{formatNaira(item.unitPrice * item.quantity)}</p>
                     </div>
                   </div>
                 ))}
@@ -333,19 +304,12 @@ export default function Checkout() {
 
               <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
                 <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
-                <Row
-                  label="Shipping (estimate)"
-                  value={estimatedShipping === 0 ? 'Free' : formatNaira(estimatedShipping)}
-                />
-                {savings() > 0 && (
-                  <Row label="You save" value={formatNaira(savings())} accent="emerald" />
-                )}
+                <Row label="Shipping (estimate)" value={estimatedShipping === 0 ? 'Free' : formatNaira(estimatedShipping)} />
+                {savings() > 0 && <Row label="You save" value={formatNaira(savings())} accent="emerald" />}
               </div>
               <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
                 <span className="text-sm text-white/70 font-bold">Total</span>
-                <span className="text-lg text-primary font-black tabular-nums">
-                  {formatNaira(total)}
-                </span>
+                <span className="text-lg text-primary font-black tabular-nums">{formatNaira(total)}</span>
               </div>
 
               <button
@@ -354,17 +318,18 @@ export default function Checkout() {
                 className="btn-primary w-full mt-5 py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Placing order...
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" />Placing order...</>
+                ) : paymentMethod === 'paystack' ? (
+                  <><CreditCard className="w-4 h-4" />Pay {formatNaira(total)} now</>
                 ) : (
                   <>Place order — {formatNaira(total)}</>
                 )}
               </button>
 
               <p className="mt-3 text-[10px] text-white/30 text-center">
-                Final shipping fee confirmed by us based on your delivery zone.
+                {paymentMethod === 'paystack'
+                  ? 'You will be redirected to Paystack to complete payment.'
+                  : 'Final shipping fee confirmed by us based on your delivery zone.'}
               </p>
             </aside>
           </form>
@@ -378,25 +343,14 @@ export default function Checkout() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div
-      className="rounded-2xl border border-white/10 p-5"
-      style={{ background: 'rgba(255,255,255,0.02)' }}
-    >
+    <div className="rounded-2xl border border-white/10 p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
       <h2 className="text-sm font-black text-white mb-4">{title}</h2>
       <div className="space-y-3">{children}</div>
     </div>
   );
 }
 
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
@@ -407,29 +361,19 @@ function Field({
   );
 }
 
-const inputCls =
-  'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+const inputCls = 'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
 
 function Row({ label, value, accent }: { label: string; value: string; accent?: 'emerald' }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-white/50">{label}</span>
-      <span
-        className={`tabular-nums font-medium ${accent === 'emerald' ? 'text-emerald-400' : 'text-white/80'}`}
-      >
-        {value}
-      </span>
+      <span className={`tabular-nums font-medium ${accent === 'emerald' ? 'text-emerald-400' : 'text-white/80'}`}>{value}</span>
     </div>
   );
 }
 
 function PaymentOption({
-  value,
-  selected,
-  onSelect,
-  title,
-  description,
-  disabled,
+  value, selected, onSelect, title, description, disabled, badge,
 }: {
   value: PaymentMethod;
   selected: PaymentMethod;
@@ -437,6 +381,7 @@ function PaymentOption({
   title: string;
   description: string;
   disabled?: boolean;
+  badge?: string;
 }) {
   const isSelected = selected === value;
   return (
@@ -453,15 +398,18 @@ function PaymentOption({
       }`}
     >
       <div className="flex items-start gap-3">
-        <div
-          className={`w-4 h-4 rounded-full border flex-shrink-0 mt-0.5 ${
-            isSelected ? 'border-primary bg-primary' : 'border-white/30'
-          }`}
-        >
+        <div className={`w-4 h-4 rounded-full border flex-shrink-0 mt-0.5 ${isSelected ? 'border-primary bg-primary' : 'border-white/30'}`}>
           {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
         </div>
         <div className="flex-1">
-          <p className="text-sm font-bold text-white">{title}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-white">{title}</p>
+            {badge && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                {badge}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-white/50">{description}</p>
         </div>
       </div>

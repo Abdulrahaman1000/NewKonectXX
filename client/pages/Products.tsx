@@ -1,7 +1,6 @@
 /**
- * Products page — list of all combos using the full ComboShowcase design.
- *
- * Same rich card design as homepage. Filter chips stay above the showcase.
+ * Products page — uses ComboList which auto-switches between
+ * rich showcase (1-2 combos) and grid (3+ combos).
  */
 
 import { useState } from 'react';
@@ -11,7 +10,7 @@ import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
-import { ComboShowcase } from '@/sections/ComboShowcase';
+import { ComboList } from '@/sections/ComboList';
 import { fetchCombos } from '@/api/combos';
 import { fetchCategories } from '@/api/categories';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -51,7 +50,6 @@ export default function Products() {
               </p>
             </div>
 
-            {/* Category filter chips */}
             {categories.length > 0 && (
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
@@ -105,7 +103,7 @@ export default function Products() {
             )}
           </div>
         ) : (
-          <ComboShowcase combos={combos} whatsappLink={whatsappLink} />
+          <ComboList combos={combos} whatsappLink={whatsappLink} />
         )}
       </main>
 
