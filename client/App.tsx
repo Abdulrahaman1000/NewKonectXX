@@ -30,6 +30,9 @@ import AdminCategories from './pages/AdminCategories';
 import AdminCombos from './pages/AdminCombos';
 import AdminComboEdit from './pages/AdminComboEdit';
 import AdminHeroSlides from './pages/AdminHeroSlides';
+import AdminSettings from './pages/AdminSettings';
+import AdminFaqs from './pages/AdminFaqs';
+import AdminTestimonials from './pages/AdminTestimonials';
 import AdminTestUpload from './pages/AdminTestUpload';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
@@ -80,6 +83,9 @@ const App = () => (
                   <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
                   <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
                   <Route path="/admin/hero-slides" element={<AdminProtectedRoute><AdminHeroSlides /></AdminProtectedRoute>} />
+                  <Route path="/admin/settings" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />
+                  <Route path="/admin/faqs" element={<AdminProtectedRoute><AdminFaqs /></AdminProtectedRoute>} />
+                  <Route path="/admin/testimonials" element={<AdminProtectedRoute><AdminTestimonials /></AdminProtectedRoute>} />
                   <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
 
                   {/* Footer pages */}

@@ -1,6 +1,6 @@
 /**
  * Admin Dashboard.
- * Hero Slides tile now enabled.
+ * All tiles now enabled (FAQs + Testimonials).
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   LogOut,
+  MessageSquareQuote,
   Package,
   Settings,
   ShoppingBag,
@@ -89,9 +90,10 @@ export default function AdminDashboard() {
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
             <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
+            <TileLink to="/admin/settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" />
+            <TileLink to="/admin/faqs" Icon={HelpCircle} label="FAQs" desc="Frequently asked questions" />
+            <TileLink to="/admin/testimonials" Icon={MessageSquareQuote} label="Testimonials" desc="Customer reviews shown on homepage" />
             <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
-            <TileLink to="#faqs" Icon={HelpCircle} label="FAQs" desc="Manage FAQ entries shown on the site" disabled />
-            <TileLink to="#settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" disabled />
           </div>
 
           <h2 className="text-base font-bold text-white mb-4">Combos ({combos.length})</h2>

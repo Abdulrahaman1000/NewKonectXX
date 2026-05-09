@@ -15,6 +15,9 @@ import adminDashboardRouter from "./routes/admin/dashboard";
 import adminCategoriesRouter from "./routes/admin/categories";
 import adminCombosRouter from "./routes/admin/combos";
 import adminHeroSlidesRouter from "./routes/admin/heroSlides";
+import adminSettingsRouter from "./routes/admin/settings";
+import adminFaqsRouter from "./routes/admin/faqs";
+import adminTestimonialsRouter from "./routes/admin/testimonials";
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
 
@@ -23,8 +26,6 @@ export function createServer() {
 
   app.use(cors());
 
-  // JSON body parsing — but skip the Paystack webhook route so it can
-  // use raw body for HMAC verification.
   app.use((req, res, next) => {
     if (req.originalUrl === "/api/payments/webhook/paystack") return next();
     return express.json({ limit: "2mb" })(req, res, next);
@@ -56,6 +57,9 @@ export function createServer() {
   app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
   app.use("/api/admin/combos", requireAuth, adminCombosRouter);
   app.use("/api/admin/hero-slides", requireAuth, adminHeroSlidesRouter);
+  app.use("/api/admin/settings", requireAuth, adminSettingsRouter);
+  app.use("/api/admin/faqs", requireAuth, adminFaqsRouter);
+  app.use("/api/admin/testimonials", requireAuth, adminTestimonialsRouter);
 
   return app;
 }
