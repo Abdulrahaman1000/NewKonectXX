@@ -1,15 +1,29 @@
 /**
  * Order service — business logic for orders.
+ *
+ * NEW: buildItemSnapshots reads the customer's selectedVariants per cart
+ * item, looks up the alternative names from the combo, and saves a
+ * human-readable summary like "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ * onto the order item. Admin sees exactly what to ship.
  */
 
 import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
 import { Combo } from "../models/Combo";
 import { SiteSettings } from "../models/SiteSettings";
 import { nextSeq } from "../models/Counter";
+import { config } from "../config";
+import {
+  sendOrderPlaced,
+  sendPaymentConfirmed,
+  sendOrderShipped,
+  sendOrderDelivered,
+  sendNewOrderAdminAlert,
+} from "./emailService";
 
 interface CartItem {
   comboId: string;
   quantity: number;
+  selectedVariants?: Record<string, string>;
 }
 
 export interface CreateOrderInput {
@@ -54,6 +68,24 @@ async function calculateShippingFee(
   return settings.shipping?.standardFee ?? 0;
 }
 
+/**
+ * Builds a human-readable summary of what the customer picked for each slot.
+ * Example: "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ */
+function buildVariantSummary(
+  combo: any,
+  selectedVariants: Record<string, string> | undefined,
+): string {
+  return (combo.items ?? [])
+    .map((item: any) => {
+      const chosenId = selectedVariants?.[item.id];
+      if (!chosenId) return item.name; // default
+      const alt = (item.alternatives ?? []).find((a: any) => a.id === chosenId);
+      return alt ? alt.name : item.name;
+    })
+    .join(" · ");
+}
+
 async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[]> {
   if (!items?.length) {
     throw new OrderError(400, "EMPTY_CART", "Order has no items");
@@ -85,6 +117,7 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
     }
 
     const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
+    const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
 
     snapshots.push({
       comboId: combo._id,
@@ -95,6 +128,8 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
       unitPrice: combo.totalPrice,
       quantity: cartItem.quantity,
       subtotal: combo.totalPrice * cartItem.quantity,
+      selectedVariants: cartItem.selectedVariants ?? {},
+      variantSummary,
     });
   }
 
@@ -117,6 +152,29 @@ async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
   }
 }
 
+function buildEmailContext(order: any) {
+  return {
+    orderNumber: order.orderNumber,
+    customerName: order.shipping.fullName,
+    customerEmail: order.shipping.email,
+    total: order.total,
+    items: order.items.map((it: any) => ({
+      name: it.variantSummary || it.name,
+      quantity: it.quantity,
+      subtotal: it.subtotal,
+    })),
+    shippingAddress: {
+      fullName: order.shipping.fullName,
+      street: order.shipping.street,
+      city: order.shipping.city,
+      state: order.shipping.state,
+      phone: order.shipping.phone,
+    },
+    paymentMethod: order.paymentMethod,
+    trackingUrl: `${config.siteUrl}/order-tracking?order=${encodeURIComponent(order.orderNumber)}`,
+  };
+}
+
 export async function createOrder(input: CreateOrderInput) {
   const items = await buildItemSnapshots(input.items);
 
@@ -131,8 +189,6 @@ export async function createOrder(input: CreateOrderInput) {
 
   await decrementStock(items);
 
-  // COD orders skip "pending" → go straight to "processing".
-  // Online payments (paystack/flutterwave) start as "pending" until verified.
   const initialStatus: OrderStatus =
     input.paymentMethod === "cod" ? "processing" : "pending";
 
@@ -147,6 +203,10 @@ export async function createOrder(input: CreateOrderInput) {
     shipping: input.shipping,
     notes: input.notes,
   });
+
+  const ctx = buildEmailContext(order);
+  sendOrderPlaced(ctx).catch(() => {});
+  sendNewOrderAdminAlert(ctx).catch(() => {});
 
   return order;
 }
@@ -163,12 +223,6 @@ export async function findByOrderNumber(orderNumber: string) {
   return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
 }
 
-/**
- * Marks an order as paid. Idempotent — safe to call multiple times
- * (since webhooks can fire repeatedly).
- *
- * Returns the updated order, or null if not found.
- */
 export async function markOrderPaid(
   orderNumber: string,
   paymentReference: string,
@@ -178,14 +232,12 @@ export async function markOrderPaid(
   });
   if (!order) return null;
 
-  // If already paid (or beyond), skip — don't overwrite a shipped/delivered status
   if (
     order.status === "paid" ||
     order.status === "processing" ||
     order.status === "shipped" ||
     order.status === "delivered"
   ) {
-    // Just save the payment reference if we haven't yet
     if (!order.paymentReference) {
       order.paymentReference = paymentReference;
       await order.save();
@@ -197,5 +249,45 @@ export async function markOrderPaid(
   order.paidAt = new Date();
   order.paymentReference = paymentReference;
   await order.save();
+
+  sendPaymentConfirmed(buildEmailContext(order)).catch(() => {});
+
+  return order;
+}
+
+export async function markOrderShipped(
+  orderNumber: string,
+  trackingNumber?: string,
+  trackingProviderUrl?: string,
+): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "shipped";
+  order.shippedAt = new Date();
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (trackingProviderUrl) order.trackingProviderUrl = trackingProviderUrl;
+  await order.save();
+
+  const ctx = buildEmailContext(order);
+  sendOrderShipped({ ...ctx, trackingNumber, trackingProviderUrl }).catch(() => {});
+
+  return order;
+}
+
+export async function markOrderDelivered(orderNumber: string): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "delivered";
+  order.deliveredAt = new Date();
+  await order.save();
+
+  sendOrderDelivered(buildEmailContext(order)).catch(() => {});
+
   return order;
 }

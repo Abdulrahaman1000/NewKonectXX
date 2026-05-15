@@ -1,12 +1,11 @@
 /**
  * Combos API — frontend client.
  *
- * MongoDB returns `_id`. We normalize to `id` here so the rest of the app
- * doesn't need to think about it. Now supports filtering by category slug.
+ * Adds searchCombos() for the header search bar.
  */
 
-import type { Combo } from "@/types/combo";
 import { apiFetch } from "./client";
+import type { Combo } from "@/types/combo";
 
 interface ApiResponse<T> {
   data: T;
@@ -16,35 +15,40 @@ interface BackendCombo extends Omit<Combo, "id"> {
   _id: string;
 }
 
-function normalizeCombo(raw: BackendCombo): Combo {
+function normalize(raw: BackendCombo): Combo {
   const { _id, ...rest } = raw;
   return { ...rest, id: _id };
 }
 
 export async function fetchCombos(category?: string): Promise<Combo[]> {
-  const url = category
-    ? `/api/combos?category=${encodeURIComponent(category)}`
-    : "/api/combos";
-  const res = await apiFetch<ApiResponse<BackendCombo[]>>(url);
-  return res.data.map(normalizeCombo);
+  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
+  const res = await apiFetch<ApiResponse<BackendCombo[]>>(`/api/combos${qs}`);
+  return res.data.map(normalize);
+}
+
+export async function fetchComboBySlug(slug: string): Promise<Combo> {
+  const res = await apiFetch<ApiResponse<BackendCombo>>(`/api/combos/${slug}`);
+  return normalize(res.data);
 }
 
 export async function fetchFeaturedCombo(): Promise<Combo | null> {
   try {
     const res = await apiFetch<ApiResponse<BackendCombo>>("/api/combos/featured");
-    return normalizeCombo(res.data);
+    return res.data ? normalize(res.data) : null;
   } catch (err: any) {
-    if (err?.status === 404) return null;
+    if (err.status === 404) return null;
     throw err;
   }
 }
 
-export async function fetchComboBySlug(slug: string): Promise<Combo | null> {
-  try {
-    const res = await apiFetch<ApiResponse<BackendCombo>>(`/api/combos/${slug}`);
-    return normalizeCombo(res.data);
-  } catch (err: any) {
-    if (err?.status === 404) return null;
-    throw err;
-  }
+/**
+ * Search combos by name/tagline. Used by the header search bar.
+ * Returns up to 8 active combos matching the query.
+ */
+export async function searchCombos(query: string, limit = 8): Promise<Combo[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const url = `/api/combos/search?q=${encodeURIComponent(trimmed)}&limit=${limit}`;
+  const res = await apiFetch<ApiResponse<BackendCombo[]>>(url);
+  return res.data.map(normalize);
 }

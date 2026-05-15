@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bash -c 'set -a && source .env && set +a && vite'",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "vite build --config vite.config.server.ts",
@@ -14,11 +14,12 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "dotenv": "^17.2.1",
+    "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.6.1",
     "react-helmet-async": "^2.0.5",
+    "resend": "^6.12.3",
     "zod": "^3.25.76",
     "zustand": "^5.0.2"
   },

@@ -1,10 +1,11 @@
 /**
  * Combo model.
  *
- * Now includes categorySlugs[] — a combo can belong to multiple categories.
- * Categories are referenced by slug (not ObjectId) for URL stability.
+ * Each ComboItem can now have:
+ *  - alternatives[]  — different products for the slot (e.g. Smart Watch vs Casio)
+ *  - colors[]        — color variants of the item (e.g. Black, Silver, Gold)
  *
- * NOTE: Removed Mongoose `versionKey` index conflicts and kept structure same.
+ * Both are at the combo's total price — no price difference.
  */
 
 import { Schema, model, Document } from "mongoose";
@@ -14,6 +15,21 @@ export interface ProductImage {
   alt?: string;
 }
 
+export interface ComboItemAlternative {
+  id: string;
+  name: string;
+  badge?: string;
+  images: ProductImage[];
+  description?: string;
+}
+
+export interface ComboItemColor {
+  id: string;
+  name: string;             // e.g. "Black", "Silver Gold"
+  hexCode?: string;         // optional CSS hex like "#000000" — if set, shows a dot; if not, shows a label
+  imageUrl?: string;        // optional swatch image override
+}
+
 export interface ComboItem {
   id: string;
   name: string;
@@ -21,6 +37,8 @@ export interface ComboItem {
   individualPrice: number;
   images: ProductImage[];
   description?: string;
+  alternatives?: ComboItemAlternative[];
+  colors?: ComboItemColor[];
 }
 
 export interface ComboDocument extends Document {
@@ -48,6 +66,27 @@ const ProductImageSchema = new Schema<ProductImage>(
   { _id: false },
 );
 
+const ComboItemAlternativeSchema = new Schema<ComboItemAlternative>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
+const ComboItemColorSchema = new Schema<ComboItemColor>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    hexCode: { type: String, default: "" },
+    imageUrl: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
 const ComboItemSchema = new Schema<ComboItem>(
   {
     id: { type: String, required: true },
@@ -56,6 +95,8 @@ const ComboItemSchema = new Schema<ComboItem>(
     individualPrice: { type: Number, required: true, min: 0 },
     images: { type: [ProductImageSchema], default: [] },
     description: { type: String, default: "" },
+    alternatives: { type: [ComboItemAlternativeSchema], default: [] },
+    colors: { type: [ComboItemColorSchema], default: [] },
   },
   { _id: false },
 );

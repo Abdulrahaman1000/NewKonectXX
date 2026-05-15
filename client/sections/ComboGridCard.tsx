@@ -1,152 +1,167 @@
 /**
- * ComboGridCard — compact card used in grid layouts.
+ * ComboGridCard — Temu-style compact combo card.
  *
- * Shows:
- *  - A horizontal strip of all item images (so customer sees "watch + glasses + bracelet")
- *  - Combo name + tagline
- *  - Price (current + original) + savings badge
- *  - Add to cart button
- *
- * Clicking anywhere on the card (except Add to cart) navigates to /combos/:slug.
+ * Designed for Nigerian mobile shoppers: clear, dense, image-led.
+ * Auto-rotates through the combo items + tappable thumbnail strip.
+ * Whole card links to /combos/:slug for full customization.
  */
 
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ShoppingBag } from 'lucide-react';
-import { useCart } from '@/stores/cart';
-import { calculateSavings, formatNaira } from '@/lib/format';
-import { cldUrl } from '@/lib/cloudinary';
+import { Zap } from 'lucide-react';
 import type { Combo } from '@/types/combo';
-import { toast } from 'sonner';
+import { calculateSavings, formatNaira } from '@/lib/format';
 
 interface Props {
   combo: Combo;
+  rotateMs?: number;
 }
 
-export function ComboGridCard({ combo }: Props) {
-  const addItem = useCart((s) => s.addItem);
-  const openCart = useCart((s) => s.openCart);
+export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
+  const items = combo.items.slice(0, 4);
+  const [idx, setIdx] = useState(0);
+  const manualPauseUntil = useRef(0);
 
-  const { saving, percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const id = setInterval(() => {
+      if (Date.now() < manualPauseUntil.current) return;
+      setIdx((p) => (p + 1) % items.length);
+    }, rotateMs);
+    return () => clearInterval(id);
+  }, [items.length, rotateMs]);
 
-  const itemThumbs = (combo.items ?? [])
-    .map((item) => ({
-      url: item.images?.[0]?.url,
-      name: item.name,
-      badge: item.badge,
-    }))
-    .filter((t) => !!t.url);
-
-  const handleAddToCart = (e: React.MouseEvent) => {
+  const setManual = (i: number, e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    addItem(combo);
-    toast.success(`${combo.name} added to cart`);
-    openCart();
+    manualPauseUntil.current = Date.now() + 6000;
+    setIdx(i);
   };
+
+  const { saving, percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
+  const heroName = items[idx]?.name ?? '';
+
+  const itemCountLabel =
+    combo.items.length >= 2 ? `${combo.items.length}-IN-1 COMBO` : 'COMBO';
 
   return (
     <Link
       to={`/combos/${combo.slug}`}
-      className="group block rounded-2xl border border-white/10 hover:border-primary/40 transition-colors overflow-hidden flex flex-col"
+      className="group block rounded-2xl overflow-hidden border border-white/10 hover:border-primary/40 transition-colors"
       style={{ background: 'rgba(255,255,255,0.02)' }}
     >
-      <div className="relative bg-gradient-to-br from-primary/5 via-transparent to-amber-500/5 border-b border-white/5">
+      {/* Hero image area */}
+      <div className="relative w-full aspect-square bg-black/40 overflow-hidden">
+        {items.map((item, i) => (
+          <img
+            key={item.id + i}
+            src={item.images?.[0]?.url ?? ''}
+            alt={item.name}
+            loading="lazy"
+            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
+            style={{ opacity: i === idx ? 1 : 0 }}
+          />
+        ))}
+
         {combo.badge && (
-          <div className="absolute top-3 right-3 z-10">
-            <span className="inline-block text-[10px] font-bold px-2 py-1 rounded-full bg-primary/95 text-black backdrop-blur">
-              {combo.badge}
-            </span>
-          </div>
+          <span
+            className="absolute top-2 right-2 text-[9px] font-bold px-2 py-1 rounded-full backdrop-blur-sm border border-primary/40 text-primary z-10"
+            style={{ background: 'rgba(0,0,0,0.6)' }}
+          >
+            {combo.badge}
+          </span>
         )}
+
+        <span
+          className="absolute top-2 left-2 text-[9px] font-black px-2 py-1 rounded-md tracking-wider z-10"
+          style={{ background: 'rgba(255,215,0,0.95)', color: '#000' }}
+        >
+          {itemCountLabel}
+        </span>
 
         {percent > 0 && (
-          <div className="absolute top-3 left-3 z-10">
-            <span className="inline-block text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-500/90 text-black">
-              -{percent}%
-            </span>
-          </div>
+          <span
+            className="absolute bottom-2 left-2 text-[10px] font-black px-2 py-1 rounded-md z-10"
+            style={{ background: '#dc2626', color: '#fff' }}
+          >
+            -{percent}%
+          </span>
         )}
 
-        {itemThumbs.length === 0 ? (
-          <div className="aspect-[16/9] flex items-center justify-center text-white/30 text-xs">
-            No images
-          </div>
-        ) : itemThumbs.length === 1 ? (
-          <div className="aspect-square overflow-hidden">
-            <img
-              src={cldUrl(itemThumbs[0].url!, 'w_500,h_500,c_fill,q_auto,f_auto')}
-              alt={itemThumbs[0].name}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            />
-          </div>
-        ) : (
-          <div
-            className="grid gap-0.5 aspect-[16/10]"
-            style={{ gridTemplateColumns: `repeat(${Math.min(itemThumbs.length, 4)}, 1fr)` }}
-          >
-            {itemThumbs.slice(0, 4).map((thumb, i) => (
-              <div key={i} className="relative overflow-hidden">
-                <img
-                  src={cldUrl(thumb.url!, 'w_300,h_400,c_fill,q_auto,f_auto')}
-                  alt={thumb.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-                {thumb.badge && (
-                  <div className="absolute bottom-1 left-1 right-1">
-                    <span className="block text-[8px] font-bold uppercase tracking-wide text-white/90 bg-black/60 backdrop-blur px-1.5 py-0.5 rounded text-center truncate">
-                      {thumb.badge}
-                    </span>
-                  </div>
-                )}
-              </div>
+        {items.length > 1 && (
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10">
+            {items.map((_, i) => (
+              <span
+                key={i}
+                className={`rounded-full transition-all duration-300 ${
+                  i === idx ? 'w-4 h-[3px] bg-primary' : 'w-[4px] h-[4px] bg-white/50'
+                }`}
+              />
             ))}
           </div>
         )}
       </div>
 
-      <div className="p-5 flex-1 flex flex-col">
-        <h3 className="text-base font-black text-white mb-1 line-clamp-1">{combo.name}</h3>
-        {combo.tagline && (
-          <p className="text-[11px] text-white/50 mb-3 line-clamp-1">{combo.tagline}</p>
-        )}
+      {/* Thumbnail strip */}
+      {items.length > 1 && (
+        <div className="px-2.5 pt-2 flex gap-1.5 justify-center">
+          {items.map((item, i) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={(e) => setManual(i, e)}
+              title={item.name}
+              className={`relative w-9 h-9 rounded-md overflow-hidden flex-shrink-0 transition-all ${
+                i === idx
+                  ? 'ring-2 ring-primary'
+                  : 'ring-1 ring-white/15 opacity-70 hover:opacity-100'
+              }`}
+            >
+              <img
+                src={item.images?.[0]?.url ?? ''}
+                alt={item.name}
+                className="w-full h-full object-cover"
+                loading="lazy"
+              />
+            </button>
+          ))}
+        </div>
+      )}
 
-        {itemThumbs.length > 0 && (
-          <p className="text-[10px] text-white/40 mb-3 line-clamp-1">
-            {itemThumbs.length} item{itemThumbs.length > 1 ? 's' : ''}: {itemThumbs.map((t) => t.name).join(' · ')}
-          </p>
-        )}
+      {/* Text */}
+      <div className="p-3">
+        <h3 className="text-sm font-bold text-white leading-tight line-clamp-2 mb-1 min-h-[34px]">
+          {combo.name}
+        </h3>
+        <p className="text-[10px] text-white/40 line-clamp-1 mb-2">
+          {heroName ? `Now showing: ${heroName}` : combo.tagline}
+        </p>
 
-        <div className="flex items-baseline gap-2 mb-1">
-          <span className="text-xl font-black text-primary tabular-nums">
+        <div className="flex items-baseline gap-2 mb-1.5">
+          <span className="text-lg font-black text-primary leading-none">
             {formatNaira(combo.totalPrice)}
           </span>
           {combo.originalPrice > combo.totalPrice && (
-            <span className="text-xs text-white/30 line-through tabular-nums">
+            <span className="text-[11px] text-white/35 line-through">
               {formatNaira(combo.originalPrice)}
             </span>
           )}
         </div>
+
         {saving > 0 && (
-          <p className="text-[10px] font-bold text-emerald-400 mb-4">
-            Save {formatNaira(saving)}
+          <p className="text-[10px] text-emerald-400 font-bold mb-2">
+            💰 Save {formatNaira(saving)}
           </p>
         )}
 
-        <div className="flex-1" />
-
-        <button
-          type="button"
-          onClick={handleAddToCart}
-          className="btn-primary w-full flex items-center justify-center gap-2 py-2.5 text-xs font-bold mt-2"
-        >
-          <ShoppingBag className="w-3.5 h-3.5" />
-          Add to cart
-        </button>
-
-        {combo.stockLeft <= 5 && combo.stockLeft > 0 && (
-          <p className="text-[10px] text-amber-400/80 text-center mt-2">
+        {combo.stockLeft > 0 && combo.stockLeft <= 10 && (
+          <p className="text-[10px] text-amber-400 flex items-center gap-1">
+            <Zap className="w-3 h-3" />
             Only {combo.stockLeft} left
           </p>
+        )}
+        {combo.stockLeft === 0 && (
+          <p className="text-[10px] text-red-400 font-bold">Out of stock</p>
         )}
       </div>
     </Link>

@@ -1,17 +1,8 @@
 /**
  * Order model.
  *
- * Each order captures a SNAPSHOT of items at order time. We never reference
- * the live combo/price — if you raise prices tomorrow, today's orders still
- * show what the customer actually paid.
- *
- * Status flow:
- *   pending → paid → processing → shipped → delivered
- *   pending → cancelled
- *   paid → refunded
- *
- * Order numbers are human-readable: SC-2026-001234 (year + sequential).
- * The counter is in a separate collection (Counter) for atomic increment.
+ * Items now snapshot the customer's variant selections so admin knows
+ * exactly what to ship.
  */
 
 import { Schema, model, Document, Types } from "mongoose";
@@ -36,17 +27,19 @@ export interface OrderItemSnapshot {
   comboId: Types.ObjectId;
   slug: string;
   name: string;
-  tagline: string;
-  thumbnailUrl: string;
+  tagline?: string;
+  thumbnailUrl?: string;
   unitPrice: number;
   quantity: number;
   subtotal: number;
+  selectedVariants?: Record<string, string>;   // itemId → alternativeId
+  variantSummary?: string;                     // human-readable
 }
 
 export interface ShippingAddress {
   fullName: string;
-  email: string;
   phone: string;
+  email: string;
   state: string;
   city: string;
   street: string;
@@ -62,55 +55,54 @@ export interface OrderDocument extends Document {
   status: OrderStatus;
   paymentMethod: PaymentMethod;
   paymentReference?: string;
-  paidAt?: Date;
   shipping: ShippingAddress;
   notes?: string;
-  trackingUrl?: string;
+  trackingNumber?: string;
+  trackingProviderUrl?: string;
   adminNotes?: string;
+  paidAt?: Date;
+  shippedAt?: Date;
+  deliveredAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const OrderItemSchema = new Schema<OrderItemSnapshot>(
+const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
   {
     comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
     slug: { type: String, required: true },
     name: { type: String, required: true },
-    tagline: { type: String, default: "" },
-    thumbnailUrl: { type: String, default: "" },
+    tagline: { type: String },
+    thumbnailUrl: { type: String },
     unitPrice: { type: Number, required: true, min: 0 },
     quantity: { type: Number, required: true, min: 1 },
     subtotal: { type: Number, required: true, min: 0 },
+    selectedVariants: { type: Schema.Types.Mixed, default: {} },
+    variantSummary: { type: String, default: "" },
   },
   { _id: false },
 );
 
 const ShippingAddressSchema = new Schema<ShippingAddress>(
   {
-    fullName: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
-    phone: { type: String, required: true, trim: true },
-    state: { type: String, required: true, trim: true },
-    city: { type: String, required: true, trim: true },
-    street: { type: String, required: true, trim: true },
-    landmark: { type: String, trim: true },
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    email: { type: String, required: true },
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    street: { type: String, required: true },
+    landmark: { type: String },
   },
   { _id: false },
 );
 
 const OrderSchema = new Schema<OrderDocument>(
   {
-    orderNumber: {
-      type: String,
-      required: true,
-      unique: true,
-      index: true,
-    },
-    items: { type: [OrderItemSchema], required: true, default: [] },
+    orderNumber: { type: String, required: true, unique: true, index: true },
+    items: { type: [OrderItemSnapshotSchema], required: true },
     subtotal: { type: Number, required: true, min: 0 },
-    shippingFee: { type: Number, required: true, min: 0, default: 0 },
+    shippingFee: { type: Number, required: true, min: 0 },
     total: { type: Number, required: true, min: 0 },
-
     status: {
       type: String,
       enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
@@ -122,19 +114,20 @@ const OrderSchema = new Schema<OrderDocument>(
       enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"],
       required: true,
     },
-    paymentReference: { type: String },
-    paidAt: { type: Date },
-
+    paymentReference: { type: String, index: true },
     shipping: { type: ShippingAddressSchema, required: true },
-
-    notes: { type: String, trim: true },
-    trackingUrl: { type: String, trim: true },
-    adminNotes: { type: String, trim: true },
+    notes: { type: String },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    adminNotes: { type: String },
+    paidAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
   },
   { timestamps: true },
 );
 
-OrderSchema.index({ "shipping.phone": 1 });
 OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
 
 export const Order = model<OrderDocument>("Order", OrderSchema);

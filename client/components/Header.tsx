@@ -1,14 +1,16 @@
 import { Link } from 'react-router-dom';
-import { ChevronDown, Menu, ShoppingCart, X } from 'lucide-react';
+import { ChevronDown, Menu, Search, ShoppingCart, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
 import { fetchCategories } from '@/api/categories';
+import { SearchBar } from '@/components/shared/SearchBar';
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const itemCount = useCart((s) => s.itemCount());
   const openCart = useCart((s) => s.openCart);
   const { settings } = useSettings();
@@ -24,8 +26,8 @@ export function Header() {
   return (
     <header className="sticky top-0 z-40 glass-card border-b border-[rgba(255,255,255,0.1)]">
       <div className="container-premium">
-        <div className="flex items-center justify-between h-20">
-          <Link to="/" className="flex items-center gap-2 group">
+        <div className="flex items-center justify-between h-20 gap-3 md:gap-4">
+          <Link to="/" className="flex items-center gap-2 group flex-shrink-0">
             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-[#ffed4e] flex items-center justify-center font-bold text-primary-foreground group-hover:shadow-lg group-hover:shadow-primary/30 transition-all">
               SC
             </div>
@@ -34,7 +36,12 @@ export function Header() {
             </span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-8" aria-label="Primary">
+          {/* Desktop search bar */}
+          <div className="hidden md:block flex-1 max-w-md">
+            <SearchBar variant="inline" />
+          </div>
+
+          <nav className="hidden lg:flex items-center gap-5" aria-label="Primary">
             <Link
               to="/"
               className="text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
@@ -42,7 +49,6 @@ export function Header() {
               Home
             </Link>
 
-            {/* Categories dropdown */}
             <div
               className="relative"
               onMouseEnter={() => setCategoriesOpen(true)}
@@ -59,10 +65,7 @@ export function Header() {
               </button>
 
               {categoriesOpen && (
-                <div
-                  className="absolute top-full left-0 pt-3"
-                  // small invisible bridge so hover doesn't break
-                >
+                <div className="absolute top-full right-0 pt-3">
                   <div
                     className="w-72 rounded-2xl border border-white/10 p-2 shadow-2xl"
                     style={{ background: 'rgba(15, 15, 15, 0.98)', backdropFilter: 'blur(20px)' }}
@@ -109,17 +112,11 @@ export function Header() {
               to="/order-tracking"
               className="text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
             >
-              Order Tracking
-            </Link>
-            <Link
-              to="/contact"
-              className="text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
-            >
-              Contact
+              Track Order
             </Link>
           </nav>
 
-          <div className="hidden md:flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-3 flex-shrink-0">
             <button
               type="button"
               onClick={openCart}
@@ -133,23 +130,52 @@ export function Header() {
                 </span>
               )}
             </button>
-            <Link
-              to="/products"
-              className="btn-primary text-sm px-5 py-2 font-bold"
-            >
-              Order Now
-            </Link>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleMenu}
-            className="md:hidden p-2 rounded-lg hover:bg-white/5"
-            aria-label="Toggle menu"
-          >
-            {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          {/* Mobile actions */}
+          <div className="flex md:hidden items-center gap-1 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setMobileSearchOpen((v) => !v)}
+              className="p-2 rounded-lg hover:bg-white/5"
+              aria-label="Search"
+            >
+              {mobileSearchOpen ? <X className="w-5 h-5" /> : <Search className="w-5 h-5" />}
+            </button>
+            <button
+              type="button"
+              onClick={openCart}
+              className="relative p-2 rounded-lg hover:bg-white/5"
+              aria-label="Open cart"
+            >
+              <ShoppingCart className="w-5 h-5 text-white/80" />
+              {itemCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-primary rounded-full text-[10px] font-bold text-black flex items-center justify-center">
+                  {itemCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={toggleMenu}
+              className="p-2 rounded-lg hover:bg-white/5"
+              aria-label="Toggle menu"
+            >
+              {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile search overlay */}
+        {mobileSearchOpen && (
+          <div className="md:hidden py-3 border-t border-white/10">
+            <SearchBar
+              variant="overlay"
+              autoFocus
+              onClose={() => setMobileSearchOpen(false)}
+            />
+          </div>
+        )}
 
         {/* Mobile menu */}
         {isOpen && (
@@ -168,7 +194,7 @@ export function Header() {
                 <span>{cat.name}</span>
               </Link>
             ))}
-            <Link to="/order-tracking" onClick={toggleMenu} className="block py-2 text-sm">Order Tracking</Link>
+            <Link to="/order-tracking" onClick={toggleMenu} className="block py-2 text-sm">Track Order</Link>
             <Link to="/contact" onClick={toggleMenu} className="block py-2 text-sm">Contact</Link>
             <button
               type="button"

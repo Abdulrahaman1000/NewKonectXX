@@ -5,13 +5,19 @@
  *
  * GET    /api/admin/orders                  — list orders (filterable + paginated)
  * GET    /api/admin/orders/:id              — order detail (full, including adminNotes)
- * PATCH  /api/admin/orders/:id/status       — update status with side effects (sets paidAt, etc.)
+ * PATCH  /api/admin/orders/:id/status       — update status. For paid/shipped/delivered
+ *                                              this goes through the service so the
+ *                                              right lifecycle email gets sent.
  * PATCH  /api/admin/orders/:id              — update tracking URL, admin notes
- * GET    /api/admin/dashboard/stats         — aggregate stats for dashboard
  */
 
 import { Router, Request, Response } from "express";
 import { Order, OrderStatus } from "../../models/Order";
+import {
+  markOrderPaid,
+  markOrderShipped,
+  markOrderDelivered,
+} from "../../services/orderService";
 
 const router = Router();
 
@@ -97,10 +103,15 @@ router.get("/:id", async (req: Request, res: Response) => {
 });
 
 // PATCH /api/admin/orders/:id/status
-// Body: { status: OrderStatus }
+// Body: { status: OrderStatus, trackingNumber?: string, trackingProviderUrl?: string }
+//
+// For paid/shipped/delivered we route through orderService so the matching
+// lifecycle email is sent. Other statuses (processing/cancelled/refunded) just
+// update directly — there's no customer-facing email for those (you can change
+// that later if needed).
 router.patch("/:id/status", async (req: Request, res: Response) => {
   try {
-    const { status } = req.body;
+    const { status, trackingNumber, trackingProviderUrl } = req.body;
     if (!status || !VALID_STATUSES.includes(status)) {
       return res.status(400).json({
         error: {
@@ -110,23 +121,47 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       });
     }
 
-    const update: any = { status };
-    // Side effect: when marking 'paid', set paidAt
-    if (status === "paid") {
-      update.paidAt = new Date();
-    }
-
-    const order = await Order.findByIdAndUpdate(req.params.id, update, {
-      new: true,
-    }).lean();
-
-    if (!order) {
+    // Need the order number to call service helpers
+    const existing = await Order.findById(req.params.id).select("orderNumber").lean();
+    if (!existing) {
       return res.status(404).json({
         error: { code: "NOT_FOUND", message: "Order not found" },
       });
     }
 
-    res.json({ data: order });
+    let updated: any = null;
+
+    if (status === "paid") {
+      updated = await markOrderPaid(
+        existing.orderNumber,
+        // Admin-driven manual mark — use a synthetic ref so we know it wasn't gateway
+        `admin-mark-paid-${Date.now()}`,
+      );
+    } else if (status === "shipped") {
+      updated = await markOrderShipped(
+        existing.orderNumber,
+        typeof trackingNumber === "string" ? trackingNumber.trim() || undefined : undefined,
+        typeof trackingProviderUrl === "string" ? trackingProviderUrl.trim() || undefined : undefined,
+      );
+    } else if (status === "delivered") {
+      updated = await markOrderDelivered(existing.orderNumber);
+    } else {
+      // No email side-effect for processing / cancelled / refunded / pending
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        { status },
+        { new: true },
+      ).lean();
+      updated = order;
+    }
+
+    if (!updated) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    res.json({ data: updated });
   } catch (err: any) {
     if (err.name === "CastError") {
       return res.status(404).json({
@@ -141,12 +176,18 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
 });
 
 // PATCH /api/admin/orders/:id
-// Body: { trackingUrl?: string, adminNotes?: string }
+// Body: { trackingUrl?: string, adminNotes?: string, trackingNumber?: string }
 router.patch("/:id", async (req: Request, res: Response) => {
   try {
     const update: any = {};
     if (typeof req.body.trackingUrl === "string") {
-      update.trackingUrl = req.body.trackingUrl.trim();
+      update.trackingProviderUrl = req.body.trackingUrl.trim();
+    }
+    if (typeof req.body.trackingProviderUrl === "string") {
+      update.trackingProviderUrl = req.body.trackingProviderUrl.trim();
+    }
+    if (typeof req.body.trackingNumber === "string") {
+      update.trackingNumber = req.body.trackingNumber.trim();
     }
     if (typeof req.body.adminNotes === "string") {
       update.adminNotes = req.body.adminNotes.trim();

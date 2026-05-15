@@ -1,9 +1,14 @@
 /**
  * Cart store — Zustand.
  *
- * Persisted to localStorage so cart survives refresh.
+ * NEW: addItem accepts an optional `selectedVariants` map and stores it
+ * with the cart item. Items with different variant selections are treated
+ * as the SAME combo (quantity adds up) — we only track ONE variant set
+ * per combo per cart. The most recent selection wins.
  *
- * Run `npm install zustand` after extracting the project.
+ * If you want to allow buying the same combo with multiple variant sets
+ * in one cart, we'd need to key items by `comboId + variantHash`. For
+ * now, simpler is better.
  */
 
 import { create } from 'zustand';
@@ -15,7 +20,11 @@ interface CartStore {
   items: CartItem[];
   isOpen: boolean;
 
-  addItem: (combo: Combo, quantity?: number) => void;
+  addItem: (
+    combo: Combo,
+    quantity?: number,
+    selectedVariants?: Record<string, string>,
+  ) => void;
   removeItem: (comboId: string) => void;
   updateQuantity: (comboId: string, quantity: number) => void;
   clear: () => void;
@@ -24,7 +33,6 @@ interface CartStore {
   closeCart: () => void;
   toggleCart: () => void;
 
-  // Computed
   itemCount: () => number;
   subtotal: () => number;
   originalTotal: () => number;
@@ -37,12 +45,19 @@ export const useCart = create<CartStore>()(
       items: [],
       isOpen: false,
 
-      addItem: (combo, quantity = 1) => {
+      addItem: (combo, quantity = 1, selectedVariants) => {
         const existing = get().items.find((i) => i.comboId === combo.id);
         if (existing) {
           set({
             items: get().items.map((i) =>
-              i.comboId === combo.id ? { ...i, quantity: i.quantity + quantity } : i,
+              i.comboId === combo.id
+                ? {
+                    ...i,
+                    quantity: i.quantity + quantity,
+                    // If new variants were chosen, prefer them; else keep previous selection
+                    selectedVariants: selectedVariants ?? i.selectedVariants,
+                  }
+                : i,
             ),
           });
         } else {
@@ -57,6 +72,7 @@ export const useCart = create<CartStore>()(
                 originalPrice: combo.originalPrice,
                 quantity,
                 image: combo.items[0]?.images[0]?.url ?? '',
+                selectedVariants,
               },
             ],
           });
@@ -93,7 +109,7 @@ export const useCart = create<CartStore>()(
     }),
     {
       name: 'smart-combo-cart',
-      partialize: (state) => ({ items: state.items }), // don't persist isOpen
+      partialize: (state) => ({ items: state.items }),
     },
   ),
 );

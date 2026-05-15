@@ -28,6 +28,13 @@ export const config = {
     publicKey: optional("PAYSTACK_PUBLIC_KEY"),
   },
 
+  resend: {
+    apiKey: optional("RESEND_API_KEY"),
+    from: optional("EMAIL_FROM", "Smart Combo <onboarding@resend.dev>"),
+    replyTo: optional("EMAIL_REPLY_TO", ""),
+    adminNotify: optional("ADMIN_NOTIFY_EMAIL", ""),
+  },
+
   // Public site URL — used to build redirect callbacks for the gateway.
   // Defaults to localhost in dev. Set this when deploying.
   siteUrl: optional("SITE_URL", "http://localhost:8080"),

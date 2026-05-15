@@ -1,12 +1,29 @@
 /**
- * Combo + Product types.
+ * Combo type — frontend.
  *
- * Now includes categorySlugs[] — combos can belong to multiple categories.
+ * Items can have:
+ *  - alternatives[]  — different products for the slot
+ *  - colors[]        — color variants
  */
 
 export interface ProductImage {
   url: string;
   alt?: string;
+}
+
+export interface ComboItemAlternative {
+  id: string;
+  name: string;
+  badge?: string;
+  images: ProductImage[];
+  description?: string;
+}
+
+export interface ComboItemColor {
+  id: string;
+  name: string;
+  hexCode?: string;
+  imageUrl?: string;
 }
 
 export interface ComboItem {
@@ -16,6 +33,8 @@ export interface ComboItem {
   individualPrice: number;
   images: ProductImage[];
   description?: string;
+  alternatives?: ComboItemAlternative[];
+  colors?: ComboItemColor[];
 }
 
 export interface Combo {
@@ -31,7 +50,5 @@ export interface Combo {
   isActive: boolean;
   items: ComboItem[];
   heroImage?: string;
-  categorySlugs?: string[];
-  createdAt?: string;
-  updatedAt?: string;
+  categorySlugs: string[];
 }

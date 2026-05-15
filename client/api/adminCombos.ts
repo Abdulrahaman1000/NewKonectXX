@@ -1,6 +1,6 @@
 /**
  * Admin combos API — frontend client.
- * All requests use admin JWT (auto-attached by apiFetch).
+ * Items support both alternatives[] and colors[].
  */
 
 import { apiFetch } from "./client";
@@ -17,6 +17,21 @@ interface BackendCombo extends Omit<Combo, "id"> {
 function normalize(raw: BackendCombo): Combo {
   const { _id, ...rest } = raw;
   return { ...rest, id: _id };
+}
+
+interface AlternativePayload {
+  id?: string;
+  name: string;
+  badge?: string;
+  description?: string;
+  images: Array<{ url: string; alt?: string }>;
+}
+
+interface ColorPayload {
+  id?: string;
+  name: string;
+  hexCode?: string;
+  imageUrl?: string;
 }
 
 export interface ComboPayload {
@@ -36,6 +51,8 @@ export interface ComboPayload {
     individualPrice: number;
     images: Array<{ url: string; alt?: string }>;
     description?: string;
+    alternatives?: AlternativePayload[];
+    colors?: ColorPayload[];
   }>;
   heroImage?: string;
   categorySlugs: string[];
