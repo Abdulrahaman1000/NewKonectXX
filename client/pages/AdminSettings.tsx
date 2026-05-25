@@ -1,16 +1,6 @@
 /**
  * Admin Site Settings — /admin/settings
- *
- * Single form with multiple sections:
- *  - Contact (phone, email, WhatsApp, address)
- *  - Bank account (for bank transfer payments)
- *  - Shipping (standard fee, COD cities, free shipping threshold)
- *  - Promo countdown
- *  - Trust stats (rating, review count)
- *  - Demo video
- *  - Store identity (name, tagline)
- *
- * Save button updates everything in one request. Toast confirms success.
+ * NEW: Hero Section block (headline + subtext) — editable platform hero copy.
  */
 
 import { useEffect, useState } from 'react';
@@ -35,13 +25,12 @@ export default function AdminSettings() {
   });
 
   const [form, setForm] = useState<AdminSiteSettings | null>(null);
-  // Comma-separated string for COD cities input
   const [codCitiesInput, setCodCitiesInput] = useState('');
 
   useEffect(() => {
     if (settings) {
       setForm(settings);
-      setCodCitiesInput((settings.shipping.codCities ?? []).join(', '));
+      setCodCitiesInput((settings.shipping?.codCities ?? []).join(', '));
     }
   }, [settings]);
 
@@ -65,14 +54,16 @@ export default function AdminSettings() {
     );
   }
 
-  // Helper to update nested fields without losing other fields
   const set = (path: string, value: any) => {
     setForm((f) => {
       if (!f) return f;
       const next: any = JSON.parse(JSON.stringify(f));
       const keys = path.split('.');
       let target = next;
-      for (let i = 0; i < keys.length - 1; i++) target = target[keys[i]];
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (target[keys[i]] === undefined || target[keys[i]] === null) target[keys[i]] = {};
+        target = target[keys[i]];
+      }
       target[keys[keys.length - 1]] = value;
       return next;
     });
@@ -81,7 +72,6 @@ export default function AdminSettings() {
   const handleSave = () => {
     if (!form) return;
 
-    // Convert codCitiesInput back to array
     const codCities = codCitiesInput
       .split(',')
       .map((c) => c.trim().toLowerCase())
@@ -90,6 +80,7 @@ export default function AdminSettings() {
     const payload: Partial<AdminSiteSettings> = {
       storeName: form.storeName,
       tagline: form.tagline,
+      hero: form.hero,
       promo: form.promo,
       contact: form.contact,
       video: form.video,
@@ -101,12 +92,15 @@ export default function AdminSettings() {
     saveMut.mutate(payload);
   };
 
-  // Convert ISO date to "yyyy-MM-ddTHH:mm" for datetime-local input
   const promoEndsAtLocal = form.promo.endsAt
     ? new Date(form.promo.endsAt).toISOString().slice(0, 16)
     : '';
 
   const saving = saveMut.isPending;
+
+  // Defensive defaults if hero missing on older docs
+  const heroHeadline = form.hero?.headline ?? '';
+  const heroSubtext = form.hero?.subtext ?? '';
 
   return (
     <AdminFrame>
@@ -120,7 +114,7 @@ export default function AdminSettings() {
       <div className="flex items-end justify-between mb-8">
         <div>
           <h1 className="text-2xl md:text-3xl font-black text-white">Site Settings</h1>
-          <p className="text-white/50 text-sm mt-1">Contact info, bank, shipping, promo, and more</p>
+          <p className="text-white/50 text-sm mt-1">Hero, contact info, bank, shipping, promo, and more</p>
         </div>
         <button
           type="button"
@@ -134,6 +128,28 @@ export default function AdminSettings() {
       </div>
 
       <div className="space-y-6 max-w-4xl">
+        {/* Hero Section */}
+        <Section title="Homepage hero" subtitle="The big headline and text at the top of your homepage">
+          <Field label="Headline" hint="Keep it short and punchy — this is the biggest text on your site">
+            <input
+              type="text"
+              value={heroHeadline}
+              onChange={(e) => set('hero.headline', e.target.value)}
+              className={inputCls}
+              placeholder="Premium Combos. One Smart Price."
+            />
+          </Field>
+          <Field label="Subtext" hint="One or two sentences explaining what you offer">
+            <textarea
+              rows={3}
+              value={heroSubtext}
+              onChange={(e) => set('hero.subtext', e.target.value)}
+              className={inputCls}
+              placeholder="Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands."
+            />
+          </Field>
+        </Section>
+
         {/* Contact */}
         <Section title="Contact info" subtitle="Shown in footer, contact page, and order receipts">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -367,7 +383,7 @@ export default function AdminSettings() {
                 placeholder="Smart Combo"
               />
             </Field>
-            <Field label="Tagline">
+            <Field label="Tagline" hint="Used in footer. The big hero headline is set in 'Homepage hero' above.">
               <input
                 type="text"
                 value={form.tagline}
@@ -379,7 +395,6 @@ export default function AdminSettings() {
           </div>
         </Section>
 
-        {/* Bottom save */}
         <div className="flex justify-end pt-4">
           <button
             type="button"

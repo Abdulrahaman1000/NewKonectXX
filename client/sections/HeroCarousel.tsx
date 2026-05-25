@@ -1,19 +1,16 @@
 /**
  * Hero carousel — responsive, mobile-first.
  *
- * Mobile layout: image faded behind text, content centered-left, smaller type,
- *   stacked CTAs full-width, reduced padding.
- * Desktop layout: image to the right with mask gradient, big headline left.
- *
- * Copy is generic — uses the combo's tagline and item names so it works for
- * any combo, not just watches/glasses.
+ * Headline + subtext now come from editable Site Settings (settings.hero),
+ * so the copy works platform-wide and is editable in admin. The featured
+ * combo's price/savings/stock still show when one is featured.
  */
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, Check, ChevronLeft, ChevronRight, ShoppingBag, Star } from 'lucide-react';
 import type { Combo } from '@/types/combo';
-import type { HeroSlide } from '@/types/settings';
+import type { HeroSlide, HeroContent } from '@/types/settings';
 import { formatNaira, calculateSavings } from '@/lib/format';
 
 interface Props {
@@ -22,9 +19,14 @@ interface Props {
   whatsappLink: string;
   rating: number;
   reviewCount: number;
+  hero?: HeroContent;
 }
 
-export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, reviewCount }: Props) {
+const FALLBACK_HEADLINE = 'Premium Combos. One Smart Price.';
+const FALLBACK_SUBTEXT =
+  'Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands.';
+
+export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, reviewCount, hero }: Props) {
   const [idx, setIdx] = useState(0);
   const [transitioning, setTransitioning] = useState(false);
 
@@ -56,12 +58,8 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
 
   const slideImage = (s: any) => s?.desktopImage || s?.image || '';
 
-  // Use combo's tagline as the headline if available, else a generic fallback
-  const headline = featuredCombo?.tagline?.trim() || 'Premium Combos, One Low Price';
-  const itemCount = featuredCombo?.items?.length ?? 0;
-  const itemNames = featuredCombo
-    ? featuredCombo.items.map((i) => i.name).join(' · ')
-    : '';
+  const headline = hero?.headline?.trim() || FALLBACK_HEADLINE;
+  const subtext = hero?.subtext?.trim() || FALLBACK_SUBTEXT;
 
   return (
     <section className="relative overflow-hidden min-h-[640px] md:min-h-[96vh] flex items-center">
@@ -97,7 +95,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
 
             {imgSrc && (
               <>
-                {/* Mobile: image behind, faded */}
                 <div
                   className="absolute inset-0 md:hidden"
                   style={{
@@ -115,7 +112,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
                   />
                 </div>
 
-                {/* Desktop: image to the right */}
                 <div
                   className="absolute right-0 top-0 h-full w-1/2 md:w-[45%] hidden md:block"
                   style={{
@@ -151,7 +147,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
 
       {slides.length > 1 && (
         <>
-          {/* Arrows — hidden on mobile to save space */}
           <button
             type="button"
             onClick={() => goTo((p) => (p - 1 + slides.length) % slides.length)}
@@ -185,7 +180,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
         </>
       )}
 
-      {/* Slide tag chip — repositioned for mobile (top-center, no overlap) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 md:top-8 md:right-16 md:left-auto md:translate-x-0 z-20">
         <span
           className="text-[9px] md:text-[10px] tracking-[0.18em] md:tracking-[0.22em] uppercase font-bold px-3 py-1.5 md:px-4 md:py-2 rounded-full backdrop-blur-md border border-primary/25 text-primary/85 whitespace-nowrap"
@@ -199,7 +193,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
         0{idx + 1} / 0{slides.length}
       </div>
 
-      {/* Content — generous padding desktop, tight on mobile */}
       <div className="container-premium section-padding py-16 md:py-32 relative z-10 w-full">
         <div className="max-w-full md:max-w-[560px] space-y-4 md:space-y-6 text-center md:text-left">
           <div className="flex items-center gap-3 justify-center md:justify-start">
@@ -217,19 +210,12 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
             <span className="gradient-text">{headline}</span>
           </h1>
 
-          {featuredCombo ? (
-            <>
-              <p className="text-[13px] md:text-[15px] text-white/65 leading-relaxed max-w-full md:max-w-[420px] mx-auto md:mx-0">
-                {itemCount > 1
-                  ? `Get ${itemCount} premium products at one unbeatable price.`
-                  : `Premium quality at an unbeatable price.`}
-                {itemNames && (
-                  <span className="block text-white/45 text-[11px] md:text-[12px] mt-1.5">
-                    Includes: {itemNames}
-                  </span>
-                )}
-              </p>
+          <p className="text-[13px] md:text-[15px] text-white/65 leading-relaxed max-w-full md:max-w-[440px] mx-auto md:mx-0">
+            {subtext}
+          </p>
 
+          {featuredCombo && (
+            <>
               <div className="flex items-center justify-center md:justify-start gap-3 md:gap-4 pt-1 flex-wrap">
                 <span className="text-3xl sm:text-4xl md:text-5xl font-black text-primary leading-none">
                   {formatNaira(featuredCombo.totalPrice)}
@@ -259,10 +245,6 @@ export function HeroCarousel({ slides, featuredCombo, whatsappLink, rating, revi
                 )}
               </div>
             </>
-          ) : (
-            <p className="text-[13px] md:text-[15px] text-white/65 leading-relaxed max-w-full md:max-w-[420px] mx-auto md:mx-0">
-              Discover our curated combos — premium products bundled at unbeatable prices.
-            </p>
           )}
 
           <div className="flex flex-col sm:flex-row gap-2.5 md:gap-3 pt-2">

@@ -1,16 +1,23 @@
 /**
  * SiteSettings model — single document collection.
  *
- * Includes bank account info (for bank transfer payments) and shipping fees
- * (used to calculate order totals).
+ * NEW: hero { headline, subtext } — editable platform hero copy.
  */
 
 import { Schema, model, Document } from "mongoose";
+
+const DEFAULT_HERO_HEADLINE = "Premium Combos. One Smart Price.";
+const DEFAULT_HERO_SUBTEXT =
+  "Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands.";
 
 export interface SiteSettingsDocument extends Document {
   storeName: string;
   tagline: string;
   defaultHeroImage: string;
+  hero: {
+    headline: string;
+    subtext: string;
+  };
   promo: {
     endsAt: Date;
     enabled: boolean;
@@ -40,8 +47,8 @@ export interface SiteSettingsDocument extends Document {
   };
   shipping: {
     standardFee: number;
-    codCities: string[];        // case-insensitive city names with COD + free shipping
-    freeShippingThreshold: number; // 0 = disabled
+    codCities: string[];
+    freeShippingThreshold: number;
   };
   updatedAt: Date;
 }
@@ -51,6 +58,11 @@ const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
     storeName: { type: String, required: true, default: "Smart Combo" },
     tagline: { type: String, default: "" },
     defaultHeroImage: { type: String, default: "" },
+
+    hero: {
+      headline: { type: String, default: DEFAULT_HERO_HEADLINE },
+      subtext: { type: String, default: DEFAULT_HERO_SUBTEXT },
+    },
 
     promo: {
       endsAt: { type: Date, default: () => new Date(Date.now() + 5 * 86400000) },

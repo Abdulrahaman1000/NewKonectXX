@@ -172,11 +172,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
-    const combo = await Combo.findByIdAndUpdate(
-      req.params.id,
-      { $set: { isActive: false, isFeatured: false } },
-      { new: true },
-    ).lean();
+    const combo = await Combo.findByIdAndDelete(req.params.id).lean();
     if (!combo) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
     res.json({ data: { id: req.params.id, deleted: true } });
   } catch (err: any) {

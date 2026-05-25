@@ -1,37 +1,40 @@
 /**
- * Site-wide settings
- *
- * Single document in MongoDB (collection: siteSettings, only one record).
- * Editable from admin dashboard.
+ * Site-wide settings — frontend types.
+ * NEW: hero { headline, subtext }.
  */
 
 export interface HeroSlide {
   id: string;
   image: string;
-  accent: string;  // tailwind gradient classes, e.g. "from-[#1a0a2e] via-[#16213e] to-[#0f3460]"
+  accent: string;
   tag: string;
 }
 
+export interface HeroContent {
+  headline: string;
+  subtext: string;
+}
+
 export interface PromoSettings {
-  endsAt: string;          // ISO date string — "2026-05-15T23:59:59.000Z"
+  endsAt: string;
   enabled: boolean;
-  headline: string;        // "Price goes back to ₦105,000 when timer hits zero"
-  subline: string;         // "Only 15 combo packs left at this price"
+  headline: string;
+  subline: string;
 }
 
 export interface ContactSettings {
-  whatsappNumber: string;     // "+2348000000000" — full international format
-  whatsappLink: string;       // computed: "https://wa.me/2348000000000"
+  whatsappNumber: string;
+  whatsappLink: string;
   email: string;
-  phone: string;              // display format: "+234 (0) 123 456 7890"
-  address: string;            // "Ilorin, Kwara State, Nigeria"
+  phone: string;
+  address: string;
 }
 
 export interface VideoSettings {
-  url: string;          // YouTube embed URL
+  url: string;
   thumbnail: string;
   title: string;
-  duration: string;     // "2:30 min"
+  duration: string;
 }
 
 export interface BankAccount {
@@ -47,16 +50,17 @@ export interface ShippingConfig {
 }
 
 export interface SiteSettings {
-  storeName: string;          // "Smart Combo"
-  tagline: string;            // "Premium lifestyle gadgets..."
-  defaultHeroImage: string;   // fallback hero when no combo featured
-  heroSlides?: HeroSlide[];   // legacy — now fetched separately
+  storeName: string;
+  tagline: string;
+  defaultHeroImage: string;
+  hero?: HeroContent;
+  heroSlides?: HeroSlide[];
   promo: PromoSettings;
   contact: ContactSettings;
   video: VideoSettings;
   trustStats: {
-    rating: number;       // 4.9
-    reviewCount: number;  // 2500
+    rating: number;
+    reviewCount: number;
   };
   bankAccount?: BankAccount;
   shipping?: ShippingConfig;
