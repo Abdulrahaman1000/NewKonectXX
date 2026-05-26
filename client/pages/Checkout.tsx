@@ -241,6 +241,30 @@ export default function Checkout() {
                 </Field>
               </Section>
 
+              {/* COD_BANNER_INSERTED */}
+              {isCodEligible && (
+                <div
+                  className="rounded-2xl border border-emerald-500/40 p-4 md:p-5"
+                  style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04))' }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-5 h-5 text-emerald-300">
+                        <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm md:text-base font-black text-emerald-300 mb-0.5">
+                        Great news — you qualify for Pay on Delivery!
+                      </p>
+                      <p className="text-[12px] md:text-[13px] text-emerald-100/70 leading-relaxed">
+                        FREE delivery in {form.city || 'your area'}. No upfront payment needed — pay cash to our delivery person when your combo arrives.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Section title="Payment method">
                 <div className="space-y-2">
                   <PaymentOption

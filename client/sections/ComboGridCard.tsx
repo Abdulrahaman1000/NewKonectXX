@@ -164,6 +164,18 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
           <p className="text-[10px] text-red-400 font-bold">Out of stock</p>
         )}
       </div>
-    </Link>
+            {combo.stockLeft > 0 && combo.stockLeft <= 10 && (
+          <div className="px-3 pb-3">
+            <div className="flex items-center gap-1.5 text-[10px] md:text-[11px] font-bold uppercase tracking-wide">
+              <span className="relative flex w-2 h-2">
+                <span className="absolute inline-flex w-full h-full rounded-full bg-red-400 opacity-75 animate-ping" />
+                <span className="relative inline-flex w-2 h-2 rounded-full bg-red-500" />
+              </span>
+              <span className="text-red-400">Only {combo.stockLeft} left in stock</span>
+            </div>
+          </div>
+        )}
+        {/* STOCK_URGENCY_BOOSTED */}
+      </Link>
   );
 }

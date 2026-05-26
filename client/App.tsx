@@ -41,6 +41,7 @@ import Returns from './pages/Returns';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import NotFound from './pages/NotFound';
+import { WhatsAppFloat } from '@/components/shared/WhatsAppFloat';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -98,6 +99,7 @@ const App = () => (
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>
+                <WhatsAppFloat />
               </BrowserRouter>
             </TooltipProvider>
           </SettingsProvider>
