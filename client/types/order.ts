@@ -1,40 +1,46 @@
 /**
- * Order model.
+ * Frontend order/cart types.
  *
- * Items now snapshot the customer's variant selections so admin knows
- * exactly what to ship.
+ * NOTE: this file previously contained a stray copy of the BACKEND
+ * Mongoose Order model (server/models/Order.ts) — it didn't even export
+ * CartItem or Order (as a plain frontend type), which several files
+ * actually need. That's fixed here: frontend-only, no mongoose import.
  */
 
-import { Schema, model, Document, Types } from "mongoose";
+/** One line item in the cart — one product/combo, with quantity and any selected variants. */
+export interface CartItem {
+  comboId: string;
+  comboName: string;
+  comboSlug: string;
+  unitPrice: number;
+  originalPrice: number;
+  quantity: number;
+  image: string;
+  selectedVariants?: Record<string, string>;
+  /**
+   * Set when this item was added as part of a "Build Your Own Combo"
+   * selection. Items sharing the same comboGroupId are shown grouped
+   * together in the cart, with the discount applied once per group
+   * (see customComboGroups in the cart store), not per item.
+   */
+  comboGroupId?: string;
+}
 
 export type OrderStatus =
-  | "pending"
-  | "paid"
-  | "processing"
-  | "shipped"
-  | "delivered"
-  | "cancelled"
-  | "refunded";
+  | 'pending'
+  | 'paid'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled'
+  | 'refunded';
 
 export type PaymentMethod =
-  | "paystack"
-  | "flutterwave"
-  | "bank_transfer"
-  | "cod"
-  | "whatsapp";
-
-export interface OrderItemSnapshot {
-  comboId: Types.ObjectId;
-  slug: string;
-  name: string;
-  tagline?: string;
-  thumbnailUrl?: string;
-  unitPrice: number;
-  quantity: number;
-  subtotal: number;
-  selectedVariants?: Record<string, string>;   // itemId → alternativeId
-  variantSummary?: string;                     // human-readable
-}
+  | 'paystack'
+  | 'flutterwave'
+  | 'bank_transfer'
+  | 'cod'
+  | 'whatsapp';
 
 export interface ShippingAddress {
   fullName: string;
@@ -46,7 +52,25 @@ export interface ShippingAddress {
   landmark?: string;
 }
 
-export interface OrderDocument extends Document {
+/** One item as stored/returned on a placed order (a snapshot, not live cart data). */
+export interface OrderItemSnapshot {
+  comboId: string;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;
+  variantSummary?: string;
+}
+
+/** A placed order, as returned by the API on the frontend (id instead of _id, dates as strings). */
+export interface Order {
+  id: string;
+  /** Some places in the codebase still check the raw Mongo _id as a fallback — kept optional for that. */
+  _id?: string;
   orderNumber: string;
   items: OrderItemSnapshot[];
   subtotal: number;
@@ -58,76 +82,12 @@ export interface OrderDocument extends Document {
   shipping: ShippingAddress;
   notes?: string;
   trackingNumber?: string;
+  trackingUrl?: string;
   trackingProviderUrl?: string;
   adminNotes?: string;
-  paidAt?: Date;
-  shippedAt?: Date;
-  deliveredAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  paidAt?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
-
-const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
-  {
-    comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
-    slug: { type: String, required: true },
-    name: { type: String, required: true },
-    tagline: { type: String },
-    thumbnailUrl: { type: String },
-    unitPrice: { type: Number, required: true, min: 0 },
-    quantity: { type: Number, required: true, min: 1 },
-    subtotal: { type: Number, required: true, min: 0 },
-    selectedVariants: { type: Schema.Types.Mixed, default: {} },
-    variantSummary: { type: String, default: "" },
-  },
-  { _id: false },
-);
-
-const ShippingAddressSchema = new Schema<ShippingAddress>(
-  {
-    fullName: { type: String, required: true },
-    phone: { type: String, required: true },
-    email: { type: String, required: true },
-    state: { type: String, required: true },
-    city: { type: String, required: true },
-    street: { type: String, required: true },
-    landmark: { type: String },
-  },
-  { _id: false },
-);
-
-const OrderSchema = new Schema<OrderDocument>(
-  {
-    orderNumber: { type: String, required: true, unique: true, index: true },
-    items: { type: [OrderItemSnapshotSchema], required: true },
-    subtotal: { type: Number, required: true, min: 0 },
-    shippingFee: { type: Number, required: true, min: 0 },
-    total: { type: Number, required: true, min: 0 },
-    status: {
-      type: String,
-      enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
-      default: "pending",
-      index: true,
-    },
-    paymentMethod: {
-      type: String,
-      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"],
-      required: true,
-    },
-    paymentReference: { type: String, index: true },
-    shipping: { type: ShippingAddressSchema, required: true },
-    notes: { type: String },
-    trackingNumber: { type: String },
-    trackingProviderUrl: { type: String },
-    adminNotes: { type: String },
-    paidAt: { type: Date },
-    shippedAt: { type: Date },
-    deliveredAt: { type: Date },
-  },
-  { timestamps: true },
-);
-
-OrderSchema.index({ createdAt: -1 });
-OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
-
-export const Order = model<OrderDocument>("Order", OrderSchema);

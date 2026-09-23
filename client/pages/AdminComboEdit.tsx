@@ -69,6 +69,7 @@ interface FormState {
   stockLeft: number;
   isFeatured: boolean;
   isActive: boolean;
+  customComboEligible: boolean;
   heroImage: string;
   categorySlugs: string[];
   items: ItemForm[];
@@ -83,7 +84,7 @@ const EMPTY_ITEM: ItemForm = {
 
 const EMPTY_FORM: FormState = {
   slug: '', name: '', tagline: '', totalPrice: 0, originalPrice: 0, badge: '',
-  stockLeft: 0, isFeatured: false, isActive: true, heroImage: '',
+  stockLeft: 0, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
   categorySlugs: [], items: [],
 };
 
@@ -102,6 +103,7 @@ function fromCombo(combo: Combo): FormState {
     stockLeft: combo.stockLeft,
     isFeatured: combo.isFeatured,
     isActive: combo.isActive,
+    customComboEligible: combo.customComboEligible ?? false,
     heroImage: combo.heroImage ?? '',
     categorySlugs: combo.categorySlugs ?? [],
     items: (combo.items ?? []).map((item) => ({
@@ -330,6 +332,7 @@ export default function AdminComboEdit() {
     stockLeft: form.stockLeft,
     isFeatured: form.isFeatured,
     isActive: form.isActive,
+    customComboEligible: form.customComboEligible,
     heroImage: form.heroImage.trim(),
     categorySlugs: form.categorySlugs,
     items: form.items.map((it) => ({
@@ -465,6 +468,9 @@ export default function AdminComboEdit() {
               checked={form.isFeatured} onChange={(v) => update('isFeatured', v)} />
             <Toggle label="Active" hint="Hide from the storefront without deleting."
               checked={form.isActive} onChange={(v) => update('isActive', v)} />
+            <Toggle label="Available for Build-Your-Own Combo"
+              hint="Lets customers pick this product into their own custom 2-3 item combo for a discount. Only makes sense for single-item products."
+              checked={form.customComboEligible} onChange={(v) => update('customComboEligible', v)} />
           </div>
         </Section>
 

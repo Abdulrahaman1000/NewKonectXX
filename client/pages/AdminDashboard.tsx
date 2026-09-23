@@ -1,6 +1,6 @@
 /**
  * Admin Dashboard.
- * All tiles now enabled (FAQs + Testimonials).
+ * Clean overview page with navigation to management sub-pages.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -15,20 +15,15 @@ import {
   Settings,
   ShoppingBag,
   Users,
+  ArrowRight,
 } from 'lucide-react';
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchCombos } from '@/api/combos';
 import { getDashboardStats } from '@/api/adminOrders';
 import { formatNaira } from '@/lib/format';
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
-
-  const { data: combos = [] } = useQuery({
-    queryKey: ['combos'],
-    queryFn: () => fetchCombos(),
-  });
 
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
@@ -84,83 +79,16 @@ export default function AdminDashboard() {
             <StatCard label="Customers" value={(stats?.customers ?? 0).toString()} />
           </div>
 
-          <h2 className="text-base font-bold text-white mb-4">Manage</h2>
+          <h2 className="text-base font-bold text-white mb-4">Manage Store</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
-            <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos" desc="Add, edit, and manage combo products" />
+            <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos Management" desc="Add, edit, toggle visibility, and delete combos" highlight />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
             <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
             <TileLink to="/admin/settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" />
             <TileLink to="/admin/faqs" Icon={HelpCircle} label="FAQs" desc="Frequently asked questions" />
             <TileLink to="/admin/testimonials" Icon={MessageSquareQuote} label="Testimonials" desc="Customer reviews shown on homepage" />
             <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
-          </div>
-
-          <h2 className="text-base font-bold text-white mb-4">Combos ({combos.length})</h2>
-          <div
-            className="rounded-2xl border border-white/10 overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.02)' }}
-          >
-            <table className="w-full text-sm">
-              <thead className="bg-white/5">
-                <tr className="text-left text-xs uppercase text-white/50 tracking-wide">
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Categories</th>
-                  <th className="px-4 py-3">Price</th>
-                  <th className="px-4 py-3">Stock</th>
-                  <th className="px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {combos.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-white/40 text-sm">
-                      No combos yet.{' '}
-                      <Link to="/admin/combos/new" className="text-primary hover:underline">
-                        Create one →
-                      </Link>
-                    </td>
-                  </tr>
-                )}
-                {combos.map((combo) => (
-                  <tr key={combo.id} className="border-t border-white/5 hover:bg-white/[0.02]">
-                    <td className="px-4 py-3">
-                      <p className="text-white font-medium">{combo.name}</p>
-                      <p className="text-white/40 text-xs">{combo.tagline}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      {(combo.categorySlugs ?? []).length === 0 ? (
-                        <span className="text-white/30 text-xs">—</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {(combo.categorySlugs ?? []).map((slug) => (
-                            <span
-                              key={slug}
-                              className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/60"
-                            >
-                              {slug}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-white/70 tabular-nums">{formatNaira(combo.totalPrice)}</td>
-                    <td className="px-4 py-3 text-white/70 tabular-nums">{combo.stockLeft}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          combo.isActive
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
-                            : 'bg-gray-500/15 text-gray-300 border-gray-500/25'
-                        }`}
-                      >
-                        {combo.isActive ? 'ACTIVE' : 'HIDDEN'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
 
           <p className="mt-8 text-xs text-white/30 text-center">
@@ -185,7 +113,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 function TileLink({
-  to, Icon, label, desc, disabled, badge,
+  to, Icon, label, desc, disabled, badge, highlight,
 }: {
   to: string;
   Icon: any;
@@ -193,12 +121,17 @@ function TileLink({
   desc: string;
   disabled?: boolean;
   badge?: number;
+  highlight?: boolean;
 }) {
   const content = (
     <>
       <div className="flex items-center justify-between mb-3">
-        <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-          <Icon className="w-4 h-4 text-primary" />
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center border ${
+          highlight 
+            ? 'bg-primary/20 border-primary/40 text-primary' 
+            : 'bg-primary/10 border-primary/20 text-primary'
+        }`}>
+          <Icon className="w-4 h-4" />
         </div>
         {!!badge && badge > 0 && (
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
@@ -209,13 +142,18 @@ function TileLink({
           <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">Soon</span>
         )}
       </div>
-      <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
+        {highlight && <ArrowRight className="w-4 h-4 text-primary" />}
+      </div>
       <p className="text-xs text-white/50">{desc}</p>
     </>
   );
 
-  const baseCls = 'block text-left p-5 rounded-2xl border transition-colors';
-  const enabledCls = 'border-white/10 hover:border-primary/40 cursor-pointer';
+  const baseCls = 'block text-left p-5 rounded-2xl border transition-all';
+  const enabledCls = highlight 
+    ? 'border-primary/40 bg-primary/5 hover:border-primary hover:bg-primary/10 cursor-pointer shadow-lg shadow-primary/5' 
+    : 'border-white/10 hover:border-primary/40 cursor-pointer';
   const disabledCls = 'border-white/5 opacity-50 cursor-not-allowed';
 
   if (disabled) {
@@ -227,7 +165,7 @@ function TileLink({
   }
 
   return (
-    <Link to={to} className={`${baseCls} ${enabledCls}`} style={{ background: 'rgba(255,255,255,0.02)' }}>
+    <Link to={to} className={`${baseCls} ${enabledCls}`} style={!highlight ? { background: 'rgba(255,255,255,0.02)' } : undefined}>
       {content}
     </Link>
   );

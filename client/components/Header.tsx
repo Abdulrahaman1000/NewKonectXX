@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronDown, Menu, Search, ShoppingCart, X } from 'lucide-react';
+import { ChevronDown, Menu, Search, ShoppingCart, Sparkles, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useCart } from '@/stores/cart';
@@ -114,6 +114,14 @@ export function Header() {
             >
               Track Order
             </Link>
+
+            <Link
+              to="/products?mode=combo-builder"
+              className="flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Build a Combo
+            </Link>
           </nav>
 
           <div className="hidden md:flex items-center gap-3 flex-shrink-0">
@@ -196,6 +204,14 @@ export function Header() {
             ))}
             <Link to="/order-tracking" onClick={toggleMenu} className="block py-2 text-sm">Track Order</Link>
             <Link to="/contact" onClick={toggleMenu} className="block py-2 text-sm">Contact</Link>
+            <Link
+              to="/products?mode=combo-builder"
+              onClick={toggleMenu}
+              className="flex items-center gap-1.5 py-2 text-sm font-bold text-primary"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Build a Combo & Save
+            </Link>
             <button
               type="button"
               onClick={() => { openCart(); toggleMenu(); }}

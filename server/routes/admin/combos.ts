@@ -102,6 +102,7 @@ router.post("/", async (req: Request, res: Response) => {
       stockLeft: Number(body.stockLeft) || 0,
       isFeatured: Boolean(body.isFeatured),
       isActive: body.isActive !== false,
+      customComboEligible: Boolean(body.customComboEligible),
       items: ensureItemIds(body.items),
       heroImage: body.heroImage ?? "",
       categorySlugs: Array.isArray(body.categorySlugs) ? body.categorySlugs : [],
@@ -128,6 +129,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (body.badge !== undefined) update.badge = body.badge;
     if (body.stockLeft !== undefined) update.stockLeft = Number(body.stockLeft) || 0;
     if (body.isActive !== undefined) update.isActive = Boolean(body.isActive);
+    if (body.customComboEligible !== undefined) update.customComboEligible = Boolean(body.customComboEligible);
     if (body.heroImage !== undefined) update.heroImage = body.heroImage;
     if (Array.isArray(body.categorySlugs)) update.categorySlugs = body.categorySlugs;
     if (Array.isArray(body.items)) update.items = ensureItemIds(body.items);

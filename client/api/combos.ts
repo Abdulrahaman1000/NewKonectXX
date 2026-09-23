@@ -1,7 +1,8 @@
 /**
  * Combos API — frontend client.
  *
- * Adds searchCombos() for the header search bar.
+ * Adds searchCombos() for the header search bar and
+ * fetchCustomComboEligibleProducts() for the Build Your Own Combo picker.
  */
 
 import { apiFetch } from "./client";
@@ -39,6 +40,16 @@ export async function fetchFeaturedCombo(): Promise<Combo | null> {
     if (err.status === 404) return null;
     throw err;
   }
+}
+
+/**
+ * Products eligible for the "Build Your Own Combo" picker.
+ * Filters client-side: single-item products (items.length === 1) that
+ * an admin has explicitly flagged as customComboEligible.
+ */
+export async function fetchCustomComboEligibleProducts(): Promise<Combo[]> {
+  const all = await fetchCombos();
+  return all.filter((c) => c.customComboEligible && c.items.length === 1 && c.isActive);
 }
 
 /**

@@ -44,6 +44,7 @@ export interface ComboPayload {
   stockLeft: number;
   isFeatured: boolean;
   isActive: boolean;
+  customComboEligible: boolean;
   items: Array<{
     id?: string;
     name: string;

@@ -4,11 +4,17 @@
  * Designed for Nigerian mobile shoppers: clear, dense, image-led.
  * Auto-rotates through the combo items + tappable thumbnail strip.
  * Whole card links to /combos/:slug for full customization.
+ *
+ * Fixes from the previous version:
+ *  - Removed a duplicated "Only X left" stock warning (was rendering twice —
+ *    once amber with a lightning icon, once red with a pulsing dot).
+ *    Kept the pulsing-dot version since it reads more clearly at a glance.
+ *  - The "COMBO" / "X-IN-1 COMBO" tag no longer shows on single-item
+ *    products, since those are standalone products now, not combos.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Zap } from 'lucide-react';
 import type { Combo } from '@/types/combo';
 import { calculateSavings, formatNaira } from '@/lib/format';
 
@@ -21,6 +27,7 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
   const items = combo.items.slice(0, 4);
   const [idx, setIdx] = useState(0);
   const manualPauseUntil = useRef(0);
+  const isRealCombo = combo.items.length > 1;
 
   useEffect(() => {
     if (items.length <= 1) return;
@@ -41,8 +48,8 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
   const { saving, percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
   const heroName = items[idx]?.name ?? '';
 
-  const itemCountLabel =
-    combo.items.length >= 2 ? `${combo.items.length}-IN-1 COMBO` : 'COMBO';
+  const itemCountLabel = isRealCombo ? `${combo.items.length}-IN-1 COMBO` : null;
+  const showLowStock = combo.stockLeft > 0 && combo.stockLeft <= 10;
 
   return (
     <Link
@@ -72,12 +79,14 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
           </span>
         )}
 
-        <span
-          className="absolute top-2 left-2 text-[9px] font-black px-2 py-1 rounded-md tracking-wider z-10"
-          style={{ background: 'rgba(255,215,0,0.95)', color: '#000' }}
-        >
-          {itemCountLabel}
-        </span>
+        {itemCountLabel && (
+          <span
+            className="absolute top-2 left-2 text-[9px] font-black px-2 py-1 rounded-md tracking-wider z-10"
+            style={{ background: 'rgba(255,215,0,0.95)', color: '#000' }}
+          >
+            {itemCountLabel}
+          </span>
+        )}
 
         {percent > 0 && (
           <span
@@ -102,7 +111,7 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
         )}
       </div>
 
-      {/* Thumbnail strip */}
+      {/* Thumbnail strip — only for real combos with multiple items */}
       {items.length > 1 && (
         <div className="px-2.5 pt-2 flex gap-1.5 justify-center">
           {items.map((item, i) => (
@@ -134,7 +143,7 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
           {combo.name}
         </h3>
         <p className="text-[10px] text-white/40 line-clamp-1 mb-2">
-          {heroName ? `Now showing: ${heroName}` : combo.tagline}
+          {isRealCombo && heroName ? `Now showing: ${heroName}` : combo.tagline}
         </p>
 
         <div className="flex items-baseline gap-2 mb-1.5">
@@ -149,33 +158,28 @@ export function ComboGridCard({ combo, rotateMs = 2500 }: Props) {
         </div>
 
         {saving > 0 && (
-          <p className="text-[10px] text-emerald-400 font-bold mb-2">
+          <p className="text-[10px] text-emerald-400 font-bold">
             💰 Save {formatNaira(saving)}
           </p>
         )}
 
-        {combo.stockLeft > 0 && combo.stockLeft <= 10 && (
-          <p className="text-[10px] text-amber-400 flex items-center gap-1">
-            <Zap className="w-3 h-3" />
-            Only {combo.stockLeft} left
-          </p>
-        )}
         {combo.stockLeft === 0 && (
-          <p className="text-[10px] text-red-400 font-bold">Out of stock</p>
+          <p className="text-[10px] text-red-400 font-bold mt-1">Out of stock</p>
         )}
       </div>
-            {combo.stockLeft > 0 && combo.stockLeft <= 10 && (
-          <div className="px-3 pb-3">
-            <div className="flex items-center gap-1.5 text-[10px] md:text-[11px] font-bold uppercase tracking-wide">
-              <span className="relative flex w-2 h-2">
-                <span className="absolute inline-flex w-full h-full rounded-full bg-red-400 opacity-75 animate-ping" />
-                <span className="relative inline-flex w-2 h-2 rounded-full bg-red-500" />
-              </span>
-              <span className="text-red-400">Only {combo.stockLeft} left in stock</span>
-            </div>
+
+      {/* Single stock-urgency indicator — the duplicate has been removed */}
+      {showLowStock && (
+        <div className="px-3 pb-3">
+          <div className="flex items-center gap-1.5 text-[10px] md:text-[11px] font-bold uppercase tracking-wide">
+            <span className="relative flex w-2 h-2">
+              <span className="absolute inline-flex w-full h-full rounded-full bg-red-400 opacity-75 animate-ping" />
+              <span className="relative inline-flex w-2 h-2 rounded-full bg-red-500" />
+            </span>
+            <span className="text-red-400">Only {combo.stockLeft} left in stock</span>
           </div>
-        )}
-        {/* STOCK_URGENCY_BOOSTED */}
-      </Link>
+        </div>
+      )}
+    </Link>
   );
 }

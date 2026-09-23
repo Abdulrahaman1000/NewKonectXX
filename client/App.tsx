@@ -82,6 +82,7 @@ const App = () => (
                   <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
                   <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
                   <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
                   <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
                   <Route path="/admin/hero-slides" element={<AdminProtectedRoute><AdminHeroSlides /></AdminProtectedRoute>} />
                   <Route path="/admin/settings" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />

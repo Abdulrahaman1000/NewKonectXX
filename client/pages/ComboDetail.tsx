@@ -1,8 +1,16 @@
 /**
  * Combo detail page — /combos/:slug
  *
- * Polished design:
- *  - Gold callout banner alerts customers that this combo is customizable
+ * Handles TWO cases from the same data model:
+ *  - Real combos (items.length > 1): unchanged grid layout, per-item
+ *    "Individual value" labels, variant/color pickers per item.
+ *  - Single products (items.length === 1): a proper product-page layout
+ *    instead — bigger image, description text, no "Individual value"
+ *    line (redundant when there's only one item and it IS the price),
+ *    generic "product" wording instead of "combo" wording.
+ *
+ * Polished design (unchanged from before):
+ *  - Gold callout banner alerts customers that this item is customizable
  *  - Bigger variant thumbnails with names below
  *  - Color picker row (dots if hex set, pills if not)
  *  - "Your selection" live summary in a prominent yellow box
@@ -59,6 +67,11 @@ export default function ComboDetail() {
 
   const whatsappLink = settings?.contact?.whatsappLink ?? '#';
 
+  // A "combo" with exactly one item is really a single product.
+  // Same data model, different display treatment.
+  const isSingleProduct = (combo?.items.length ?? 0) === 1;
+  const itemWord = isSingleProduct ? 'product' : 'combo';
+
   const handleAddToCart = () => {
     if (!combo) return;
     // Flatten cartSelections so backend stays simple
@@ -84,9 +97,9 @@ export default function ComboDetail() {
         <CartDrawer />
         <main className="flex-1 section-padding py-20">
           <div className="container-premium text-center">
-            <h1 className="text-2xl font-black text-white mb-4">Combo not found</h1>
+            <h1 className="text-2xl font-black text-white mb-4">Not found</h1>
             <Link to="/products" className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold">
-              Browse all combos
+              Browse all products
             </Link>
           </div>
         </main>
@@ -102,7 +115,7 @@ export default function ComboDetail() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <SEO title={combo?.name ?? 'Combo'} description={combo?.tagline} />
+      <SEO title={combo?.name ?? 'Product'} description={combo?.tagline} />
       <Header />
       <CartDrawer />
 
@@ -110,7 +123,7 @@ export default function ComboDetail() {
         <div className="container-premium max-w-6xl">
           <Link to="/products" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-6">
             <ArrowLeft className="w-3 h-3" />
-            Back to all combos
+            Back to all products
           </Link>
 
           {isLoading ? (
@@ -119,15 +132,22 @@ export default function ComboDetail() {
             </div>
           ) : combo ? (
             <>
-              <div className="text-center mb-6">
-                {combo.badge && (
-                  <span className="inline-block text-[11px] font-bold px-3 py-1 rounded-full bg-primary/20 text-primary border border-primary/30 mb-4">
-                    {combo.badge}
-                  </span>
-                )}
-                <h1 className="text-3xl md:text-5xl font-black text-white mb-2">{combo.name}</h1>
-                <p className="text-white/50 max-w-xl mx-auto">{combo.tagline}</p>
-              </div>
+              {/* For a real combo, keep the top title/tagline block.
+                  For a single product, this gets folded into the two-column layout below instead. */}
+              {!isSingleProduct && (
+                <div className="text-center mb-6">
+                  {combo.badge && (
+                    <span
+                      className="inline-block max-w-xl mx-4 text-[11px] font-bold px-3 py-1 rounded-full bg-primary/20 text-primary border border-primary/30 mb-4 truncate"
+                      title={combo.badge}
+                    >
+                      {combo.badge}
+                    </span>
+                  )}
+                  <h1 className="text-3xl md:text-5xl font-black text-white mb-2">{combo.name}</h1>
+                  <p className="text-white/50 max-w-xl mx-auto">{combo.tagline}</p>
+                </div>
+              )}
 
               {/* Customization callout banner */}
               {hasAnyCustomization && showBanner && (
@@ -139,7 +159,7 @@ export default function ComboDetail() {
                     <Sparkles className="w-5 h-5 text-primary" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-bold text-white">This combo is customizable</p>
+                    <p className="text-sm font-bold text-white">This {itemWord} is customizable</p>
                     <p className="text-xs text-white/60 mt-0.5">
                       Pick different variants or colors below — the price stays the same.
                     </p>
@@ -155,61 +175,85 @@ export default function ComboDetail() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-10">
-                {combo.items.map((item) => {
-                  const displayed = getDisplayed(item);
-                  const selectedColor = getSelectedColor(item);
-                  const hasAlts = (item.alternatives?.length ?? 0) > 0;
-                  const hasColors = (item.colors?.length ?? 0) > 0;
+              {isSingleProduct ? (
+                <SingleProductLayout
+                  item={combo.items[0]}
+                  displayed={getDisplayed(combo.items[0])}
+                  selectedColor={getSelectedColor(combo.items[0])}
+                  selections={selections}
+                  pickVariant={pickVariant}
+                  pickColor={pickColor}
+                  pulse={pulse}
+                  totalPrice={combo.totalPrice}
+                  originalPrice={combo.originalPrice}
+                  stockLeft={combo.stockLeft}
+                  savings={savings}
+                  whatsappLink={whatsappLink}
+                  onAddToCart={handleAddToCart}
+                />
+              ) : (
+                <div className="flex flex-wrap justify-center gap-6 md:gap-8 mb-10">
+                  {combo.items.map((item) => {
+                    const displayed = getDisplayed(item);
+                    const selectedColor = getSelectedColor(item);
+                    const hasAlts = (item.alternatives?.length ?? 0) > 0;
+                    const hasColors = (item.colors?.length ?? 0) > 0;
 
-                  return (
-                    <div key={item.id} className="flex flex-col items-center text-center">
-                      {displayed.badge && (
-                        <span className="inline-block text-[11px] font-bold px-3 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 mb-4">
-                          {displayed.badge}
-                        </span>
-                      )}
-                      <div className="w-full mb-4">
-                        <ProductImageSlider
-                          key={displayed.id}
-                          images={displayed.images}
-                          productName={displayed.name}
-                        />
-                      </div>
-                      <h3 className="text-lg font-bold text-white mb-1">{displayed.name}</h3>
-                      {selectedColor && (
-                        <p className="text-xs text-primary/80 font-bold mb-1">
-                          Color: {selectedColor.name}
+                    return (
+                      <div key={item.id} className="flex flex-col items-center text-center w-full sm:w-[280px]">
+                        {displayed.badge && (
+                          <span
+                            className="inline-block max-w-full truncate text-[11px] font-bold px-3 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 mb-4"
+                            title={displayed.badge}
+                          >
+                            {displayed.badge}
+                          </span>
+                        )}
+                        <div className="w-full mb-4">
+                          <ProductImageSlider
+                            key={displayed.id}
+                            images={displayed.images}
+                            productName={displayed.name}
+                          />
+                        </div>
+                        <h3 className="text-lg font-bold text-white mb-1 line-clamp-2 min-h-[3.5rem] flex items-center">
+                          {displayed.name}
+                        </h3>
+                        {selectedColor && (
+                          <p className="text-xs text-primary/80 font-bold mb-1">
+                            Color: {selectedColor.name}
+                          </p>
+                        )}
+                        <p className="text-xs text-white/40 mb-4">
+                          Individual value:{' '}
+                          <span className="text-white/60 font-semibold">{formatNaira(item.individualPrice)}</span>
                         </p>
-                      )}
-                      <p className="text-xs text-white/40 mb-4">
-                        Individual value:{' '}
-                        <span className="text-white/60 font-semibold">{formatNaira(item.individualPrice)}</span>
-                      </p>
 
-                      {hasAlts && (
-                        <VariantPicker
-                          item={item}
-                          selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
-                          onPick={(variantId) => pickVariant(item.id, variantId)}
-                          pulse={pulse}
-                        />
-                      )}
+                        {hasAlts && (
+                          <VariantPicker
+                            item={item}
+                            selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
+                            onPick={(variantId) => pickVariant(item.id, variantId)}
+                            pulse={pulse}
+                          />
+                        )}
 
-                      {hasColors && (
-                        <ColorPicker
-                          colors={item.colors ?? []}
-                          selectedId={selections[item.id]?.color}
-                          onPick={(colorId) => pickColor(item.id, colorId)}
-                          pulse={pulse}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        {hasColors && (
+                          <ColorPicker
+                            colors={item.colors ?? []}
+                            selectedId={selections[item.id]?.color}
+                            onPick={(colorId) => pickColor(item.id, colorId)}
+                            pulse={pulse}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-              {/* Selection summary + CTA */}
+              {/* Selection summary + CTA — only for real combos now; single products have their own integrated version */}
+              {!isSingleProduct && (
               <div
                 className="rounded-2xl border border-primary/20 p-6 md:p-8 max-w-3xl mx-auto"
                 style={{ background: 'rgba(255,215,0,0.02)' }}
@@ -271,12 +315,134 @@ export default function ComboDetail() {
                   Free nationwide delivery · 14-day returns
                 </p>
               </div>
+              )}
             </>
           ) : null}
         </div>
       </main>
 
       <Footer />
+    </div>
+  );
+}
+
+// ---- Single product layout (image left, details right, no "Individual value" noise) ----
+
+function SingleProductLayout({
+  item, displayed, selectedColor, selections, pickVariant, pickColor, pulse,
+  totalPrice, originalPrice, stockLeft, savings, whatsappLink, onAddToCart,
+}: {
+  item: ComboItem;
+  displayed: { id: string; name: string; badge?: string; images: { url: string; alt?: string }[]; description?: string };
+  selectedColor: ComboItemColor | undefined;
+  selections: Record<string, { alt?: string; color?: string }>;
+  pickVariant: (itemId: string, variantId: string) => void;
+  pickColor: (itemId: string, colorId: string) => void;
+  pulse: boolean;
+  totalPrice: number;
+  originalPrice: number;
+  stockLeft: number;
+  savings: { saving: number; percent: number } | null;
+  whatsappLink: string;
+  onAddToCart: () => void;
+}) {
+  const hasAlts = (item.alternatives?.length ?? 0) > 0;
+  const hasColors = (item.colors?.length ?? 0) > 0;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 mb-10 items-start">
+      {/* Image, bigger and more prominent than the combo grid treatment */}
+      <div className="w-full max-w-md mx-auto md:max-w-none">
+        <ProductImageSlider key={displayed.id} images={displayed.images} productName={displayed.name} />
+      </div>
+
+      {/* Details — price and CTA now live here too, right under the description, not in a separate floating box */}
+      <div className="text-center md:text-left pt-2">
+        {displayed.badge && (
+          <span className="inline-block text-[11px] font-bold px-3 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 mb-4">
+            {displayed.badge}
+          </span>
+        )}
+        <h1 className="text-2xl md:text-4xl font-black text-white mb-2">{displayed.name}</h1>
+        {selectedColor && (
+          <p className="text-xs text-primary/80 font-bold mb-3">Color: {selectedColor.name}</p>
+        )}
+        {displayed.description && (
+          <p className="text-sm md:text-[15px] text-white/60 leading-relaxed max-w-md mx-auto md:mx-0 mb-4">
+            {displayed.description}
+          </p>
+        )}
+
+        {hasAlts && (
+          <div className="mt-4">
+            <VariantPicker
+              item={item}
+              selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
+              onPick={(variantId) => pickVariant(item.id, variantId)}
+              pulse={pulse}
+            />
+          </div>
+        )}
+
+        {hasColors && (
+          <div className="mt-4">
+            <ColorPicker
+              colors={item.colors ?? []}
+              selectedId={selections[item.id]?.color}
+              onPick={(colorId) => pickColor(item.id, colorId)}
+              pulse={pulse}
+            />
+          </div>
+        )}
+
+        {/* Price + CTA, integrated right here instead of a separate box below */}
+        <div className="mt-6 pt-6 border-t border-white/10">
+          <div className="flex items-baseline gap-3 justify-center md:justify-start flex-wrap">
+            <span className="text-3xl md:text-4xl font-black text-primary">
+              {formatNaira(totalPrice)}
+            </span>
+            {originalPrice > totalPrice && (
+              <span className="text-sm text-white/30 line-through">{formatNaira(originalPrice)}</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 justify-center md:justify-start flex-wrap mt-2">
+            {savings && savings.saving > 0 && (
+              <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                SAVE {formatNaira(savings.saving)} ({savings.percent}% OFF)
+              </span>
+            )}
+            {stockLeft > 0 && stockLeft <= 10 && (
+              <span className="text-xs text-amber-400/80">Only {stockLeft} left</span>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 mt-5">
+            <button
+              type="button"
+              onClick={onAddToCart}
+              disabled={stockLeft === 0}
+              className="btn-primary flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              {stockLeft === 0 ? 'Out of stock' : 'Add to cart'}
+            </button>
+            <a
+              href={whatsappLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-bold"
+            >
+              Order on WhatsApp
+            </a>
+          </div>
+
+          <p className="text-[11px] text-white/30 flex items-center justify-center md:justify-start gap-2 mt-4">
+            <Check className="w-3 h-3 text-primary/60" />
+            Free nationwide delivery · 14-day returns
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -305,7 +471,7 @@ function VariantPicker({
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold mb-3">
         Pick your preference
       </p>
-      <div className="flex items-start justify-center gap-3 flex-wrap">
+      <div className="flex items-start justify-center md:justify-start gap-3 flex-wrap">
         {options.map((opt) => {
           const isSelected = opt.id === selectedId;
           return (
@@ -370,7 +536,7 @@ function ColorPicker({
       <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold mb-3">
         Pick a color
       </p>
-      <div className="flex items-center justify-center gap-2 flex-wrap">
+      <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
         {colors.map((color) => {
           const isSelected = color.id === selectedId;
           const hasHex = !!color.hexCode;

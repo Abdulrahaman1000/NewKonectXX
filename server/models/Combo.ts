@@ -8,7 +8,7 @@
  * Both are at the combo's total price — no price difference.
  */
 
-import { Schema, model, Document } from "mongoose";
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface ProductImage {
   url: string;
@@ -51,6 +51,8 @@ export interface ComboDocument extends Document {
   stockLeft: number;
   isFeatured: boolean;
   isActive: boolean;
+  /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
+  customComboEligible: boolean;
   items: ComboItem[];
   heroImage?: string;
   categorySlugs: string[];
@@ -119,6 +121,7 @@ const ComboSchema = new Schema<ComboDocument>(
     stockLeft: { type: Number, default: 0, min: 0 },
     isFeatured: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
+    customComboEligible: { type: Boolean, default: false, index: true },
     items: { type: [ComboItemSchema], default: [] },
     heroImage: { type: String },
     categorySlugs: {
@@ -130,4 +133,8 @@ const ComboSchema = new Schema<ComboDocument>(
   { timestamps: true },
 );
 
-export const Combo = model<ComboDocument>("Combo", ComboSchema);
+// Guard against Mongoose's "Cannot overwrite model once compiled" error,
+// which happens on every hot-reload without this check.
+export const Combo =
+  (mongoose.models.Combo as mongoose.Model<ComboDocument>) ||
+  mongoose.model<ComboDocument>("Combo", ComboSchema);

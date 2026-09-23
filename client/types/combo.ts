@@ -1,5 +1,6 @@
 /**
- * Combo type — frontend.
+ * Combo type — frontend. Plain TypeScript interfaces only — NO mongoose
+ * here. That belongs only in server/models/Combo.ts.
  *
  * Items can have:
  *  - alternatives[]  — different products for the slot
@@ -48,6 +49,8 @@ export interface Combo {
   stockLeft: number;
   isFeatured: boolean;
   isActive: boolean;
+  /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
+  customComboEligible?: boolean;
   items: ComboItem[];
   heroImage?: string;
   categorySlugs: string[];
