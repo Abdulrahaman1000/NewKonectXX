@@ -24,6 +24,8 @@ export interface CartItem {
    * (see customComboGroups in the cart store), not per item.
    */
   comboGroupId?: string;
+  /** Set when this item is selected from the Free Gift Bank (price set to 0). */
+  isFreeGift?: boolean;
 }
 
 export type OrderStatus =
@@ -64,6 +66,7 @@ export interface OrderItemSnapshot {
   subtotal: number;
   selectedVariants?: Record<string, string>;
   variantSummary?: string;
+  isFreeGift?: boolean;
 }
 
 /** A placed order, as returned by the API on the frontend (id instead of _id, dates as strings). */

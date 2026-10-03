@@ -8,6 +8,8 @@ export interface Category {
   slug: string;
   name: string;
   icon: string;
+  /** Optional picture (Cloudinary URL). Shown instead of the emoji when set. */
+  image?: string;
   description: string;
   displayOrder: number;
   isActive: boolean;

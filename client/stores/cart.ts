@@ -5,17 +5,12 @@
  * map and stores it with the cart item. Items with different variant
  * selections are treated as the SAME combo (quantity adds up).
  *
- * NEW — "Build Your Own Combo" support:
- *  - addCustomCombo(products, discount) adds 2-3 products as SEPARATE cart
- *    line items (per your requirement: "separate line items with a
- *    discount note"), all tagged with a shared `comboGroupId`.
- *  - A matching entry is added to `customComboGroups`, recording that
- *    group's flat discount amount.
- *  - subtotal() now subtracts the total of all active group discounts,
- *    so the discount is actually applied at checkout.
- *  - If every item belonging to a group gets removed individually, the
- *    group record is cleaned up automatically so no orphaned discount
- *    lingers.
+ * Free Gift Bank support:
+ *  - Unlocks at ₦40,000 subtotal threshold.
+ *  - Gift comes from the Gift Bank (admin-managed, /api/gifts) — NOT from
+ *    Combo. selectFreeGift takes a generic FreeGiftSource so it isn't tied
+ *    to the Combo shape.
+ *  - Automatically drops selected free gift if subtotal falls below ₦40,000.
  */
 
 import { create } from 'zustand';
@@ -31,6 +26,19 @@ export interface CustomComboGroup {
   createdAt: number;
 }
 
+/** Minimal shape needed to add ANY free gift as a cart line item — decoupled
+ *  from Combo, so it works for Gift Bank items (from /api/gifts). */
+export interface FreeGiftSource {
+  id: string;
+  name: string;
+  slug?: string;
+  image: string;
+  /** Estimated/original value, shown struck-through — not charged. */
+  price?: number;
+}
+
+export const GIFT_THRESHOLD = 40000;
+
 interface CartStore {
   items: CartItem[];
   customComboGroups: CustomComboGroup[];
@@ -42,12 +50,14 @@ interface CartStore {
     selectedVariants?: Record<string, string>,
   ) => void;
 
-  /**
-   * Adds 2-3 products as a linked "Build Your Own Combo" group.
-   * Each product becomes its own cart line item (tagged with the same
-   * comboGroupId), and one flat discount is recorded for the group.
-   */
+  /** Adds 2-3 products as a linked "Build Your Own Combo" group. */
   addCustomCombo: (products: Combo[], discount: number) => void;
+
+  /** Free Gift Actions */
+  selectFreeGift: (gift: FreeGiftSource) => void;
+  removeFreeGift: () => void;
+  selectedFreeGift: () => CartItem | undefined;
+  qualifiesForFreeGift: () => boolean;
 
   removeItem: (comboId: string, comboGroupId?: string) => void;
   updateQuantity: (comboId: string, quantity: number, comboGroupId?: string) => void;
@@ -68,7 +78,6 @@ interface CartStore {
   savings: () => number;
 }
 
-/** Generates a short, unique-enough id for grouping cart items from one custom combo build. */
 function makeGroupId(): string {
   return `combo-group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -81,19 +90,16 @@ export const useCart = create<CartStore>()(
       isOpen: false,
 
       addItem: (combo, quantity = 1, selectedVariants) => {
-        // Only merge with an existing line if it's a plain (non-grouped) item
-        // with the same comboId — a grouped item should stay tied to its group.
         const existing = get().items.find(
-          (i) => i.comboId === combo.id && !i.comboGroupId,
+          (i) => i.comboId === combo.id && !i.comboGroupId && !i.isFreeGift,
         );
         if (existing) {
           set({
             items: get().items.map((i) =>
-              i.comboId === combo.id && !i.comboGroupId
+              i.comboId === combo.id && !i.comboGroupId && !i.isFreeGift
                 ? {
                     ...i,
                     quantity: i.quantity + quantity,
-                    // If new variants were chosen, prefer them; else keep previous selection
                     selectedVariants: selectedVariants ?? i.selectedVariants,
                   }
                 : i,
@@ -119,7 +125,7 @@ export const useCart = create<CartStore>()(
       },
 
       addCustomCombo: (products, discount) => {
-        if (products.length < 2) return; // guard: a "combo" needs at least 2 items
+        if (products.length < 2) return;
         const groupId = makeGroupId();
 
         const newItems: CartItem[] = products.map((combo) => ({
@@ -142,12 +148,42 @@ export const useCart = create<CartStore>()(
         });
       },
 
+      selectFreeGift: (gift) => {
+        if (!get().qualifiesForFreeGift()) return;
+
+        const giftItem: CartItem = {
+          comboId: gift.id,
+          comboName: gift.name,
+          comboSlug: gift.slug ?? '',
+          unitPrice: 0,
+          originalPrice: gift.price ?? 0,
+          quantity: 1,
+          image: gift.image,
+          isFreeGift: true,
+        };
+
+        // Remove any existing free gift line item before adding the new selection
+        const cleanedItems = get().items.filter((i) => !i.isFreeGift);
+        set({ items: [...cleanedItems, giftItem] });
+      },
+
+      removeFreeGift: () => {
+        set({ items: get().items.filter((i) => !i.isFreeGift) });
+      },
+
+      selectedFreeGift: () => {
+        return get().items.find((i) => i.isFreeGift);
+      },
+
+      qualifiesForFreeGift: () => {
+        return get().subtotal() >= GIFT_THRESHOLD;
+      },
+
       removeItem: (comboId, comboGroupId) => {
         const remaining = get().items.filter((i) =>
           comboGroupId ? !(i.comboId === comboId && i.comboGroupId === comboGroupId) : i.comboId !== comboId,
         );
 
-        // If a group's items are now all gone, drop the orphaned group/discount too.
         let groups = get().customComboGroups;
         if (comboGroupId) {
           const groupStillHasItems = remaining.some((i) => i.comboGroupId === comboGroupId);
@@ -156,7 +192,15 @@ export const useCart = create<CartStore>()(
           }
         }
 
-        set({ items: remaining, customComboGroups: groups });
+        // Enforce guardrail: if removal causes subtotal to drop below 40k, remove free gift automatically
+        const nonGiftSubtotal = remaining.reduce((sum, i) => {
+          if (i.isFreeGift) return sum;
+          return sum + i.unitPrice * i.quantity;
+        }, 0) - groups.reduce((sum, g) => sum + g.discount, 0);
+
+        const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? remaining.filter((i) => !i.isFreeGift) : remaining;
+
+        set({ items: finalItems, customComboGroups: groups });
       },
 
       updateQuantity: (comboId, quantity, comboGroupId) => {
@@ -164,13 +208,21 @@ export const useCart = create<CartStore>()(
           get().removeItem(comboId, comboGroupId);
           return;
         }
-        set({
-          items: get().items.map((i) =>
-            i.comboId === comboId && (comboGroupId ? i.comboGroupId === comboGroupId : !i.comboGroupId)
-              ? { ...i, quantity }
-              : i,
-          ),
-        });
+
+        const updatedItems = get().items.map((i) =>
+          i.comboId === comboId && (comboGroupId ? i.comboGroupId === comboGroupId : !i.comboGroupId) && !i.isFreeGift
+            ? { ...i, quantity }
+            : i,
+        );
+
+        const nonGiftSubtotal = updatedItems.reduce((sum, i) => {
+          if (i.isFreeGift) return sum;
+          return sum + i.unitPrice * i.quantity;
+        }, 0) - get().customComboDiscountTotal();
+
+        const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? updatedItems.filter((i) => !i.isFreeGift) : updatedItems;
+
+        set({ items: finalItems });
       },
 
       clear: () => set({ items: [], customComboGroups: [] }),
@@ -181,7 +233,8 @@ export const useCart = create<CartStore>()(
 
       itemCount: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
 
-      itemsSubtotal: () => get().items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0),
+      itemsSubtotal: () =>
+        get().items.reduce((sum, i) => (i.isFreeGift ? sum : sum + i.unitPrice * i.quantity), 0),
 
       customComboDiscountTotal: () =>
         get().customComboGroups.reduce((sum, g) => sum + g.discount, 0),
@@ -189,7 +242,7 @@ export const useCart = create<CartStore>()(
       subtotal: () => get().itemsSubtotal() - get().customComboDiscountTotal(),
 
       originalTotal: () =>
-        get().items.reduce((sum, i) => sum + i.originalPrice * i.quantity, 0),
+        get().items.reduce((sum, i) => sum + (i.originalPrice || i.unitPrice) * i.quantity, 0),
 
       savings: () => get().originalTotal() - get().subtotal(),
     }),

@@ -15,7 +15,8 @@ import { Schema, model, Document } from "mongoose";
 export interface CategoryDocument extends Document {
   slug: string;            // URL-safe: "tech-and-gadgets", "mens-fashion"
   name: string;            // Display: "Tech & Gadgets"
-  icon: string;            // Emoji or short string: "📱"
+  icon: string;            // Emoji or short string: "📱" (fallback when no image)
+  image: string;           // Optional picture URL (Cloudinary). Shown instead of the emoji.
   description: string;     // Subline shown on category pages
   displayOrder: number;    // Lower = shown first
   isActive: boolean;       // Hide without deleting
@@ -36,6 +37,7 @@ const CategorySchema = new Schema<CategoryDocument>(
     },
     name: { type: String, required: true, trim: true },
     icon: { type: String, default: "" },
+    image: { type: String, default: "", trim: true },
     description: { type: String, default: "", trim: true },
     displayOrder: { type: Number, default: 0, index: true },
     isActive: { type: Boolean, default: true, index: true },

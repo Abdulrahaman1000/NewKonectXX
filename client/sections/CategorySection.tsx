@@ -3,6 +3,7 @@
  *
  * Hides itself when there are no combos. Shows up to `maxItems` combos
  * inline; if there are more, a "See all" link goes to /products?category=X.
+ * The heading shows the category picture if one is set, else its emoji.
  */
 
 import { Link } from 'react-router-dom';
@@ -10,9 +11,10 @@ import { ChevronRight } from 'lucide-react';
 import type { Combo } from '@/types/combo';
 import type { Category } from '@/types/category';
 import { ComboGridCard } from '@/sections/ComboGridCard';
+import { cldUrl } from '@/lib/cloudinary';
 
 interface Props {
-  category: Pick<Category, 'slug' | 'name' | 'icon'>;
+  category: Pick<Category, 'slug' | 'name' | 'icon' | 'image'>;
   combos: Combo[];
   maxItems?: number;
 }
@@ -27,8 +29,16 @@ export function CategorySection({ category, combos, maxItems = 6 }: Props) {
     <section className="section-padding py-10 md:py-14">
       <div className="container-premium">
         <div className="flex items-end justify-between mb-5 md:mb-7">
-          <div className="flex items-center gap-2">
-            {category.icon && <span className="text-2xl md:text-3xl">{category.icon}</span>}
+          <div className="flex items-center gap-2.5">
+            {category.image ? (
+              <img
+                src={cldUrl(category.image, 'w_96,h_96,c_fill,q_auto,f_auto')}
+                alt=""
+                className="w-9 h-9 md:w-11 md:h-11 rounded-xl object-cover bg-white/5"
+              />
+            ) : (
+              category.icon && <span className="text-2xl md:text-3xl">{category.icon}</span>
+            )}
             <h2 className="text-lg md:text-2xl font-black text-white">{category.name}</h2>
           </div>
           {hasMore && (

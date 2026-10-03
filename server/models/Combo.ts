@@ -25,9 +25,9 @@ export interface ComboItemAlternative {
 
 export interface ComboItemColor {
   id: string;
-  name: string;             // e.g. "Black", "Silver Gold"
-  hexCode?: string;         // optional CSS hex like "#000000" — if set, shows a dot; if not, shows a label
-  imageUrl?: string;        // optional swatch image override
+  name: string;            // e.g. "Black", "Silver Gold"
+  hexCode?: string;        // optional CSS hex like "#000000" — if set, shows a dot; if not, shows a label
+  imageUrl?: string;       // optional swatch image override
 }
 
 export interface ComboItem {
@@ -53,6 +53,8 @@ export interface ComboDocument extends Document {
   isActive: boolean;
   /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
   customComboEligible: boolean;
+  /** Whether this item can explicitly be offered as a free gift in the gift bank */
+  isFreeGiftCandidate: boolean;
   items: ComboItem[];
   heroImage?: string;
   categorySlugs: string[];
@@ -122,6 +124,7 @@ const ComboSchema = new Schema<ComboDocument>(
     isFeatured: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
     customComboEligible: { type: Boolean, default: false, index: true },
+    isFreeGiftCandidate: { type: Boolean, default: false, index: true },
     items: { type: [ComboItemSchema], default: [] },
     heroImage: { type: String },
     categorySlugs: {

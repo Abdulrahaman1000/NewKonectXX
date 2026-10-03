@@ -35,6 +35,7 @@ import { fetchFaqs } from '@/api/faqs';
 import { fetchHeroSlides } from '@/api/heroSlides';
 import { fetchCategories } from '@/api/categories';
 import { useSettings } from '@/contexts/SettingsContext';
+import { WelcomeGiftModal } from '@/components/shared/WelcomeGiftModal';
 import { Sparkles } from 'lucide-react';
 
 export default function Index() {
@@ -117,6 +118,7 @@ export default function Index() {
       <SEO />
       <Header />
       <CartDrawer />
+        <WelcomeGiftModal />
 
       <HeroCarousel
         slides={heroSlides}

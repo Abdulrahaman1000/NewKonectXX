@@ -1,6 +1,7 @@
 /**
  * Site-wide settings — frontend types.
  * NEW: hero { headline, subtext }.
+ * NEW: welcomePopup { giftImages, comboImages }.
  */
 
 export interface HeroSlide {
@@ -13,6 +14,11 @@ export interface HeroSlide {
 export interface HeroContent {
   headline: string;
   subtext: string;
+}
+
+export interface WelcomePopupContent {
+  giftImages: string[];
+  comboImages: string[];
 }
 
 export interface PromoSettings {
@@ -54,6 +60,7 @@ export interface SiteSettings {
   tagline: string;
   defaultHeroImage: string;
   hero?: HeroContent;
+  welcomePopup?: WelcomePopupContent;
   heroSlides?: HeroSlide[];
   promo: PromoSettings;
   contact: ContactSettings;

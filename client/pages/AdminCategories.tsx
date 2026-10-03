@@ -2,6 +2,8 @@
  * Admin Categories management — /admin/categories
  *
  * List, create, edit, delete (soft) categories.
+ * Each category can have a picture (shown on storefront tiles); if none is
+ * uploaded, the emoji icon is used instead.
  */
 
 import { useState } from 'react';
@@ -26,12 +28,15 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import type { Category } from '@/types/category';
 import { SEO } from '@/components/shared/SEO';
+import { ImageUploader } from '@/components/admin/ImageUploader';
+import { cldUrl } from '@/lib/cloudinary';
 import { toast } from 'sonner';
 
 interface FormState {
   slug: string;
   name: string;
   icon: string;
+  image: string;
   description: string;
   displayOrder: number;
   isActive: boolean;
@@ -41,6 +46,7 @@ const EMPTY_FORM: FormState = {
   slug: '',
   name: '',
   icon: '',
+  image: '',
   description: '',
   displayOrder: 0,
   isActive: true,
@@ -103,6 +109,7 @@ export default function AdminCategories() {
       slug: cat.slug,
       name: cat.name,
       icon: cat.icon,
+      image: cat.image ?? '',
       description: cat.description,
       displayOrder: cat.displayOrder,
       isActive: cat.isActive,
@@ -219,7 +226,17 @@ export default function AdminCategories() {
                     className="rounded-xl border border-white/10 p-4 flex items-center gap-4"
                     style={{ background: 'rgba(255,255,255,0.02)' }}
                   >
-                    <span className="text-2xl">{cat.icon || '📦'}</span>
+                    {cat.image ? (
+                      <img
+                        src={cldUrl(cat.image, 'w_96,h_96,c_fill,q_auto,f_auto')}
+                        alt=""
+                        className="w-12 h-12 rounded-xl object-cover bg-black/30 shrink-0"
+                      />
+                    ) : (
+                      <span className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl shrink-0">
+                        {cat.icon || '📦'}
+                      </span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-bold text-white">{cat.name}</p>
@@ -322,7 +339,7 @@ function CategoryForm({
             placeholder="Men's Fashion"
           />
         </Field>
-        <Field label="Icon (emoji)">
+        <Field label="Icon (emoji, used if no image)">
           <input
             type="text"
             value={form.icon}
@@ -340,6 +357,27 @@ function CategoryForm({
             className={inputCls}
           />
         </Field>
+      </div>
+
+      {/* Category picture */}
+      <div className="mb-3">
+        <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+          Category image
+        </span>
+        <div className="flex items-start gap-4">
+          <div className="w-32 shrink-0">
+            <ImageUploader
+              value={form.image}
+              onChange={(url) => setForm({ ...form, image: url })}
+              aspect="square"
+              maxSizeMB={2}
+            />
+          </div>
+          <p className="text-xs text-white/45 leading-relaxed">
+            Shown on the storefront category tiles. Use a square picture (about 256×256px), such as one
+            product on a plain background. If you leave it empty, the emoji icon is used instead.
+          </p>
+        </div>
       </div>
 
       <Field label="Description">

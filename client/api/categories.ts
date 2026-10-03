@@ -48,6 +48,7 @@ export async function createCategory(payload: {
   slug: string;
   name: string;
   icon?: string;
+  image?: string;
   description?: string;
   displayOrder?: number;
   isActive?: boolean;
@@ -65,6 +66,7 @@ export async function updateCategory(
     slug: string;
     name: string;
     icon: string;
+    image: string;
     description: string;
     displayOrder: number;
     isActive: boolean;

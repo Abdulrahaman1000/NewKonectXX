@@ -31,7 +31,7 @@ router.get("/", async (_req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { slug, name, icon, description, displayOrder, isActive } = req.body;
+    const { slug, name, icon, image, description, displayOrder, isActive } = req.body;
 
     if (!slug || !name) {
       return res.status(400).json({
@@ -51,6 +51,7 @@ router.post("/", async (req: Request, res: Response) => {
       slug: slug.toLowerCase().trim(),
       name: name.trim(),
       icon: icon ?? "",
+      image: typeof image === "string" ? image.trim() : "",
       description: description ?? "",
       displayOrder: displayOrder ?? 0,
       isActive: isActive ?? true,
@@ -73,7 +74,7 @@ router.post("/", async (req: Request, res: Response) => {
 router.patch("/:id", async (req: Request, res: Response) => {
   try {
     const update: any = {};
-    const fields = ["slug", "name", "icon", "description", "displayOrder", "isActive"];
+    const fields = ["slug", "name", "icon", "image", "description", "displayOrder", "isActive"];
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
@@ -83,6 +84,9 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
     if (update.slug) {
       update.slug = update.slug.toLowerCase().trim();
+    }
+    if (typeof update.image === "string") {
+      update.image = update.image.trim();
     }
 
     const category = await Category.findByIdAndUpdate(req.params.id, update, {

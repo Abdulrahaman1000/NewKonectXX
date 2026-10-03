@@ -5,6 +5,8 @@
  * item, looks up the alternative names from the combo, and saves a
  * human-readable summary like "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
  * onto the order item. Admin sees exactly what to ship.
+ *
+ * UPDATED: Added Free Gift validation logic (₦40,000 threshold check and 1 gift max).
  */
 
 import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
@@ -24,6 +26,7 @@ interface CartItem {
   comboId: string;
   quantity: number;
   selectedVariants?: Record<string, string>;
+  isFreeGift?: boolean;
 }
 
 export interface CreateOrderInput {
@@ -91,8 +94,39 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
     throw new OrderError(400, "EMPTY_CART", "Order has no items");
   }
 
+  // Pass 1: Calculate subtotal from paid items only
+  let paidSubtotal = 0;
+  const freeGiftItems = items.filter((it) => it.isFreeGift);
+
+  if (freeGiftItems.length > 1) {
+    throw new OrderError(400, "INVALID_GIFT", "Only 1 free gift is allowed per order");
+  }
+
+  for (const cartItem of items) {
+    if (!cartItem.isFreeGift) {
+      if (!cartItem.comboId) {
+        throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+      }
+
+      const combo = await Combo.findById(cartItem.comboId);
+      if (combo && combo.isActive) {
+        paidSubtotal += combo.totalPrice * cartItem.quantity;
+      }
+    }
+  }
+
+  // Validate threshold if a free gift is attached
+  if (freeGiftItems.length === 1 && paidSubtotal < 40000) {
+    throw new OrderError(
+      400,
+      "GIFT_THRESHOLD_NOT_MET",
+      "Paid items total must be at least ₦40,000 to qualify for a free gift",
+    );
+  }
+
   const snapshots: OrderItemSnapshot[] = [];
 
+  // Pass 2: Build snapshot objects
   for (const cartItem of items) {
     if (!cartItem.comboId) {
       throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
@@ -116,20 +150,35 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
       );
     }
 
+    const isFree = Boolean(cartItem.isFreeGift && paidSubtotal >= 40000);
+
+    // Ensure the combo itself is eligible to be a free gift candidate
+    if (isFree && !combo.isFreeGiftCandidate && combo.totalPrice > 5000) {
+      throw new OrderError(
+        400,
+        "INELIGIBLE_FREE_GIFT",
+        `${combo.name} is not eligible as a free gift`,
+      );
+    }
+
+    const unitPrice = isFree ? 0 : combo.totalPrice;
+    const subtotal = unitPrice * cartItem.quantity;
+
     const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
     const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
 
     snapshots.push({
       comboId: combo._id,
       slug: combo.slug,
-      name: combo.name,
+      name: isFree ? `[FREE GIFT] ${combo.name}` : combo.name,
       tagline: combo.tagline,
       thumbnailUrl,
-      unitPrice: combo.totalPrice,
-      quantity: cartItem.quantity,
-      subtotal: combo.totalPrice * cartItem.quantity,
+      unitPrice,
+      quantity: isFree ? 1 : cartItem.quantity,
+      subtotal,
       selectedVariants: cartItem.selectedVariants ?? {},
       variantSummary,
+      isFreeGift: isFree,
     });
   }
 

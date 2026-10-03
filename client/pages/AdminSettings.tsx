@@ -1,14 +1,17 @@
 /**
  * Admin Site Settings — /admin/settings
- * NEW: Hero Section block (headline + subtext) — editable platform hero copy.
+ * Hero Section block (headline + subtext) — editable platform hero copy.
+ * NEW: Welcome popup pictures (Free Gift tab + Build a Combo tab).
  */
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Loader2, Save } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, X } from 'lucide-react';
 import { AdminFrame } from '@/components/admin/AdminFrame';
+import { ImageUploader } from '@/components/admin/ImageUploader';
 import { SEO } from '@/components/shared/SEO';
+import { cldUrl } from '@/lib/cloudinary';
 import {
   AdminSiteSettings,
   getAdminSettings,
@@ -81,6 +84,10 @@ export default function AdminSettings() {
       storeName: form.storeName,
       tagline: form.tagline,
       hero: form.hero,
+      welcomePopup: {
+        giftImages: form.welcomePopup?.giftImages ?? [],
+        comboImages: form.welcomePopup?.comboImages ?? [],
+      },
       promo: form.promo,
       contact: form.contact,
       video: form.video,
@@ -98,9 +105,11 @@ export default function AdminSettings() {
 
   const saving = saveMut.isPending;
 
-  // Defensive defaults if hero missing on older docs
+  // Defensive defaults if hero / popup missing on older docs
   const heroHeadline = form.hero?.headline ?? '';
   const heroSubtext = form.hero?.subtext ?? '';
+  const popupGiftImages = form.welcomePopup?.giftImages ?? [];
+  const popupComboImages = form.welcomePopup?.comboImages ?? [];
 
   return (
     <AdminFrame>
@@ -114,7 +123,7 @@ export default function AdminSettings() {
       <div className="flex items-end justify-between mb-8">
         <div>
           <h1 className="text-2xl md:text-3xl font-black text-white">Site Settings</h1>
-          <p className="text-white/50 text-sm mt-1">Hero, contact info, bank, shipping, promo, and more</p>
+          <p className="text-white/50 text-sm mt-1">Hero, popup, contact info, bank, shipping, promo, and more</p>
         </div>
         <button
           type="button"
@@ -148,6 +157,25 @@ export default function AdminSettings() {
               placeholder="Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands."
             />
           </Field>
+        </Section>
+
+        {/* Welcome popup pictures */}
+        <Section
+          title="Welcome popup pictures"
+          subtitle="The pictures shown at the top of the welcome popup. After adding or removing pictures, click Save settings."
+        >
+          <ImageGalleryField
+            label="Free Gift tab"
+            hint="Leave empty to use the pictures from your Gift Bank instead."
+            images={popupGiftImages}
+            onChange={(imgs) => set('welcomePopup.giftImages', imgs)}
+          />
+          <ImageGalleryField
+            label="Build a Combo tab"
+            hint="Leave empty to use your combos' pictures instead."
+            images={popupComboImages}
+            onChange={(imgs) => set('welcomePopup.comboImages', imgs)}
+          />
         </Section>
 
         {/* Contact */}
@@ -449,6 +477,67 @@ function Field({
       {children}
       {hint && <p className="text-[10px] text-white/40 mt-1">{hint}</p>}
     </label>
+  );
+}
+
+/** Up to `max` pictures: thumbnails with a remove button, plus an upload box. */
+function ImageGalleryField({
+  label,
+  hint,
+  images,
+  onChange,
+  max = 5,
+}: {
+  label: string;
+  hint?: string;
+  images: string[];
+  onChange: (images: string[]) => void;
+  max?: number;
+}) {
+  return (
+    <div>
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} ({images.length}/{max})
+      </span>
+      <div className="flex flex-wrap gap-3 items-start">
+        {images.map((url, i) => (
+          <div
+            key={`${url}-${i}`}
+            className="relative w-28 aspect-square rounded-xl overflow-hidden border border-white/10 bg-black/30"
+          >
+            <img
+              src={cldUrl(url, 'w_300,h_300,c_fill,q_auto,f_auto')}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+            {i === 0 && (
+              <span className="absolute bottom-0 inset-x-0 bg-primary text-black text-[9px] font-black text-center py-0.5 uppercase">
+                Shown first
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => onChange(images.filter((_, j) => j !== i))}
+              aria-label="Remove picture"
+              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-red-500/80"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+        {images.length < max && (
+          <div className="w-28">
+            <ImageUploader
+              value=""
+              onChange={(url) => url && onChange([...images, url])}
+              aspect="square"
+              maxSizeMB={5}
+            />
+          </div>
+        )}
+      </div>
+      {hint && <p className="text-[10px] text-white/40 mt-1.5">{hint}</p>}
+    </div>
   );
 }
 

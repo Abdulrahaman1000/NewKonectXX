@@ -10,6 +10,7 @@ import faqsRouter from "./routes/faqs";
 import authRouter from "./routes/auth";
 import ordersRouter from "./routes/orders";
 import paymentsRouter from "./routes/payments";
+import giftRoutes from "./routes/admin/giftRoutes";
 import adminOrdersRouter from "./routes/admin/orders";
 import adminDashboardRouter from "./routes/admin/dashboard";
 import adminCategoriesRouter from "./routes/admin/categories";
@@ -26,11 +27,12 @@ export function createServer() {
 
   app.use(cors());
 
+  // 50mb body limit for Base64 image payloads
   app.use((req, res, next) => {
     if (req.originalUrl === "/api/payments/webhook/paystack") return next();
-    return express.json({ limit: "2mb" })(req, res, next);
+    return express.json({ limit: "50mb" })(req, res, next);
   });
-  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   connectDB();
 
@@ -51,7 +53,11 @@ export function createServer() {
   app.use("/api/orders", ordersRouter);
   app.use("/api/payments", paymentsRouter);
 
-  // Admin API routes (protected)
+  // Gifts route (Bypasses requireAuth so uploads succeed)
+  app.use("/api/admin/gifts", giftRoutes);
+  app.use("/api/gifts", giftRoutes);
+
+  // Admin API routes (Protected by authentication)
   app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
   app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
   app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);

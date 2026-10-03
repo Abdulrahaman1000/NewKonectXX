@@ -34,6 +34,7 @@ export interface OrderItemSnapshot {
   subtotal: number;
   selectedVariants?: Record<string, string>;   // itemId → alternativeId
   variantSummary?: string;                     // human-readable
+  isFreeGift?: boolean;                        // identifies free gift items
 }
 
 export interface ShippingAddress {
@@ -79,6 +80,7 @@ const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
     subtotal: { type: Number, required: true, min: 0 },
     selectedVariants: { type: Schema.Types.Mixed, default: {} },
     variantSummary: { type: String, default: "" },
+    isFreeGift: { type: Boolean, default: false },
   },
   { _id: false },
 );

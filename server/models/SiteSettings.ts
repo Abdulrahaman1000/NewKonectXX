@@ -2,6 +2,7 @@
  * SiteSettings model — single document collection.
  *
  * NEW: hero { headline, subtext } — editable platform hero copy.
+ * NEW: welcomePopup { giftImages, comboImages } — pictures for the welcome popup tabs.
  */
 
 import { Schema, model, Document } from "mongoose";
@@ -17,6 +18,10 @@ export interface SiteSettingsDocument extends Document {
   hero: {
     headline: string;
     subtext: string;
+  };
+  welcomePopup: {
+    giftImages: string[];
+    comboImages: string[];
   };
   promo: {
     endsAt: Date;
@@ -62,6 +67,11 @@ const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
     hero: {
       headline: { type: String, default: DEFAULT_HERO_HEADLINE },
       subtext: { type: String, default: DEFAULT_HERO_SUBTEXT },
+    },
+
+    welcomePopup: {
+      giftImages: { type: [String], default: [] },
+      comboImages: { type: [String], default: [] },
     },
 
     promo: {

@@ -10,6 +10,15 @@ export interface AdminSiteSettings {
   storeName: string;
   tagline: string;
   defaultHeroImage: string;
+  hero?: {
+    headline: string;
+    subtext: string;
+  };
+  /** Pictures for the welcome popup tabs (Cloudinary URLs, max 5 each). */
+  welcomePopup?: {
+    giftImages: string[];
+    comboImages: string[];
+  };
   promo: {
     endsAt: string;     // ISO date string
     enabled: boolean;

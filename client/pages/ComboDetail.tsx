@@ -2,17 +2,19 @@
  * Combo detail page — /combos/:slug
  *
  * Handles TWO cases from the same data model:
- *  - Real combos (items.length > 1): unchanged grid layout, per-item
- *    "Individual value" labels, variant/color pickers per item.
- *  - Single products (items.length === 1): a proper product-page layout
- *    instead — bigger image, description text, no "Individual value"
- *    line (redundant when there's only one item and it IS the price),
- *    generic "product" wording instead of "combo" wording.
+ *  - Real combos (items.length > 1): grid layout, per-item card with
+ *    variant/color pickers.
+ *  - Single products (items.length === 1): product-page layout — bigger
+ *    image, description text, integrated price/CTA.
  *
- * Polished design (unchanged from before):
+ * Design:
  *  - Gold callout banner alerts customers that this item is customizable
- *  - Bigger variant thumbnails with names below
- *  - Color picker row (dots if hex set, pills if not)
+ *  - Variant/color pickers now live inside a bordered card per item,
+ *    matching the rest of the site's card language
+ *  - Broken/missing thumbnail images fall back to a placeholder instead
+ *    of overflowing alt text (previous bug)
+ *  - Long alternative names are clamped to 2 lines with a tooltip for
+ *    the full text, instead of spilling past their box
  *  - "Your selection" live summary in a prominent yellow box
  *  - Pulse animation on first load to draw attention to alternatives
  *  - Mobile-friendly layouts
@@ -33,7 +35,10 @@ import { useCart } from '@/stores/cart';
 import { useVariantSelection } from '@/hooks/useVariantSelection';
 import { calculateSavings, formatNaira } from '@/lib/format';
 import type { ComboItem, ComboItemColor } from '@/types/combo';
+
+import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { toast } from 'sonner';
+import { MobileComboDetail } from '@/components/MobileComboDetail';
 
 const DEFAULT_ID = 'default';
 
@@ -64,6 +69,7 @@ export default function ComboDetail() {
 
   // Dismissible callout banner (per-session)
   const [showBanner, setShowBanner] = useState(true);
+  const isMobile = useMobileLayout();
 
   const whatsappLink = settings?.contact?.whatsappLink ?? '#';
 
@@ -112,7 +118,67 @@ export default function ComboDetail() {
   const hasAnyCustomization = combo?.items.some(
     (i) => (i.alternatives?.length ?? 0) > 0 || (i.colors?.length ?? 0) > 0,
   );
+if (isMobile && combo) {
+  const photos = combo.items.flatMap((item) => {
+    const d = getDisplayed(item);
+    return d.images.map((im) => ({ url: im.url, label: d.name }));
+  });
 
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <SEO title={combo.name} description={combo.tagline} />
+      <CartDrawer />
+      <MobileComboDetail
+        combo={combo}
+        photos={photos}
+        whatsappLink={whatsappLink}
+        description={isSingleProduct ? getDisplayed(combo.items[0]).description : undefined}
+        ctaLabel="Add to cart"
+        onOrder={handleAddToCart}
+        onOpenCart={openCart}
+        customizer={
+          hasAnyCustomization ? (
+            <div className="space-y-5">
+              {combo.items.map((item) => {
+                const hasAlts = (item.alternatives?.length ?? 0) > 0;
+                const hasColors = (item.colors?.length ?? 0) > 0;
+                if (!hasAlts && !hasColors) return null;
+                return (
+                  <div key={item.id}>
+                    {!isSingleProduct && (
+                      <p className="text-sm font-bold text-white mb-1">{getDisplayed(item).name}</p>
+                    )}
+                    {hasAlts && (
+                      <VariantPicker
+                        item={item}
+                        selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
+                        onPick={(id) => pickVariant(item.id, id)}
+                        pulse={pulse}
+                      />
+                    )}
+                    {hasColors && (
+                      <ColorPicker
+                        colors={item.colors ?? []}
+                        selectedId={selections[item.id]?.color}
+                        onPick={(id) => pickColor(item.id, id)}
+                        pulse={pulse}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              {variantSummary && (
+                <p className="text-xs text-white/60 pt-3 border-t border-white/10">
+                  Your selection: <span className="text-white/90">{variantSummary}</span>
+                </p>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
+    </div>
+  );
+}
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <SEO title={combo?.name ?? 'Product'} description={combo?.tagline} />
@@ -200,7 +266,11 @@ export default function ComboDetail() {
                     const hasColors = (item.colors?.length ?? 0) > 0;
 
                     return (
-                      <div key={item.id} className="flex flex-col items-center text-center w-full sm:w-[280px]">
+                      <div
+                        key={item.id}
+                        className="flex flex-col items-center text-center w-full sm:w-[300px] rounded-2xl border border-white/10 p-5"
+                        style={{ background: 'rgba(255,255,255,0.02)' }}
+                      >
                         {displayed.badge && (
                           <span
                             className="inline-block max-w-full truncate text-[11px] font-bold px-3 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 mb-4"
@@ -300,7 +370,8 @@ export default function ComboDetail() {
                     <ShoppingBag className="w-4 h-4" />
                     {combo.stockLeft === 0 ? 'Out of stock' : 'Add to cart'}
                   </button>
-                  <a
+                  
+<a
                     href={whatsappLink}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -312,7 +383,7 @@ export default function ComboDetail() {
 
                 <p className="text-[11px] text-white/30 text-center mt-4 flex items-center justify-center gap-2">
                   <Check className="w-3 h-3 text-primary/60" />
-                  Free nationwide delivery · 14-day returns
+                  Free nationwide delivery � 14-day returns
                 </p>
               </div>
               )}
@@ -373,25 +444,30 @@ function SingleProductLayout({
           </p>
         )}
 
-        {hasAlts && (
-          <div className="mt-4">
-            <VariantPicker
-              item={item}
-              selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
-              onPick={(variantId) => pickVariant(item.id, variantId)}
-              pulse={pulse}
-            />
-          </div>
-        )}
+        {(hasAlts || hasColors) && (
+          <div
+            className="mt-4 rounded-2xl border border-white/10 p-4 sm:p-5"
+            style={{ background: 'rgba(255,255,255,0.02)' }}
+          >
+            {hasAlts && (
+              <VariantPicker
+                item={item}
+                selectedId={selections[item.id]?.alt ?? DEFAULT_ID}
+                onPick={(variantId) => pickVariant(item.id, variantId)}
+                pulse={pulse}
+              />
+            )}
 
-        {hasColors && (
-          <div className="mt-4">
-            <ColorPicker
-              colors={item.colors ?? []}
-              selectedId={selections[item.id]?.color}
-              onPick={(colorId) => pickColor(item.id, colorId)}
-              pulse={pulse}
-            />
+            {hasColors && (
+              <div className={hasAlts ? 'mt-4' : ''}>
+                <ColorPicker
+                  colors={item.colors ?? []}
+                  selectedId={selections[item.id]?.color}
+                  onPick={(colorId) => pickColor(item.id, colorId)}
+                  pulse={pulse}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -427,7 +503,8 @@ function SingleProductLayout({
               <ShoppingBag className="w-4 h-4" />
               {stockLeft === 0 ? 'Out of stock' : 'Add to cart'}
             </button>
-            <a
+            
+<a
               href={whatsappLink}
               target="_blank"
               rel="noopener noreferrer"
@@ -439,7 +516,7 @@ function SingleProductLayout({
 
           <p className="text-[11px] text-white/30 flex items-center justify-center md:justify-start gap-2 mt-4">
             <Check className="w-3 h-3 text-primary/60" />
-            Free nationwide delivery · 14-day returns
+            Free nationwide delivery � 14-day returns
           </p>
         </div>
       </div>
@@ -447,7 +524,33 @@ function SingleProductLayout({
   );
 }
 
-// ---- Variant picker (bigger thumbnails with names) ----
+// ---- Small thumbnail with graceful broken-image fallback ----
+// Fixes the previous bug: a 404'd thumbnail URL rendered raw alt text that
+// overflowed its box. Now it swaps to the same "No img" placeholder used
+// when there's no URL at all.
+
+function ThumbImage({ src, alt, sizeClass }: { src: string; alt: string; sizeClass: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className={`${sizeClass} bg-white/5 flex items-center justify-center text-[8px] text-white/30 text-center px-1`}>
+        No img
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={`${sizeClass} object-cover`}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+// ---- Variant picker (bigger thumbnails with names, wrapped in a card) ----
 
 function VariantPicker({
   item, selectedId, onPick, pulse,
@@ -491,13 +594,7 @@ function VariantPicker({
                     : 'ring-1 ring-white/15 group-hover/opt:ring-white/40 opacity-80 group-hover/opt:opacity-100'
                 }`}
               >
-                {opt.thumbUrl ? (
-                  <img src={opt.thumbUrl} alt={opt.name} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-white/5 flex items-center justify-center text-[8px] text-white/30">
-                    No img
-                  </div>
-                )}
+                <ThumbImage src={opt.thumbUrl} alt={opt.name} sizeClass="w-full h-full" />
                 {isSelected && (
                   <div className="absolute inset-0 bg-primary/15 flex items-center justify-center">
                     <Check className="w-4 h-4 text-primary drop-shadow" />
@@ -505,7 +602,7 @@ function VariantPicker({
                 )}
               </div>
               <span
-                className={`text-[10px] max-w-[72px] text-center leading-tight transition-colors ${
+                className={`text-[10px] max-w-[76px] text-center leading-tight line-clamp-2 transition-colors ${
                   isSelected ? 'text-primary font-bold' : 'text-white/50'
                 }`}
               >
@@ -570,11 +667,12 @@ function ColorPicker({
               key={color.id}
               type="button"
               onClick={() => onPick(color.id)}
-              className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-all ${
+              className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-all max-w-[140px] truncate ${
                 isSelected
                   ? 'bg-primary/20 border-primary/50 text-primary scale-105'
                   : 'border-white/20 text-white/60 hover:border-white/40 hover:text-white/90'
               } ${pulse && !isSelected ? 'animate-pulse-soft' : ''}`}
+              title={color.name}
             >
               {color.name}
             </button>
@@ -584,3 +682,5 @@ function ColorPicker({
     </div>
   );
 }
+
+

@@ -42,6 +42,8 @@ import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import NotFound from './pages/NotFound';
 import { WhatsAppFloat } from '@/components/shared/WhatsAppFloat';
+import AdminGiftBankPage from './pages/AdminGiftBankPage';
+import { MobileBottomNav } from './components/MobileBottomNav';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,6 +67,7 @@ const App = () => (
               <BrowserRouter>
                 <Routes>
                   <Route path="/" element={<Index />} />
+               
                   <Route path="/products" element={<Products />} />
                   <Route path="/combos/:slug" element={<ComboDetail />} />
                   <Route path="/categories" element={<Categories />} />
@@ -79,6 +82,7 @@ const App = () => (
                   <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
                   <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
                   <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
+                  <Route path="/admin/gift-bank" element={<AdminGiftBankPage />} />
                   <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
                   <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
                   <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
@@ -100,6 +104,7 @@ const App = () => (
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>
+                <MobileBottomNav />
                 <WhatsAppFloat />
               </BrowserRouter>
             </TooltipProvider>
