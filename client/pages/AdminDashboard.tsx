@@ -10,17 +10,21 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   LogOut,
+  MessageCircle,
   MessageSquareQuote,
   Package,
   Settings,
   ShoppingBag,
   Users,
+  UserPlus,
   ArrowRight,
   Gift,
 } from 'lucide-react';
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardStats } from '@/api/adminOrders';
+import { getChatUnreadCount } from '@/api/adminChats';
+import { getResellerCounts } from '@/api/adminResellers';
 import { formatNaira } from '@/lib/format';
 
 export default function AdminDashboard() {
@@ -29,6 +33,18 @@ export default function AdminDashboard() {
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: getDashboardStats,
+    refetchInterval: 30000,
+  });
+
+  const { data: unreadChats = 0 } = useQuery({
+    queryKey: ['admin-chat-unread'],
+    queryFn: getChatUnreadCount,
+    refetchInterval: 15000,
+  });
+
+  const { data: ResellerCounts } = useQuery({
+    queryKey: ['admin-Reseller-counts'],
+    queryFn: getResellerCounts,
     refetchInterval: 30000,
   });
 
@@ -83,7 +99,9 @@ export default function AdminDashboard() {
           <h2 className="text-base font-bold text-white mb-4">Manage Store</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos Management" desc="Add, edit, toggle visibility, and delete combos" highlight />
+            <TileLink to="/admin/Resellers" Icon={UserPlus} label="Resellers" desc="Review applications and manage Resellers" badge={ResellerCounts?.pending ?? 0} />
             <TileLink to="/admin/gift-bank" Icon={Gift} label="Free Gift Bank" desc="Manage standalone free gift items for cart threshold rewards" />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
             <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
@@ -115,7 +133,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 function TileLink({
-  to, Icon, label, desc, disabled, badge, highlight,
+  to, Icon, label, desc, disabled, badge, badgeLabel = 'pending', highlight,
 }: {
   to: string;
   Icon: any;
@@ -123,6 +141,7 @@ function TileLink({
   desc: string;
   disabled?: boolean;
   badge?: number;
+  badgeLabel?: string;
   highlight?: boolean;
 }) {
   const content = (
@@ -137,7 +156,7 @@ function TileLink({
         </div>
         {!!badge && badge > 0 && (
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
-            {badge} pending
+            {badge} {badgeLabel}
           </span>
         )}
         {disabled && (

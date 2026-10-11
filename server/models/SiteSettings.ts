@@ -15,6 +15,8 @@ export interface SiteSettingsDocument extends Document {
   storeName: string;
   tagline: string;
   defaultHeroImage: string;
+  /** Picture for the "All" category tile (Cloudinary URL). */
+  allCategoryImage: string;
   hero: {
     headline: string;
     subtext: string;
@@ -63,6 +65,7 @@ const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
     storeName: { type: String, required: true, default: "Smart Combo" },
     tagline: { type: String, default: "" },
     defaultHeroImage: { type: String, default: "" },
+    allCategoryImage: { type: String, default: "" },
 
     hero: {
       headline: { type: String, default: DEFAULT_HERO_HEADLINE },

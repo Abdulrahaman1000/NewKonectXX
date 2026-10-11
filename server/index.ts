@@ -10,6 +10,7 @@ import faqsRouter from "./routes/faqs";
 import authRouter from "./routes/auth";
 import ordersRouter from "./routes/orders";
 import paymentsRouter from "./routes/payments";
+import chatRouter from "./routes/chat";
 import giftRoutes from "./routes/admin/giftRoutes";
 import adminOrdersRouter from "./routes/admin/orders";
 import adminDashboardRouter from "./routes/admin/dashboard";
@@ -19,6 +20,10 @@ import adminHeroSlidesRouter from "./routes/admin/heroSlides";
 import adminSettingsRouter from "./routes/admin/settings";
 import adminFaqsRouter from "./routes/admin/faqs";
 import adminTestimonialsRouter from "./routes/admin/testimonials";
+import adminChatsRouter from "./routes/admin/chats";
+import ResellersRouter from './routes/Resellers';
+import adminResellersRouter from "./routes/admin/Resellers";
+
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
 
@@ -52,6 +57,7 @@ export function createServer() {
   app.use("/api/faqs", faqsRouter);
   app.use("/api/orders", ordersRouter);
   app.use("/api/payments", paymentsRouter);
+  app.use("/api/chat", chatRouter);
 
   // Gifts route (Bypasses requireAuth so uploads succeed)
   app.use("/api/admin/gifts", giftRoutes);
@@ -66,6 +72,10 @@ export function createServer() {
   app.use("/api/admin/settings", requireAuth, adminSettingsRouter);
   app.use("/api/admin/faqs", requireAuth, adminFaqsRouter);
   app.use("/api/admin/testimonials", requireAuth, adminTestimonialsRouter);
+  app.use("/api/admin/chats", requireAuth, adminChatsRouter);
+  app.use('/api/Resellers', ResellersRouter);
+
+app.use("/api/admin/Resellers", requireAuth, adminResellersRouter);
 
   return app;
 }

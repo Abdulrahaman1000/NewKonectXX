@@ -59,6 +59,7 @@ export interface SiteSettings {
   storeName: string;
   tagline: string;
   defaultHeroImage: string;
+  allCategoryImage?: string;
   hero?: HeroContent;
   welcomePopup?: WelcomePopupContent;
   heroSlides?: HeroSlide[];

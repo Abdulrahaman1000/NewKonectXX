@@ -34,6 +34,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchCombos } from '@/api/combos';
 import { fetchCategories } from '@/api/categories';
 import { cldUrl } from '@/lib/cloudinary';
+import { useSettings } from '@/contexts/SettingsContext';
 
 interface HeroCategory {
   id: string;
@@ -229,6 +230,7 @@ export function HeroCarousel({
   const categories = categoriesProp ?? DEFAULT_CATEGORIES;
   const navigate = useNavigate();
   const isMobile = useMobileLayout();
+  const { settings } = useSettings();
   // Same query key as the Products page "All" list, so the cache is shared.
   const { data: allCombos = [] } = useQuery({
     queryKey: ['combos', { category: null }],
@@ -245,7 +247,7 @@ export function HeroCarousel({
     categoriesProp ??
     (apiCategories.length > 0
       ? [
-          { id: 'all', label: 'All', icon: '🔥' },
+          { id: 'all', label: 'All', icon: '🔥', image: settings?.allCategoryImage },
           ...apiCategories.map((c) => ({ id: c.slug, label: c.name, icon: c.icon, image: c.image })),
         ]
       : DEFAULT_CATEGORIES);

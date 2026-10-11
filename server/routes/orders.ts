@@ -13,6 +13,7 @@ import {
   findByNumberAndPhone,
   OrderError,
 } from "../services/orderService";
+import { attachReferral } from "../services/referralService";
 
 const router = Router();
 
@@ -49,6 +50,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const order = await createOrder({ items, shipping, paymentMethod, notes });
+    await attachReferral(order, req.body.ref);
 
     return res.status(201).json({ data: order });
   } catch (err: any) {

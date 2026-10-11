@@ -11,9 +11,11 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, LayoutGrid, MessageCircle, ShoppingBag, Sparkles } from 'lucide-react';
-import { useSettings } from '@/contexts/SettingsContext';
 import { useCart } from '@/stores/cart';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
+import { ChatSheet } from '@/components/ChatSheet';
+import { chatUI, useChatOpen } from '@/stores/chat';
+import { useChatUnread } from '@/hooks/useChatUnread';
 
 const ITEM = 'relative flex-1 h-16 flex flex-col items-center justify-center gap-1 text-[11px] font-semibold';
 
@@ -24,9 +26,10 @@ function Tab({ active, children }: { active: boolean; children: ReactNode }) {
 export function MobileBottomNav() {
   const isMobile = useMobileLayout();
   const { pathname, search } = useLocation();
-  const { settings } = useSettings();
   const openCart = useCart((s) => s.openCart);
   // Cart badge. If your cart store names its list differently, change `items` here.
+  const chatOpen = useChatOpen();
+  const chatUnread = useChatUnread(isMobile && !chatOpen);
   const count = useCart((s) => (((s as any).items?.length ?? 0) as number));
 
   const inBuilder = search.includes('mode=combo-builder');
@@ -38,8 +41,6 @@ export function MobileBottomNav() {
   ) {
     return null;
   }
-
-  const whatsappLink = settings?.contact?.whatsappLink ?? '#';
 
   return (
     <>
@@ -86,13 +87,20 @@ export function MobileBottomNav() {
           </Tab>
         </button>
 
-        <a href={whatsappLink} target="_blank" rel="noopener noreferrer" className={ITEM}>
+        <button type="button" onClick={chatUI.open} className={ITEM} aria-label="Open chat">
           <Tab active={false}>
-            <MessageCircle className="w-6 h-6" />
+            <span className="relative">
+              <MessageCircle className="w-6 h-6" />
+              {chatUnread > 0 && (
+                <span className="absolute -top-1 -right-1.5 w-3 h-3 rounded-full bg-red-600 border-2 border-background" />
+              )}
+            </span>
             Chat
           </Tab>
-        </a>
+        </button>
       </nav>
+
+      <ChatSheet />
     </>
   );
 }

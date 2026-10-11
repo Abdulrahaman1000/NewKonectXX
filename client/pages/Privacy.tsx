@@ -24,7 +24,7 @@ export default function Privacy() {
       <p>We collect the following types of information:</p>
       <ul>
         <li><strong>Personal information:</strong> name, phone number, email, delivery address</li>
-        <li><strong>Payment information:</strong> processed securely by our payment partners (Paystack, Flutterwave) — we never store card details</li>
+        <li><strong>Payment information:</strong> processed securely by our payment Resellers (Paystack, Flutterwave) — we never store card details</li>
         <li><strong>Order information:</strong> products purchased, delivery preferences</li>
         <li><strong>Usage data:</strong> pages visited, browser type, device info (via standard analytics)</li>
       </ul>
@@ -41,7 +41,7 @@ export default function Privacy() {
       <h2>4. Information Sharing</h2>
       <p>We do <strong>not</strong> sell your personal information. We share data only with:</p>
       <ul>
-        <li>Delivery partners (to ship your orders)</li>
+        <li>Delivery Resellers (to ship your orders)</li>
         <li>Payment processors (to handle transactions)</li>
         <li>Service providers who help us operate the website (e.g. hosting, analytics)</li>
         <li>Authorities, when legally required</li>

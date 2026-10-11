@@ -32,6 +32,7 @@ router.patch("/", async (req: Request, res: Response) => {
     if (typeof body.storeName === "string") update.storeName = body.storeName.trim();
     if (typeof body.tagline === "string") update.tagline = body.tagline;
     if (typeof body.defaultHeroImage === "string") update.defaultHeroImage = body.defaultHeroImage;
+    if (typeof body.allCategoryImage === "string") update.allCategoryImage = body.allCategoryImage.trim();
 
     // Hero (nested)
     if (body.hero && typeof body.hero === "object") {

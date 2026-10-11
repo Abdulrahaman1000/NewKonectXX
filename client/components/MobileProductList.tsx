@@ -13,6 +13,7 @@ import { ChevronDown, LayoutGrid, List, Loader2 } from 'lucide-react';
 import type { Combo } from '@/types/combo';
 import { calculateSavings, formatNaira } from '@/lib/format';
 import { cldUrl } from '@/lib/cloudinary';
+import { useSettings } from '@/contexts/SettingsContext';
 
 interface Props {
   combos: Combo[];
@@ -96,6 +97,7 @@ export function MobileProductList({
 }: Props) {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [expanded, setExpanded] = useState(false);
+  const { settings } = useSettings();
 
   return (
     <section className="px-3 py-3">
@@ -112,7 +114,7 @@ export function MobileProductList({
       </div>
 
       {categories.length > 0 && onCategoryChange && (() => {
-        const all = [{ slug: null as string | null, name: 'All', icon: '🔥', image: '' }, ...categories];
+        const all = [{ slug: null as string | null, name: 'All', icon: '🔥', image: settings?.allCategoryImage ?? '' }, ...categories];
         const LIMIT = 8; // two rows of four; the rest sit behind "More"
         const needsMore = all.length > LIMIT;
         const shown = needsMore && !expanded ? all.slice(0, LIMIT - 1) : all;

@@ -2,13 +2,21 @@
  * Homepage.
  *
  * Layout (top → bottom):
- *  - Hero carousel
- *  - Trust bar
+ *  - Phones:   MobileHero (slider of real combos, 2+ items) → MobileQuickShop
+ *              (search + categories) → MobileDeals (deal of the day)
+ *  - Desktop:  Hero carousel + Trust bar (unchanged)
  *  - Promo countdown
- *  - 🔥 Featured combo (if any combo is marked featured)
+ *  - Phones:   MobileProducts (single products, 1 item)
+ *  - 🔥 Featured combo (desktop only: on phones the featured combo leads the hero slider)
  *  - Category sections (one per category that has combos)
  *  - Fallback: if no combos have categories yet, show all in a single grid
- *  - Demo video, features, why-choose-us, testimonials, FAQ, final CTA, footer
+ *  - Phones:   MobileResellerSection ("Become a Reseller")
+ *  - Demo video, features, why-choose-us, testimonials, FAQ, final CTA (DESKTOP ONLY)
+ *  - Footer
+ *
+ * On phones (< 768px) everything from the demo video down to the final CTA is
+ * not rendered at all, so phones also skip loading the video, testimonial
+ * pictures, and their data.
  */
 
 import { useMemo } from 'react';
@@ -18,6 +26,13 @@ import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
 import { HeroCarousel } from '@/sections/HeroCarousel';
+import {
+  MobileHero,
+  MobileQuickShop,
+  MobileDeals,
+  MobileProducts,
+  MobileResellerSection,
+} from '@/sections/MobileHero';
 import { TrustBar } from '@/sections/TrustBar';
 import { PromoCountdown } from '@/sections/PromoCountdown';
 import { DemoVideo } from '@/sections/DemoVideo';
@@ -35,11 +50,14 @@ import { fetchFaqs } from '@/api/faqs';
 import { fetchHeroSlides } from '@/api/heroSlides';
 import { fetchCategories } from '@/api/categories';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { WelcomeGiftModal } from '@/components/shared/WelcomeGiftModal';
 import { Sparkles } from 'lucide-react';
 
+
 export default function Index() {
   const { settings, isLoading: settingsLoading } = useSettings();
+  const isMobile = useMobileLayout();
 
   const { data: featuredCombo } = useQuery({
     queryKey: ['featuredCombo'],
@@ -56,19 +74,24 @@ export default function Index() {
     queryFn: fetchCategories,
   });
 
+  // Only needed by the desktop-only sections, so phones skip these requests
   const { data: testimonials = [] } = useQuery({
     queryKey: ['testimonials'],
     queryFn: fetchTestimonials,
+    enabled: !isMobile,
   });
 
   const { data: faqs = [] } = useQuery({
     queryKey: ['faqs'],
     queryFn: fetchFaqs,
+    enabled: !isMobile,
   });
 
+  // The mobile hero shows your combos, not the slides, so phones skip this request too
   const { data: heroSlides = [] } = useQuery({
     queryKey: ['heroSlides'],
     queryFn: fetchHeroSlides,
+    enabled: !isMobile,
   });
 
   // Group combos by category. A combo can belong to multiple categories,
@@ -118,21 +141,37 @@ export default function Index() {
       <SEO />
       <Header />
       <CartDrawer />
-        <WelcomeGiftModal />
+      <WelcomeGiftModal />
 
-      <HeroCarousel
-        slides={heroSlides}
-        featuredCombo={featuredCombo ?? null}
-        whatsappLink={settings.contact.whatsappLink}
-        rating={settings.trustStats.rating}
-        reviewCount={settings.trustStats.reviewCount}
-      />
+      {isMobile ? (
+        <>
+          <MobileHero featuredCombo={featuredCombo ?? null} combos={combos} />
+          <MobileQuickShop
+            categories={categories}
+            allImage={settings.allCategoryImage}
+          />
+          <MobileDeals featuredCombo={featuredCombo ?? null} combos={combos} />
+        </>
+      ) : (
+        <>
+          <HeroCarousel
+            slides={heroSlides}
+            featuredCombo={featuredCombo ?? null}
+            whatsappLink={settings.contact.whatsappLink}
+            rating={settings.trustStats.rating}
+            reviewCount={settings.trustStats.reviewCount}
+          />
+          <TrustBar />
+        </>
+      )}
 
-      <TrustBar />
       <PromoCountdown promo={settings.promo} />
 
-      {/* Featured combo section */}
-      {featuredCombo && (
+      {/* Phones: single products (one item) so anyone can buy without a combo */}
+      {isMobile && <MobileProducts combos={combos} />}
+
+      {/* Featured combo section (desktop only: on phones it leads the hero slider) */}
+      {featuredCombo && !isMobile && (
         <section className="section-padding py-10 md:py-14">
           <div className="container-premium">
             <div className="flex items-center gap-2 mb-5 md:mb-7">
@@ -190,16 +229,25 @@ export default function Index() {
         )
       )}
 
-      <DemoVideo video={settings.video} />
-      <Features />
-      <WhyChooseUs />
-      <Testimonials
-        testimonials={testimonials}
-        rating={settings.trustStats.rating}
-        reviewCount={settings.trustStats.reviewCount}
-      />
-      <FAQSection faqs={faqs} whatsappLink={settings.contact.whatsappLink} />
-      <FinalCTA whatsappLink={settings.contact.whatsappLink} />
+      {/* Phones only: become a Reseller (the button opens the sign-up popup) */}
+      {isMobile && <MobileResellerSection />}
+
+      {/* Desktop only: demo video down to the final call-to-action */}
+      {!isMobile && (
+        <>
+          <DemoVideo video={settings.video} />
+          <Features />
+          <WhyChooseUs />
+          <Testimonials
+            testimonials={testimonials}
+            rating={settings.trustStats.rating}
+            reviewCount={settings.trustStats.reviewCount}
+          />
+          <FAQSection faqs={faqs} whatsappLink={settings.contact.whatsappLink} />
+          <FinalCTA whatsappLink={settings.contact.whatsappLink} />
+        </>
+      )}
+
       <Footer />
     </div>
   );

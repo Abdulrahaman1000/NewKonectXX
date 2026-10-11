@@ -83,6 +83,7 @@ export default function AdminSettings() {
     const payload: Partial<AdminSiteSettings> = {
       storeName: form.storeName,
       tagline: form.tagline,
+      allCategoryImage: form.allCategoryImage ?? '',
       hero: form.hero,
       welcomePopup: {
         giftImages: form.welcomePopup?.giftImages ?? [],
@@ -176,6 +177,32 @@ export default function AdminSettings() {
             images={popupComboImages}
             onChange={(imgs) => set('welcomePopup.comboImages', imgs)}
           />
+        </Section>
+
+        {/* Category tiles */}
+        <Section
+          title="Category tiles"
+          subtitle="The picture for every other category is set on the Categories page."
+        >
+          <div>
+            <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+              "All" tile picture
+            </span>
+            <div className="flex items-start gap-4">
+              <div className="w-28 shrink-0">
+                <ImageUploader
+                  value={form.allCategoryImage ?? ''}
+                  onChange={(url) => set('allCategoryImage', url)}
+                  aspect="square"
+                  maxSizeMB={5}
+                />
+              </div>
+              <p className="text-xs text-white/45 leading-relaxed">
+                Shown on the "All" tile on the home page and the Shop page. Use a square picture. If you
+                leave it empty, the 🔥 icon is used. Click Save settings after changing it.
+              </p>
+            </div>
+          </div>
         </Section>
 
         {/* Contact */}

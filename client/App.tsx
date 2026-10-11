@@ -34,6 +34,7 @@ import AdminSettings from './pages/AdminSettings';
 import AdminFaqs from './pages/AdminFaqs';
 import AdminTestimonials from './pages/AdminTestimonials';
 import AdminTestUpload from './pages/AdminTestUpload';
+import AdminChats from './pages/AdminChats';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
 import Shipping from './pages/Shipping';
@@ -44,6 +45,8 @@ import NotFound from './pages/NotFound';
 import { WhatsAppFloat } from '@/components/shared/WhatsAppFloat';
 import AdminGiftBankPage from './pages/AdminGiftBankPage';
 import { MobileBottomNav } from './components/MobileBottomNav';
+ import AdminResellers from './pages/AdminResellers';
+ import { captureReferral } from "@/lib/referral";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,7 +57,7 @@ const queryClient = new QueryClient({
     },
   },
 });
-
+captureReferral();
 const App = () => (
   <ErrorBoundary>
     <HelmetProvider>
@@ -67,7 +70,7 @@ const App = () => (
               <BrowserRouter>
                 <Routes>
                   <Route path="/" element={<Index />} />
-               
+
                   <Route path="/products" element={<Products />} />
                   <Route path="/combos/:slug" element={<ComboDetail />} />
                   <Route path="/categories" element={<Categories />} />
@@ -92,7 +95,10 @@ const App = () => (
                   <Route path="/admin/settings" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />
                   <Route path="/admin/faqs" element={<AdminProtectedRoute><AdminFaqs /></AdminProtectedRoute>} />
                   <Route path="/admin/testimonials" element={<AdminProtectedRoute><AdminTestimonials /></AdminProtectedRoute>} />
+                  <Route path="/admin/chats" element={<AdminProtectedRoute><AdminChats /></AdminProtectedRoute>} />
                   <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
+                 
+<Route path="/admin/Resellers" element={<AdminProtectedRoute><AdminResellers /></AdminProtectedRoute>} />
 
                   {/* Footer pages */}
                   <Route path="/faq" element={<FAQ />} />

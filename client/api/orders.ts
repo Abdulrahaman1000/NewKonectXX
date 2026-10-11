@@ -6,6 +6,7 @@
 
 import { apiFetch } from "./client";
 import type { Order, ShippingAddress, PaymentMethod, CartItem } from "@/types/order";
+import { getReferral } from "@/lib/referral";
 
 interface ApiResponse<T> {
   data: T;
@@ -37,6 +38,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     })),
     shipping: input.shipping,
     paymentMethod: input.paymentMethod,
+    ref: getReferral(),
     notes: input.notes,
   };
 

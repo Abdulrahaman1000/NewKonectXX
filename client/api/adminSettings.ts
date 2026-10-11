@@ -10,6 +10,8 @@ export interface AdminSiteSettings {
   storeName: string;
   tagline: string;
   defaultHeroImage: string;
+  /** Picture for the "All" category tile. */
+  allCategoryImage?: string;
   hero?: {
     headline: string;
     subtext: string;
