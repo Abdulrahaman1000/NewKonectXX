@@ -32,6 +32,7 @@ import {
   updateHeroSlide,
 } from '@/api/adminHeroSlides';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 const ACCENT_PRESETS = [
   { name: 'Indigo Night',  value: 'from-[#1a0a2e] via-[#16213e] to-[#0f3460]' },
@@ -55,6 +56,7 @@ const EMPTY_FORM: HeroSlidePayload = {
 
 export default function AdminHeroSlides() {
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<HeroSlidePayload>(EMPTY_FORM);
@@ -151,10 +153,14 @@ export default function AdminHeroSlides() {
     });
   };
 
-  const handleDelete = (slide: AdminHeroSlide) => {
-    if (confirm(`Delete "${slide.tag || slide.headline || 'this slide'}"? This cannot be undone.`)) {
-      deleteMut.mutate(slide.id);
-    }
+  const handleDelete = async (slide: AdminHeroSlide) => {
+    const ok = await confirm({
+      title: 'Delete slide',
+      message: `Delete "${slide.tag || slide.headline || 'this slide'}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (ok) deleteMut.mutate(slide.id);
   };
 
   const move = (idx: number, direction: -1 | 1) => {

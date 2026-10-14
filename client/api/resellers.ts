@@ -1,6 +1,6 @@
 /**
  * Reseller sign-up — frontend API call.
- * Goes to POST /api/Resellers/register (server/routes/Resellers.ts).
+ * Goes to POST /api/resellers/register (server/routes/resellers.ts).
  */
 
 export interface ResellerApplication {
@@ -10,6 +10,10 @@ export interface ResellerApplication {
   email: string;
   password: string;
   channel?: string;
+  /** Payout details, required by the sign-up form (Partner Program plan, section 5). */
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
   /** Honeypot field. Always sent as typed; real people leave it empty. */
   website?: string;
 }
@@ -18,7 +22,7 @@ export interface ResellerApplication {
 export async function registerReseller(input: ResellerApplication): Promise<void> {
   let res: Response;
   try {
-    res = await fetch('/api/Resellers/register', {
+    res = await fetch('/api/resellers/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),

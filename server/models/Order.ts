@@ -3,6 +3,9 @@
  *
  * Items now snapshot the customer's variant selections so admin knows
  * exactly what to ship.
+ *
+ * phoneKey is the customer's phone number cleaned to its last 10 digits. It is
+ * how spending is added up for the free gift (customers do not have accounts).
  */
 
 import { Schema, model, Document, Types } from "mongoose";
@@ -57,6 +60,7 @@ export interface OrderDocument extends Document {
   paymentMethod: PaymentMethod;
   paymentReference?: string;
   shipping: ShippingAddress;
+  phoneKey?: string;
   notes?: string;
   trackingNumber?: string;
   trackingProviderUrl?: string;
@@ -118,6 +122,7 @@ const OrderSchema = new Schema<OrderDocument>(
     },
     paymentReference: { type: String, index: true },
     shipping: { type: ShippingAddressSchema, required: true },
+    phoneKey: { type: String },
     notes: { type: String },
     trackingNumber: { type: String },
     trackingProviderUrl: { type: String },
@@ -131,5 +136,6 @@ const OrderSchema = new Schema<OrderDocument>(
 
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
+OrderSchema.index({ phoneKey: 1, createdAt: -1 });
 
 export const Order = model<OrderDocument>("Order", OrderSchema);

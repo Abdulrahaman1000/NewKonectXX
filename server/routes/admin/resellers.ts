@@ -1,14 +1,16 @@
 /**
- * Admin Reseller management routes. Mount behind requireAuth, like the other admin routes.
+ * Admin partner (reseller) management routes. Mount behind requireAuth, like the other admin routes.
  *
- * GET    /api/admin/Resellers?status=pending|approved|suspended&q=   — list (newest first)
- * GET    /api/admin/Resellers/counts                                  — { pending, approved, suspended }
- * PATCH  /api/admin/Resellers/:id/status   { status }                 — "approved" or "suspended"
- * DELETE /api/admin/Resellers/:id                                     — reject a PENDING application
+ * GET    /api/admin/resellers?status=pending|approved|suspended&q=   — list (newest first)
+ * GET    /api/admin/resellers/counts                                  — { pending, approved, suspended }
+ * PATCH  /api/admin/resellers/:id/status   { status }                 — "approved" or "suspended"
+ * PATCH  /api/admin/resellers/:id/notes    { adminNotes }             — private admin notes
+ * DELETE /api/admin/resellers/:id                                     — reject a PENDING application
  *
  * passwordHash is select:false on the model, so it is never returned from any of these.
  */
 
+import { sendPartnerApproved } from "../../services/emailService";
 import { Router, Request, Response } from "express";
 import { Reseller, ResellerCounter } from "../../models/Reseller";
 
@@ -25,7 +27,7 @@ const fail = (res: Response, status: number, code: string, message: string) =>
 /** SC1001, SC1002, ... Atomic, so two approvals at once never share a code. */
 async function nextResellerCode(): Promise<string> {
   const counter = await ResellerCounter.findOneAndUpdate(
-    { _id: "Reseller-code" },
+    { _id: "reseller-code" },
     { $inc: { seq: 1 } },
     { new: true, upsert: true },
   );
@@ -45,15 +47,15 @@ router.get("/", async (req: Request, res: Response) => {
         { email: rx },
         { phone: rx },
         { whatsapp: rx },
-        { ResellerCode: rx },
+        { resellerCode: rx },
       ];
     }
 
-    const Resellers = await Reseller.find(filter).sort({ createdAt: -1 }).limit(200).lean();
-    res.json({ data: Resellers });
+    const resellers = await Reseller.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ data: resellers });
   } catch (err) {
-    console.error("GET /api/admin/Resellers failed:", err);
-    fail(res, 500, "SERVER_ERROR", "Failed to fetch Resellers");
+    console.error("GET /api/admin/resellers failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to fetch partners");
   }
 });
 
@@ -64,7 +66,7 @@ router.get("/counts", async (_req: Request, res: Response) => {
     for (const row of rows) if (isStatus(row._id)) counts[row._id] = row.n;
     res.json({ data: counts });
   } catch (err) {
-    console.error("GET /api/admin/Resellers/counts failed:", err);
+    console.error("GET /api/admin/resellers/counts failed:", err);
     fail(res, 500, "SERVER_ERROR", "Failed to fetch counts");
   }
 });
@@ -76,17 +78,17 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       return fail(res, 400, "BAD_REQUEST", "Status must be approved or suspended");
     }
 
-    const Reseller = await Reseller.findById(req.params.id).select("status ResellerCode");
-    if (!Reseller) return fail(res, 404, "NOT_FOUND", "Reseller not found");
+    const reseller = await Reseller.findById(req.params.id).select("status resellerCode");
+    if (!reseller) return fail(res, 404, "NOT_FOUND", "Partner not found");
 
-    if (status === "suspended" && Reseller.status !== "approved") {
-      return fail(res, 409, "CONFLICT", "Only approved Resellers can be suspended");
+    if (status === "suspended" && reseller.status !== "approved") {
+      return fail(res, 409, "CONFLICT", "Only approved partners can be suspended");
     }
 
     const update: Record<string, unknown> = { status };
-    if (status === "approved" && !Reseller.ResellerCode) {
-      // First approval: assign the code. Reinstating a suspended Reseller keeps theirs.
-      update.ResellerCode = await nextResellerCode();
+    if (status === "approved" && !reseller.resellerCode) {
+      // First approval: assign the code. Reinstating a suspended reseller keeps theirs.
+      update.resellerCode = await nextResellerCode();
       update.approvedAt = new Date();
     }
     if (status === "suspended") update.suspendedAt = new Date();
@@ -95,35 +97,59 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       new: true,
       runValidators: true,
     }).lean();
+
+    // Tell the partner (non-blocking; email problems never fail the approval)
+    if (status === "approved" && reseller.status !== "approved" && updated?.email && updated?.resellerCode) {
+      void sendPartnerApproved({ fullName: updated.fullName, email: updated.email, code: updated.resellerCode });
+    }
+
     res.json({ data: updated });
   } catch (err: any) {
-    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Reseller not found");
-    console.error(`PATCH /api/admin/Resellers/${req.params.id}/status failed:`, err);
-    fail(res, 500, "SERVER_ERROR", "Failed to update Reseller");
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`PATCH /api/admin/resellers/${req.params.id}/status failed:`, err);
+    fail(res, 500, "SERVER_ERROR", "Failed to update partner");
+  }
+});
+
+router.patch("/:id/notes", async (req: Request, res: Response) => {
+  try {
+    const raw = req.body?.adminNotes;
+    const adminNotes = typeof raw === "string" ? raw.trim().slice(0, 1000) : "";
+    const updated = await Reseller.findByIdAndUpdate(
+      req.params.id,
+      { adminNotes },
+      { new: true },
+    ).lean();
+    if (!updated) return fail(res, 404, "NOT_FOUND", "Partner not found");
+    res.json({ data: updated });
+  } catch (err: any) {
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`PATCH /api/admin/resellers/${req.params.id}/notes failed:`, err);
+    fail(res, 500, "SERVER_ERROR", "Failed to save notes");
   }
 });
 
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
-    const Reseller = await Reseller.findById(req.params.id).select("status");
-    if (!Reseller) return fail(res, 404, "NOT_FOUND", "Reseller not found");
+    const reseller = await Reseller.findById(req.params.id).select("status");
+    if (!reseller) return fail(res, 404, "NOT_FOUND", "Partner not found");
 
     // Once someone has been approved they may have referrals and commission on record,
     // so they are suspended, never deleted.
-    if (Reseller.status !== "pending") {
+    if (reseller.status !== "pending") {
       return fail(
         res,
         409,
         "CONFLICT",
-        "Only pending applications can be rejected. Suspend approved Resellers instead.",
+        "Only pending applications can be rejected. Suspend approved partners instead.",
       );
     }
 
-    await Reseller.deleteOne();
+    await reseller.deleteOne();
     res.json({ data: { id: req.params.id, deleted: true } });
   } catch (err: any) {
-    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Reseller not found");
-    console.error(`DELETE /api/admin/Resellers/${req.params.id} failed:`, err);
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`DELETE /api/admin/resellers/${req.params.id} failed:`, err);
     fail(res, 500, "SERVER_ERROR", "Failed to reject application");
   }
 });

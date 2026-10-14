@@ -9,7 +9,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -668,10 +667,6 @@ export function HeroCarousel({
               </a>
             </div>
 
-            <p className="text-[10px] md:text-[11px] text-white/40 flex items-center justify-center gap-2 pt-1 whitespace-nowrap">
-              <Check className="w-3 h-3 text-primary/60 shrink-0" />
-              Free nationwide delivery · 14-day returns · 1-year warranty
-            </p>
           </div>
         </div>
       )}

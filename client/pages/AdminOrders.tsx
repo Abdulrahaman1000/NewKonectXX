@@ -5,6 +5,7 @@
  *  - Status filter chips (All / Pending / Paid / Processing / Shipped / Delivered / Cancelled)
  *  - Search by order number, name, phone, or email
  *  - Pagination
+ *  - A Partner column showing who referred the order and the commission it earned
  *  - Click any row to view detail
  */
 
@@ -14,6 +15,11 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, LogOut, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { listOrders } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
 import { formatNaira } from '@/lib/format';
 import type { OrderStatus } from '@/types/order';
 import { SEO } from '@/components/shared/SEO';
@@ -50,6 +56,17 @@ export default function AdminOrders() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-orders', status, search, page],
     queryFn: () => listOrders({ status, search, page, limit: 25 }),
+  });
+
+  const orderIds = (data?.data ?? [])
+    .map((o) => o._id ?? o.id ?? '')
+    .filter(Boolean);
+
+  // Only orders that came through a partner's link appear in this map
+  const { data: commissions = {} } = useQuery({
+    queryKey: ['admin-commissions-by-orders', orderIds.join(',')],
+    queryFn: () => getCommissionsByOrders(orderIds),
+    enabled: orderIds.length > 0,
   });
 
   const handleSearch = (e: React.FormEvent) => {
@@ -162,6 +179,7 @@ export default function AdminOrders() {
                     <th className="px-4 py-3 text-left">Order #</th>
                     <th className="px-4 py-3 text-left">Customer</th>
                     <th className="px-4 py-3 text-left hidden md:table-cell">Items</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Partner</th>
                     <th className="px-4 py-3 text-left">Total</th>
                     <th className="px-4 py-3 text-left">Status</th>
                     <th className="px-4 py-3 text-left hidden md:table-cell">Date</th>
@@ -170,6 +188,7 @@ export default function AdminOrders() {
                 <tbody>
                   {orders.map((order) => {
                     const id = order._id ?? order.id ?? '';
+                    const commission = commissions[id];
                     return (
                       <tr
                         key={id}
@@ -182,9 +201,34 @@ export default function AdminOrders() {
                         <td className="px-4 py-3">
                           <p className="text-white font-medium text-xs">{order.shipping.fullName}</p>
                           <p className="text-white/40 text-[10px]">{order.shipping.phone}</p>
+                          {commission && (
+                            <p className="md:hidden mt-0.5 text-[10px] text-primary/80">
+                              Partner {commission.resellerCode}
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 hidden md:table-cell text-white/60 text-xs">
                           {order.items.reduce((s, i) => s + i.quantity, 0)} item{order.items.reduce((s, i) => s + i.quantity, 0) !== 1 ? 's' : ''}
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-xs">
+                          {commission ? (
+                            <div>
+                              <p className="text-white/80 font-medium">
+                                {commission.partnerName}{' '}
+                                <span className="font-mono text-primary text-[10px]">{commission.resellerCode}</span>
+                              </p>
+                              <p className="mt-0.5 flex items-center gap-1.5 text-white/50 text-[10px]">
+                                <span className="tabular-nums">{formatNaira(commission.amount)}</span>
+                                <span
+                                  className={`font-bold px-1.5 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                                >
+                                  {COMMISSION_STATUS_LABEL[commission.status]}
+                                </span>
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-white/20">&mdash;</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-white tabular-nums font-medium text-xs">
                           {formatNaira(order.total)}

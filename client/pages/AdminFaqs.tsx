@@ -32,6 +32,7 @@ import {
   updateFaq,
 } from '@/api/adminFaqs';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 const EMPTY_FORM: FaqPayload = {
   question: '',
@@ -41,6 +42,7 @@ const EMPTY_FORM: FaqPayload = {
 
 export default function AdminFaqs() {
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<FaqPayload>(EMPTY_FORM);
@@ -116,10 +118,14 @@ export default function AdminFaqs() {
     updateMut.mutate({ id: faq.id, payload: { isPublished: !faq.isPublished } });
   };
 
-  const handleDelete = (faq: AdminFaq) => {
-    if (confirm(`Delete this FAQ?\n\n"${faq.question}"`)) {
-      deleteMut.mutate(faq.id);
-    }
+  const handleDelete = async (faq: AdminFaq) => {
+    const ok = await confirm({
+      title: 'Delete FAQ',
+      message: `Delete this FAQ? "${faq.question}"`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (ok) deleteMut.mutate(faq.id);
   };
 
   const move = (idx: number, direction: -1 | 1) => {

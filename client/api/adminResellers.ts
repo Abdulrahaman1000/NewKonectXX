@@ -1,5 +1,5 @@
 /**
- * Admin Resellers API — frontend client.
+ * Admin partners (resellers) API — frontend client.
  */
 
 import { apiFetch } from "./client";
@@ -17,9 +17,15 @@ export interface AdminReseller {
   whatsapp: string;
   email: string;
   channel: string;
+  /** Payout details collected at sign-up. Empty for partners who applied before these existed. */
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  /** Private notes for the admin team. */
+  adminNotes?: string;
   status: ResellerStatus;
-  /** Set the first time the Reseller is approved. */
-  ResellerCode?: string;
+  /** Set the first time the reseller is approved. */
+  resellerCode?: string;
   createdAt: string;
   approvedAt?: string;
 }
@@ -41,13 +47,13 @@ export async function listResellersAdmin(params: {
   if (params.status) qs.set("status", params.status);
   if (params.q) qs.set("q", params.q);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  const res = await apiFetch<ApiResponse<BackendReseller[]>>(`/api/admin/Resellers${suffix}`);
+  const res = await apiFetch<ApiResponse<BackendReseller[]>>(`/api/admin/resellers${suffix}`);
   return res.data.map(normalize);
 }
 
 export async function getResellerCounts(): Promise<Record<ResellerStatus, number>> {
   const res = await apiFetch<ApiResponse<Record<ResellerStatus, number>>>(
-    "/api/admin/Resellers/counts",
+    "/api/admin/resellers/counts",
   );
   return res.data;
 }
@@ -56,7 +62,7 @@ export async function setResellerStatus(
   id: string,
   status: "approved" | "suspended",
 ): Promise<AdminReseller> {
-  const res = await apiFetch<ApiResponse<BackendReseller>>(`/api/admin/Resellers/${id}/status`, {
+  const res = await apiFetch<ApiResponse<BackendReseller>>(`/api/admin/resellers/${id}/status`, {
     method: "PATCH",
     body: JSON.stringify({ status }),
   });
@@ -65,5 +71,14 @@ export async function setResellerStatus(
 
 /** Rejects (deletes) a pending application. The server refuses for anyone already approved. */
 export async function deleteReseller(id: string): Promise<void> {
-  await apiFetch(`/api/admin/Resellers/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/admin/resellers/${id}`, { method: "DELETE" });
+}
+
+/** Saves the private admin notes on a partner. */
+export async function saveResellerNotes(id: string, adminNotes: string): Promise<AdminReseller> {
+  const res = await apiFetch<ApiResponse<BackendReseller>>(`/api/admin/resellers/${id}/notes`, {
+    method: "PATCH",
+    body: JSON.stringify({ adminNotes }),
+  });
+  return normalize(res.data);
 }

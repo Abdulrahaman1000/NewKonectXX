@@ -1,18 +1,18 @@
 /**
- * ResellerSignupModal — "Become a Reseller" form, based on section 5 of the V1 plan.
+ * ResellerSignupModal — "Become a partner" form, based on section 5 of the Partner Program plan.
  *
- * Short on purpose: name, phone, WhatsApp, email, password and an optional
- * promotion channel. Bank details are NOT asked for here; the plan says to collect
- * them only when a Reseller requests a withdrawal.
+ * Name, phone, WhatsApp, email, password, bank details for payouts, and an optional
+ * promotion channel. The updated plan asks for bank name, account number and
+ * account name at sign-up so weekly payouts are never held up.
  *
- * Posts to POST /api/Resellers/register (server/routes/Resellers.ts).
+ * Posts to POST /api/resellers/register (server/routes/resellers.ts).
  * On phones it slides up as a sheet; on larger screens it is a centred dialog.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Eye, EyeOff, Loader2, X } from 'lucide-react';
-import { registerReseller } from '@/api/Resellers';
+import { registerReseller } from '@/api/resellers';
 
 interface Props {
   open: boolean;
@@ -26,8 +26,34 @@ const INPUT =
 const PHONE_RE = /^\+?\d{10,15}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const squash = (v: string) => v.replace(/[\s-]/g, '');
+const ACCOUNT_RE = /^\d{10}$/;
 
-type FieldName = 'fullName' | 'phone' | 'whatsapp' | 'email' | 'password';
+// Suggestions only: the field accepts any bank name.
+const BANKS = [
+  'Access Bank',
+  'First Bank',
+  'GTBank',
+  'Kuda',
+  'Moniepoint',
+  'OPay',
+  'PalmPay',
+  'Stanbic IBTC',
+  'Sterling Bank',
+  'UBA',
+  'Union Bank',
+  'Wema Bank',
+  'Zenith Bank',
+];
+
+type FieldName =
+  | 'fullName'
+  | 'phone'
+  | 'whatsapp'
+  | 'email'
+  | 'password'
+  | 'bankName'
+  | 'accountNumber'
+  | 'accountName';
 type Errors = Partial<Record<FieldName, string>>;
 
 const EMPTY = {
@@ -36,6 +62,9 @@ const EMPTY = {
   whatsapp: '',
   email: '',
   password: '',
+  bankName: '',
+  accountNumber: '',
+  accountName: '',
   channel: '',
   website: '', // honeypot, see below
 };
@@ -126,6 +155,11 @@ export function ResellerSignupModal({ open, onClose }: Props) {
     }
     if (!EMAIL_RE.test(form.email.trim())) found.email = 'Enter a valid email address.';
     if (form.password.length < 8) found.password = 'Use at least 8 characters.';
+    if (form.bankName.trim().length < 2) found.bankName = 'Enter your bank name.';
+    if (!ACCOUNT_RE.test(squash(form.accountNumber))) {
+      found.accountNumber = 'Enter your 10-digit account number.';
+    }
+    if (form.accountName.trim().length < 2) found.accountName = 'Enter the name on the account.';
     return found;
   };
 
@@ -146,6 +180,9 @@ export function ResellerSignupModal({ open, onClose }: Props) {
         whatsapp: squash(sameWhatsapp ? form.phone : form.whatsapp),
         email: form.email.trim(),
         password: form.password,
+        bankName: form.bankName.trim(),
+        accountNumber: squash(form.accountNumber),
+        accountName: form.accountName.trim(),
         channel: form.channel.trim(),
         website: form.website,
       });
@@ -169,13 +206,13 @@ export function ResellerSignupModal({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="Reseller-title"
+        aria-labelledby="reseller-title"
         className="flex max-h-[calc(100dvh-0.5rem)] w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-primary/30 bg-gradient-to-b from-[#14161f] to-[#0c0d12] text-white shadow-[0_0_60px_rgba(255,215,0,0.12)] sm:rounded-3xl"
       >
         <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-2 pt-5">
           <div>
-            <h2 id="Reseller-title" className="text-xl font-black leading-tight">
-              {done ? 'Application received' : 'Become a Smart Combo Reseller'}
+            <h2 id="reseller-title" className="text-xl font-black leading-tight">
+              {done ? 'Application received' : 'Become a Smart Combo partner'}
             </h2>
             {!done && (
               <p className="mt-1 text-sm text-white/55">
@@ -202,8 +239,11 @@ export function ResellerSignupModal({ open, onClose }: Props) {
               <CheckCircle2 className="h-14 w-14 text-emerald-400" />
               <p className="mt-4 text-[15px] leading-snug text-white/80">
                 Thanks{form.fullName.trim() ? `, ${form.fullName.trim().split(' ')[0]}` : ''}. We will
-                review your application and contact you. Approved Resellers get a referral link to
-                start promoting.
+                review your application and message you on WhatsApp once you are approved.
+              </p>
+              <p className="mt-3 text-sm leading-snug text-white/60">
+                After that, log in at <a href="/partner" className="font-semibold text-primary underline">Partner login</a> with
+                the email and password you just chose to get your personal link and ready-made ads.
               </p>
               <button
                 type="button"
@@ -311,6 +351,62 @@ export function ResellerSignupModal({ open, onClose }: Props) {
                 </div>
               </Field>
 
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-sm font-semibold text-white">Payout details</p>
+
+                <Field id="bankName" label="Bank name" error={errors.bankName}>
+                  <input
+                    id="bankName"
+                    type="text"
+                    list="bank-suggestions"
+                    autoComplete="off"
+                    value={form.bankName}
+                    onChange={set('bankName')}
+                    aria-invalid={!!errors.bankName}
+                    aria-describedby={describe('bankName')}
+                    className={INPUT}
+                  />
+                  <datalist id="bank-suggestions">
+                    {BANKS.map((bank) => (
+                      <option key={bank} value={bank} />
+                    ))}
+                  </datalist>
+                </Field>
+
+                <Field id="accountNumber" label="Account number" error={errors.accountNumber}>
+                  <input
+                    id="accountNumber"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={10}
+                    value={form.accountNumber}
+                    onChange={set('accountNumber')}
+                    placeholder="10 digits"
+                    aria-invalid={!!errors.accountNumber}
+                    aria-describedby={describe('accountNumber')}
+                    className={INPUT}
+                  />
+                </Field>
+
+                <Field id="accountName" label="Account name" error={errors.accountName}>
+                  <input
+                    id="accountName"
+                    type="text"
+                    autoComplete="off"
+                    value={form.accountName}
+                    onChange={set('accountName')}
+                    aria-invalid={!!errors.accountName}
+                    aria-describedby={describe('accountName')}
+                    className={INPUT}
+                  />
+                </Field>
+
+                <p className="text-xs leading-snug text-white/45">
+                  Used only to pay your commission. We never show it to anyone else.
+                </p>
+              </div>
+
               <Field id="channel" label="Social handle or main promotion channel (optional)">
                 <input
                   id="channel"
@@ -335,10 +431,6 @@ export function ResellerSignupModal({ open, onClose }: Props) {
                 className="absolute left-[-9999px] h-0 w-0 opacity-0"
               />
 
-              <p className="text-xs leading-snug text-white/45">
-                No bank details needed now. You add them when you request your first withdrawal.
-              </p>
-
               {formError && (
                 <p
                   role="alert"
@@ -359,7 +451,7 @@ export function ResellerSignupModal({ open, onClose }: Props) {
                     Submitting
                   </>
                 ) : (
-                  'Apply to become a Reseller'
+                  'Apply to become a partner'
                 )}
               </button>
             </form>

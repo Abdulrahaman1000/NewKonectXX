@@ -11,6 +11,8 @@
  *    Combo. selectFreeGift takes a generic FreeGiftSource so it isn't tied
  *    to the Combo shape.
  *  - Automatically drops selected free gift if subtotal falls below ₦40,000.
+ *  - giftCredit: money the same phone number already spent in the last 30 days.
+ *    Checkout sets it (it is never saved), and it counts toward the ₦40,000.
  */
 
 import { create } from 'zustand';
@@ -43,6 +45,9 @@ interface CartStore {
   items: CartItem[];
   customComboGroups: CustomComboGroup[];
   isOpen: boolean;
+  /** Earlier paid spending that counts toward the gift. Set by Checkout, not saved. */
+  giftCredit: number;
+  setGiftCredit: (amount: number) => void;
 
   addItem: (
     combo: Combo,
@@ -88,6 +93,16 @@ export const useCart = create<CartStore>()(
       items: [],
       customComboGroups: [],
       isOpen: false,
+      giftCredit: 0,
+
+      setGiftCredit: (amount) => {
+        const credit = Math.max(0, Math.floor(amount) || 0);
+        const stillQualifies = get().subtotal() + credit >= GIFT_THRESHOLD;
+        set({
+          giftCredit: credit,
+          items: stillQualifies ? get().items : get().items.filter((i) => !i.isFreeGift),
+        });
+      },
 
       addItem: (combo, quantity = 1, selectedVariants) => {
         const existing = get().items.find(
@@ -176,7 +191,7 @@ export const useCart = create<CartStore>()(
       },
 
       qualifiesForFreeGift: () => {
-        return get().subtotal() >= GIFT_THRESHOLD;
+        return get().subtotal() + get().giftCredit >= GIFT_THRESHOLD;
       },
 
       removeItem: (comboId, comboGroupId) => {
@@ -196,7 +211,7 @@ export const useCart = create<CartStore>()(
         const nonGiftSubtotal = remaining.reduce((sum, i) => {
           if (i.isFreeGift) return sum;
           return sum + i.unitPrice * i.quantity;
-        }, 0) - groups.reduce((sum, g) => sum + g.discount, 0);
+        }, 0) - groups.reduce((sum, g) => sum + g.discount, 0) + get().giftCredit;
 
         const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? remaining.filter((i) => !i.isFreeGift) : remaining;
 
@@ -218,14 +233,14 @@ export const useCart = create<CartStore>()(
         const nonGiftSubtotal = updatedItems.reduce((sum, i) => {
           if (i.isFreeGift) return sum;
           return sum + i.unitPrice * i.quantity;
-        }, 0) - get().customComboDiscountTotal();
+        }, 0) - get().customComboDiscountTotal() + get().giftCredit;
 
         const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? updatedItems.filter((i) => !i.isFreeGift) : updatedItems;
 
         set({ items: finalItems });
       },
 
-      clear: () => set({ items: [], customComboGroups: [] }),
+      clear: () => set({ items: [], customComboGroups: [], giftCredit: 0 }),
 
       openCart: () => set({ isOpen: true }),
       closeCart: () => set({ isOpen: false }),

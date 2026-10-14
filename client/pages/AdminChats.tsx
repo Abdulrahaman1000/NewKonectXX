@@ -12,6 +12,7 @@ import { AdminFrame } from '@/components/admin/AdminFrame';
 import { SEO } from '@/components/shared/SEO';
 import { deleteChat, getChat, listChats, replyToChat } from '@/api/adminChats';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -23,6 +24,7 @@ const when = (iso: string) => {
 
 export default function AdminChats() {
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -170,10 +172,14 @@ export default function AdminChats() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(`Delete the chat with ${convo.name}? This can't be undone.`)) {
-                      deleteMut.mutate(convo.id);
-                    }
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: 'Delete chat',
+                      message: `Delete the chat with ${convo.name}? This can't be undone.`,
+                      confirmText: 'Delete',
+                      danger: true,
+                    });
+                    if (ok) deleteMut.mutate(convo.id);
                   }}
                   className="p-2 rounded-lg hover:bg-red-500/10 text-white/50 hover:text-red-400"
                   aria-label="Delete chat"

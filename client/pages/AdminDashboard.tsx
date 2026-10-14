@@ -19,12 +19,15 @@ import {
   UserPlus,
   ArrowRight,
   Gift,
+  Megaphone,
+  Banknote,
 } from 'lucide-react';
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardStats } from '@/api/adminOrders';
 import { getChatUnreadCount } from '@/api/adminChats';
 import { getResellerCounts } from '@/api/adminResellers';
+import { listWithdrawals } from '@/api/adminWithdrawals';
 import { formatNaira } from '@/lib/format';
 
 export default function AdminDashboard() {
@@ -42,8 +45,13 @@ export default function AdminDashboard() {
     refetchInterval: 15000,
   });
 
-  const { data: ResellerCounts } = useQuery({
-    queryKey: ['admin-Reseller-counts'],
+  const { data: payoutCounts } = useQuery({
+    queryKey: ['admin-withdrawal-counts'],
+    queryFn: () => listWithdrawals('requested').then((r) => r.counts),
+    refetchInterval: 30000,
+  });
+  const { data: resellerCounts } = useQuery({
+    queryKey: ['admin-reseller-counts'],
     queryFn: getResellerCounts,
     refetchInterval: 30000,
   });
@@ -101,7 +109,9 @@ export default function AdminDashboard() {
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
             <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos Management" desc="Add, edit, toggle visibility, and delete combos" highlight />
-            <TileLink to="/admin/Resellers" Icon={UserPlus} label="Resellers" desc="Review applications and manage Resellers" badge={ResellerCounts?.pending ?? 0} />
+            <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />
+            <TileLink to="/admin/payouts" Icon={Banknote} label="Partner Payouts" desc="Withdrawal requests to pay each week" badge={payoutCounts?.requested ?? 0} badgeLabel="to pay" />
+            <TileLink to="/admin/ads" Icon={Megaphone} label="Partner Ads" desc="Images, videos and captions partners can download" />
             <TileLink to="/admin/gift-bank" Icon={Gift} label="Free Gift Bank" desc="Manage standalone free gift items for cart threshold rewards" />
             <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
             <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />

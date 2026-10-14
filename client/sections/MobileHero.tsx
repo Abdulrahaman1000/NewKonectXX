@@ -7,7 +7,7 @@
  *  <MobileQuickShop />       search + your category grid, unchanged in look
  *  <MobileDeals />           "Deal of the day" card, same as before
  *  <MobileProducts />        single products (one item), bought on their own
- *  <MobileResellerSection /> "Become a Reseller" block + sign-up popup, based on the V1 plan
+ *  <MobileResellerSection /> "Become a partner" block + sign-up popup, based on the Partner Program plan
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -94,10 +94,10 @@ export function MobileHero({ featuredCombo, combos }: MobileHeroProps) {
       </div>
 
       <a
-        href="#Reseller"
+        href="#reseller"
         className={`mt-3 flex items-center justify-center gap-1 py-2 text-sm text-white/60 ${FOCUS}`}
       >
-        Want to earn? <span className="font-semibold text-primary">Become a Reseller</span>
+        Want to earn? <span className="font-semibold text-primary">Become a partner</span>
       </a>
 
       {list.length > 0 && <ComboSlider combos={list} />}
@@ -525,34 +525,34 @@ export function MobileProducts({ combos }: { combos: Combo[] }) {
   );
 }
 
-/* ───────────────────────── Become a Reseller ───────────────────────── */
+/* ───────────────────────── Become a partner ───────────────────────── */
 
-/** Mirrors section 1 and 7 of the V1 plan. These four really are a sequence, so they are numbered. */
-const Reseller_STEPS = [
-  { title: 'Register', text: 'Create your Reseller account.' },
+/** Mirrors sections 1, 5 and 6 of the Partner Program plan. These four really are a sequence, so they are numbered. */
+const RESELLER_STEPS = [
+  { title: 'Register', text: 'Create your partner account. We review every application.' },
   {
     title: 'Promote',
-    text: 'Approved Resellers get a referral link to share on WhatsApp, Facebook, TikTok or Instagram.',
+    text: 'Approved partners get a personal link and ready-made ads to share on WhatsApp, Instagram and TikTok.',
   },
   { title: 'Sell', text: 'Customers order through your link and the sale is credited to you.' },
-  { title: 'Earn', text: 'You earn commission on every completed sale.' },
+  { title: 'Earn', text: 'You earn commission on every successful sale, paid every week.' },
 ] as const;
 
 export function MobileResellerSection() {
   const [open, setOpen] = useState(false);
 
   return (
-    <section id="Reseller" className="scroll-mt-20 px-4 py-8">
+    <section id="reseller" className="scroll-mt-20 px-4 py-8">
       <div className="rounded-3xl border border-primary/30 bg-gradient-to-b from-[#1b1a14] to-[#0e0e0e] p-5">
         <h2 className="text-2xl font-black leading-tight text-white">
-          Sell Smart Combo. Earn from every sale.
+          Share products, earn 5-10% on every sale.
         </h2>
         <p className="mt-2 text-sm leading-snug text-white/65">
-          Promote our products from your phone. No stock to buy, and nothing to ship.
+          Share your link from your phone. No stock to buy, and nothing to ship.
         </p>
 
         <ol className="mt-5 space-y-4">
-          {Reseller_STEPS.map((step, i) => (
+          {RESELLER_STEPS.map((step, i) => (
             <li key={step.title} className="flex gap-3">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">
                 {i + 1}
@@ -574,9 +574,16 @@ export function MobileResellerSection() {
           onClick={() => setOpen(true)}
           className={`btn-primary mt-4 flex h-14 w-full items-center justify-center gap-2 px-4 text-base font-bold ${FOCUS}`}
         >
-          Become a Reseller
+          Become a partner
           <ChevronRight className="h-5 w-5" />
         </button>
+
+        <p className="mt-3 text-center text-sm text-white/55">
+          Already a partner?{' '}
+          <Link to="/partner" className="font-semibold text-primary underline">
+            Log in
+          </Link>
+        </p>
       </div>
 
       <ResellerSignupModal open={open} onClose={() => setOpen(false)} />

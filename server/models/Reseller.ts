@@ -1,14 +1,14 @@
 /**
  * Reseller — server model (mongoose lives here, never in client code).
  *
- * V1 plan: anyone can apply, you approve them, and only approved Resellers get a
- * Reseller code / referral link. So a new sign-up starts as "pending" and has no
- * ResellerCode yet; the code is assigned the first time you approve them.
+ * V1 plan: anyone can apply, you approve them, and only approved resellers get a
+ * reseller code / referral link. So a new sign-up starts as "pending" and has no
+ * resellerCode yet; the code is assigned the first time you approve them.
  */
 
 import mongoose, { Schema } from "mongoose";
 
-const ResellerSchema = new Schema(
+const resellerSchema = new Schema(
   {
     fullName: { type: String, required: true, trim: true, maxlength: 100 },
     phone: { type: String, required: true, trim: true, unique: true },
@@ -18,14 +18,24 @@ const ResellerSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     /** Optional: social handle or main promotion channel. */
     channel: { type: String, trim: true, maxlength: 200, default: "" },
+    /**
+     * Payout details, collected at sign-up (Partner Program plan, section 5).
+     * Defaults to "" so partners who applied before these fields existed still load.
+     * The sign-up route requires all three for new applications.
+     */
+    bankName: { type: String, trim: true, maxlength: 80, default: "" },
+    accountNumber: { type: String, trim: true, maxlength: 10, default: "" },
+    accountName: { type: String, trim: true, maxlength: 100, default: "" },
+    /** Private notes for the admin team. Never sent to the partner. */
+    adminNotes: { type: String, trim: true, maxlength: 1000, default: "" },
     status: {
       type: String,
       enum: ["pending", "approved", "suspended"],
       default: "pending",
       index: true,
     },
-    /** e.g. SC1001. Set the first time the Reseller is approved, then never changes. */
-    ResellerCode: { type: String, unique: true, sparse: true },
+    /** e.g. SC1001. Set the first time the reseller is approved, then never changes. */
+    resellerCode: { type: String, unique: true, sparse: true },
     approvedAt: { type: Date },
     suspendedAt: { type: Date },
   },
@@ -33,11 +43,11 @@ const ResellerSchema = new Schema(
 );
 
 export const Reseller: mongoose.Model<any> =
-  mongoose.models.Reseller ?? mongoose.model("Reseller", ResellerSchema);
+  mongoose.models.Reseller ?? mongoose.model("Reseller", resellerSchema);
 
 /**
  * One document that counts up, so two approvals at the same moment can never get the
- * same code. It has its own collection ("Resellercounters"), so it cannot clash with
+ * same code. It has its own collection ("resellercounters"), so it cannot clash with
  * any other counter you may already have.
  */
 const counterSchema = new Schema({

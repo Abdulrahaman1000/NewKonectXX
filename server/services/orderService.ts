@@ -7,10 +7,14 @@
  * onto the order item. Admin sees exactly what to ship.
  *
  * UPDATED: Added Free Gift validation logic (₦40,000 threshold check and 1 gift max).
+ * UPDATED: The threshold counts what the same phone number already spent in the
+ * last 30 days (see giftProgress.ts), and free gifts can come from the Gift Bank.
  */
 
 import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
 import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
 import { SiteSettings } from "../models/SiteSettings";
 import { nextSeq } from "../models/Counter";
 import { config } from "../config";
@@ -89,7 +93,10 @@ function buildVariantSummary(
     .join(" · ");
 }
 
-async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[]> {
+async function buildItemSnapshots(
+  items: CartItem[],
+  priorSpend = 0,
+): Promise<OrderItemSnapshot[]> {
   if (!items?.length) {
     throw new OrderError(400, "EMPTY_CART", "Order has no items");
   }
@@ -116,11 +123,13 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
   }
 
   // Validate threshold if a free gift is attached
-  if (freeGiftItems.length === 1 && paidSubtotal < 40000) {
+  // Earlier paid spending by the same phone number counts too.
+  const giftUnlocked = paidSubtotal + priorSpend >= GIFT_THRESHOLD;
+  if (freeGiftItems.length === 1 && !giftUnlocked) {
     throw new OrderError(
       400,
       "GIFT_THRESHOLD_NOT_MET",
-      "Paid items total must be at least ₦40,000 to qualify for a free gift",
+      "Your spending (this order plus the last 30 days) must reach ₦40,000 to qualify for a free gift",
     );
   }
 
@@ -133,6 +142,30 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
     }
     if (!cartItem.quantity || cartItem.quantity < 1) {
       throw new OrderError(400, "INVALID_ITEM", "Item quantity must be at least 1");
+    }
+
+    // Free gifts normally come from the Gift Bank
+    if (cartItem.isFreeGift) {
+      const gift: any = await Gift.findById(cartItem.comboId).catch(() => null);
+      if (gift) {
+        if (gift.isActive === false || (gift.stock ?? 0) < 1) {
+          throw new OrderError(409, "INSUFFICIENT_STOCK", `${gift.name} is no longer available`);
+        }
+        snapshots.push({
+          comboId: gift._id,
+          slug: `gift-${gift._id}`,
+          name: `[FREE GIFT] ${gift.name}`,
+          tagline: gift.description ?? "",
+          thumbnailUrl: gift.images?.[0] || gift.image || "",
+          unitPrice: 0,
+          quantity: 1,
+          subtotal: 0,
+          selectedVariants: {},
+          variantSummary: "",
+          isFreeGift: true,
+        });
+        continue;
+      }
     }
 
     const combo = await Combo.findById(cartItem.comboId);
@@ -150,7 +183,7 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
       );
     }
 
-    const isFree = Boolean(cartItem.isFreeGift && paidSubtotal >= 40000);
+    const isFree = Boolean(cartItem.isFreeGift && giftUnlocked);
 
     // Ensure the combo itself is eligible to be a free gift candidate
     if (isFree && !combo.isFreeGiftCandidate && combo.totalPrice > 5000) {
@@ -187,6 +220,14 @@ async function buildItemSnapshots(items: CartItem[]): Promise<OrderItemSnapshot[
 
 async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
   for (const item of items) {
+    // Gift Bank gifts have their own stock
+    if (item.isFreeGift) {
+      const gift = await Gift.findOneAndUpdate(
+        { _id: item.comboId, stock: { $gte: 1 } },
+        { $inc: { stock: -1 } },
+      );
+      if (gift) continue;
+    }
     const updated = await Combo.findOneAndUpdate(
       { _id: item.comboId, stockLeft: { $gte: item.quantity } },
       { $inc: { stockLeft: -item.quantity } },
@@ -225,7 +266,9 @@ function buildEmailContext(order: any) {
 }
 
 export async function createOrder(input: CreateOrderInput) {
-  const items = await buildItemSnapshots(input.items);
+  const phoneKey = normalizePhone(input.shipping.phone);
+  const priorSpend = await getPriorSpend(phoneKey);
+  const items = await buildItemSnapshots(input.items, priorSpend);
 
   const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
   const shippingFee = await calculateShippingFee(
@@ -250,6 +293,7 @@ export async function createOrder(input: CreateOrderInput) {
     status: initialStatus,
     paymentMethod: input.paymentMethod,
     shipping: input.shipping,
+    phoneKey,
     notes: input.notes,
   });
 

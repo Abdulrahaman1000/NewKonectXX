@@ -9,6 +9,7 @@
  *  - Tracking URL field (saved on update)
  *  - Admin notes (private — never shown to customer)
  *  - Payment method, paymentReference, paidAt
+ *  - Partner commission (when the order came through a partner's link)
  */
 
 import { useEffect, useState } from 'react';
@@ -25,6 +26,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getOrder, updateOrder, updateOrderStatus } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
 import { formatNaira } from '@/lib/format';
 import type { OrderStatus } from '@/types/order';
 import { SEO } from '@/components/shared/SEO';
@@ -62,6 +68,14 @@ export default function AdminOrderDetail() {
     enabled: !!id,
   });
 
+  // Present only when the order came through a partner's link
+  const { data: commissions } = useQuery({
+    queryKey: ['admin-commissions-by-orders', id, order?.status],
+    queryFn: () => getCommissionsByOrders([id!]),
+    enabled: !!id && !!order,
+  });
+  const commission = id ? commissions?.[id] : undefined;
+
   const [trackingUrl, setTrackingUrl] = useState('');
   const [adminNotes, setAdminNotes] = useState('');
 
@@ -79,6 +93,7 @@ export default function AdminOrderDetail() {
       toast.success(`Status changed to ${updated.status}`);
       queryClient.invalidateQueries({ queryKey: ['admin-order', id] });
       queryClient.invalidateQueries({ queryKey: ['admin-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-commissions-by-orders'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
     },
     onError: () => toast.error('Failed to update status'),
@@ -248,6 +263,44 @@ export default function AdminOrderDetail() {
               )}
             </div>
           </Card>
+
+          {commission && (
+            <Card title="Partner commission">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{commission.partnerName}</p>
+                  <p className="font-mono text-[11px] text-primary">{commission.resellerCode}</p>
+                </div>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                >
+                  {COMMISSION_STATUS_LABEL[commission.status].toUpperCase()}
+                </span>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                {commission.comboBase > 0 && (
+                  <Row
+                    label={`Combos at ${commission.comboRate}%`}
+                    value={`${formatNaira(commission.comboBase)} → ${formatNaira(Math.round((commission.comboBase * commission.comboRate) / 100))}`}
+                  />
+                )}
+                {commission.singleBase > 0 && (
+                  <Row
+                    label={`Single products at ${commission.singleRate}%`}
+                    value={`${formatNaira(commission.singleBase)} → ${formatNaira(Math.round((commission.singleBase * commission.singleRate) / 100))}`}
+                  />
+                )}
+                <div className="border-t border-white/10 pt-2 mt-2 flex items-center justify-between">
+                  <span className="text-white/70 font-bold">Commission</span>
+                  <span className="text-primary font-black tabular-nums">{formatNaira(commission.amount)}</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-white/30 mt-3">
+                Delivery is not counted. It becomes Approved {commission.holdDays} days after delivery,
+                and is cancelled automatically if the order is cancelled or refunded.
+              </p>
+            </Card>
+          )}
 
           <Card title="Tracking URL">
             <input

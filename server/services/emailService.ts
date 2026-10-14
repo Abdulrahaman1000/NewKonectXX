@@ -7,6 +7,8 @@
  *  - sendOrderShipped           — to customer, when admin marks shipped
  *  - sendOrderDelivered         — to customer, when admin marks delivered
  *  - sendNewOrderAdminAlert     — to YOU, when any new order comes in
+ *  - sendPartnerApplicationReceived — to a partner applicant, right after they sign up
+ *  - sendPartnerApproved        — to a partner, when you approve them (includes login link)
  *
  * All sends are non-throwing: if Resend fails we log and continue. Email
  * failures should never break order creation or payment flows.
@@ -51,6 +53,8 @@ function wrap(opts: {
   body: string;            // raw HTML for body section
   ctaText?: string;
   ctaUrl?: string;
+  /** Small print under the email. Defaults to the order wording. */
+  footerNote?: string;
 }) {
   const cta = opts.ctaText && opts.ctaUrl
     ? `<div style="text-align:center;margin:32px 0;">
@@ -98,7 +102,7 @@ function wrap(opts: {
 <!-- Footer -->
 <tr><td style="background:#fafafa;padding:20px;text-align:center;border-top:1px solid #eee;">
   <p style="margin:0 0 4px;font-size:11px;color:#666;">Smart Combo · Ilorin, Kwara · Nigeria</p>
-  <p style="margin:0;font-size:10px;color:#999;">If you didn't place this order, please reply and let us know.</p>
+  <p style="margin:0;font-size:10px;color:#999;">${opts.footerNote ?? "If you didn't place this order, please reply and let us know."}</p>
 </td></tr>
 
 </table>
@@ -283,4 +287,41 @@ export async function sendNewOrderAdminAlert(ctx: OrderEmailContext): Promise<vo
     subject: `🔔 New order: ${ctx.orderNumber} — ${formatNGN(ctx.total)}`,
     html,
   });
+}
+
+// === Partner program emails ===
+
+export async function sendPartnerApplicationReceived(ctx: { fullName: string; email: string }): Promise<void> {
+  const first = ctx.fullName.split(" ")[0];
+  const html = wrap({
+    preheader: "We received your Smart Combo partner application",
+    title: "Application received",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${first}, thanks for applying to the Smart Combo Partner Program.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">We review every application and will email you as soon as yours is approved. After that you can log in with the email and password you chose to get your personal link and ready-made ads.</p>
+    `,
+    footerNote: "If you didn't apply to be a Smart Combo partner, you can ignore this email.",
+  });
+  await send({ to: ctx.email, subject: "We received your partner application", html });
+}
+
+export async function sendPartnerApproved(ctx: {
+  fullName: string;
+  email: string;
+  code: string;
+}): Promise<void> {
+  const first = ctx.fullName.split(" ")[0];
+  const html = wrap({
+    preheader: `You're approved. Your partner code is ${ctx.code}`,
+    title: "🎉 You're a Smart Combo partner",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Good news, ${first}! Your partner application has been approved.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Your partner code is <strong>${ctx.code}</strong>.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Log in with the email and password you signed up with to get your personal link, download ready-made ads and captions, and track your sales.</p>
+    `,
+    ctaText: "Open partner dashboard",
+    ctaUrl: `${config.siteUrl}/partner`,
+    footerNote: "You are receiving this because you applied to the Smart Combo Partner Program.",
+  });
+  await send({ to: ctx.email, subject: "You're approved: welcome to Smart Combo Partners", html });
 }

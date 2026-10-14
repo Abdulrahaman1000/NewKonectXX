@@ -1,8 +1,9 @@
 /**
  * Orders — public routes.
  *
- * POST /api/orders        — create a new order (customer checkout)
- * GET  /api/orders/track  — look up an order by orderNumber + phone
+ * POST /api/orders                — create a new order (customer checkout)
+ * GET  /api/orders/track          — look up an order by orderNumber + phone
+ * GET  /api/orders/gift-progress  — how much this phone number has spent toward the free gift
  *
  * Admin order management lives in routes/admin/orders.ts (Phase 5D).
  */
@@ -14,8 +15,53 @@ import {
   OrderError,
 } from "../services/orderService";
 import { attachReferral } from "../services/referralService";
+import {
+  GIFT_THRESHOLD,
+  GIFT_WINDOW_DAYS,
+  getPriorSpend,
+  normalizePhone,
+} from "../services/giftProgress";
 
 const router = Router();
+
+// Small in-memory limiter for gift-progress: 30 lookups per minute per IP.
+const progressHits = new Map<string, { count: number; resetAt: number }>();
+function progressLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = progressHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    progressHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 30;
+}
+
+router.get("/gift-progress", async (req: Request, res: Response) => {
+  try {
+    if (progressLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many requests. Try again in a minute." },
+      });
+    }
+    const phoneKey = normalizePhone(req.query.phone);
+    const spent = await getPriorSpend(phoneKey);
+    // Only the total is returned, never order details.
+    return res.json({
+      data: {
+        spent,
+        threshold: GIFT_THRESHOLD,
+        remaining: Math.max(0, GIFT_THRESHOLD - spent),
+        windowDays: GIFT_WINDOW_DAYS,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/orders/gift-progress failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Could not check gift progress" },
+    });
+  }
+});
 
 router.post("/", async (req: Request, res: Response) => {
   try {

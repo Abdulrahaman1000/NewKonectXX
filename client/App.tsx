@@ -5,12 +5,13 @@ import { createRoot } from 'react-dom/client';
 import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 
 import { SettingsProvider } from '@/contexts/SettingsContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
+import { ConfirmProvider } from '@/components/shared/ConfirmProvider';
 import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
 
 import Index from './pages/Index';
@@ -45,8 +46,12 @@ import NotFound from './pages/NotFound';
 import { WhatsAppFloat } from '@/components/shared/WhatsAppFloat';
 import AdminGiftBankPage from './pages/AdminGiftBankPage';
 import { MobileBottomNav } from './components/MobileBottomNav';
- import AdminResellers from './pages/AdminResellers';
- import { captureReferral } from "@/lib/referral";
+import AdminResellers from './pages/AdminResellers';
+import PartnerPortal from './pages/PartnerPortal';
+import AdminAds from './pages/AdminAds';
+import AdminWithdrawals from './pages/AdminWithdrawals';
+import AdminPartnerSales from './pages/AdminPartnerSales';
+import { captureReferral } from "@/lib/referral";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,6 +63,13 @@ const queryClient = new QueryClient({
   },
 });
 captureReferral();
+/** Customer-only widgets (WhatsApp button, bottom nav) are hidden on the partner and admin pages. */
+const CustomerOnly = ({ children }: { children: React.ReactNode }) => {
+  const { pathname } = useLocation();
+  if (pathname.startsWith('/admin') || pathname.startsWith('/partner')) return null;
+  return <>{children}</>;
+};
+
 const App = () => (
   <ErrorBoundary>
     <HelmetProvider>
@@ -67,6 +79,7 @@ const App = () => (
             <TooltipProvider>
               <Toaster />
               <Sonner />
+              <ConfirmProvider>
               <BrowserRouter>
                 <Routes>
                   <Route path="/" element={<Index />} />
@@ -85,7 +98,7 @@ const App = () => (
                   <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
                   <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
                   <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
-                  <Route path="/admin/gift-bank" element={<AdminGiftBankPage />} />
+                  <Route path="/admin/gift-bank" element={<AdminProtectedRoute><AdminGiftBankPage /></AdminProtectedRoute>} />
                   <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
                   <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
                   <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
@@ -97,8 +110,14 @@ const App = () => (
                   <Route path="/admin/testimonials" element={<AdminProtectedRoute><AdminTestimonials /></AdminProtectedRoute>} />
                   <Route path="/admin/chats" element={<AdminProtectedRoute><AdminChats /></AdminProtectedRoute>} />
                   <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
-                 
-<Route path="/admin/Resellers" element={<AdminProtectedRoute><AdminResellers /></AdminProtectedRoute>} />
+                  <Route path="/admin/resellers" element={<AdminProtectedRoute><AdminResellers /></AdminProtectedRoute>} />
+
+                  <Route path="/admin/partners/:id" element={<AdminProtectedRoute><AdminPartnerSales /></AdminProtectedRoute>} />
+                  <Route path="/admin/payouts" element={<AdminProtectedRoute><AdminWithdrawals /></AdminProtectedRoute>} />
+                  <Route path="/admin/ads" element={<AdminProtectedRoute><AdminAds /></AdminProtectedRoute>} />
+
+                  {/* Partner portal */}
+                  <Route path="/partner" element={<PartnerPortal />} />
 
                   {/* Footer pages */}
                   <Route path="/faq" element={<FAQ />} />
@@ -110,9 +129,12 @@ const App = () => (
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>
-                <MobileBottomNav />
-                <WhatsAppFloat />
+                <CustomerOnly>
+                  <MobileBottomNav />
+                  <WhatsAppFloat />
+                </CustomerOnly>
               </BrowserRouter>
+              </ConfirmProvider>
             </TooltipProvider>
           </SettingsProvider>
         </AuthProvider>

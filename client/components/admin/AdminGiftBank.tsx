@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Gift, Trash2, Plus, Upload, Loader2, X, ArrowLeft, Eye } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 export interface IGift {
   _id: string;
@@ -59,6 +60,7 @@ function GiftCardImageSlider({ images, name }: { images: string[]; name: string 
 }
 
 export function AdminGiftBank() {
+  const { confirm } = useDialogs();
   const [gifts, setGifts] = useState<IGift[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -211,7 +213,13 @@ export function AdminGiftBank() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this gift?')) return;
+    const ok = await confirm({
+      title: 'Delete gift',
+      message: 'Are you sure you want to delete this gift? This can\'t be undone.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
       const res = await fetch(`/api/admin/gifts/${id}`, { method: 'DELETE' });

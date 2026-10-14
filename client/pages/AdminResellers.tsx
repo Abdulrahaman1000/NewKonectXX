@@ -1,8 +1,9 @@
 /**
- * Admin Resellers — /admin/Resellers
+ * Admin Partners — /admin/resellers
  *
- * Review Reseller applications: approve (assigns the Reseller code), reject a pending
- * application, suspend or reinstate an approved Reseller, and message them on WhatsApp.
+ * Review partner applications: approve (assigns the partner code), reject a pending
+ * application, suspend or reinstate an approved partner, see payout details, keep private
+ * notes, message them on WhatsApp, and edit the commission settings.
  */
 
 import { useEffect, useState } from 'react';
@@ -15,6 +16,7 @@ import {
   Loader2,
   MessageCircle,
   RotateCcw,
+  Save,
   Search,
   Trash2,
 } from 'lucide-react';
@@ -26,9 +28,16 @@ import {
   deleteReseller,
   getResellerCounts,
   listResellersAdmin,
+  saveResellerNotes,
   setResellerStatus,
 } from '@/api/adminResellers';
+import {
+  ProgramSettings,
+  getProgramSettings,
+  saveProgramSettings,
+} from '@/api/adminCommissions';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 const TABS: { key: ResellerStatus; label: string }[] = [
   { key: 'pending', label: 'Pending' },
@@ -38,8 +47,8 @@ const TABS: { key: ResellerStatus; label: string }[] = [
 
 const EMPTY_TEXT: Record<ResellerStatus, string> = {
   pending: 'No applications waiting for review.',
-  approved: 'No approved Resellers yet.',
-  suspended: 'No suspended Resellers.',
+  approved: 'No approved partners yet.',
+  suspended: 'No suspended partners.',
 };
 
 const STATUS_CHIP: Record<ResellerStatus, string> = {
@@ -47,6 +56,11 @@ const STATUS_CHIP: Record<ResellerStatus, string> = {
   approved: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
   suspended: 'bg-red-500/15 text-red-300 border-red-500/25',
 };
+
+/** Message sent to a partner when approved: tells them where to log in. */
+function approvalMessage(firstName: string, code: string) {
+  return `Hi ${firstName}, good news! Your Smart Combo partner application has been approved. Your partner code is ${code}.\n\nLog in to your partner dashboard to get your personal link, ads and captions: ${window.location.origin}/partner\n\nUse the email and password you signed up with.`;
+}
 
 function useDebounced<T>(value: T, ms = 300): T {
   const [debounced, setDebounced] = useState(value);
@@ -70,37 +84,49 @@ function formatDate(iso: string) {
 
 export default function AdminResellers() {
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [status, setStatus] = useState<ResellerStatus>('pending');
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim());
 
   const { data: counts } = useQuery({
-    queryKey: ['admin-Reseller-counts'],
+    queryKey: ['admin-reseller-counts'],
     queryFn: getResellerCounts,
   });
 
-  const { data: Resellers = [], isLoading } = useQuery({
-    queryKey: ['admin-Resellers', status, q],
+  const { data: resellers = [], isLoading } = useQuery({
+    queryKey: ['admin-resellers', status, q],
     queryFn: () => listResellersAdmin({ status, q }),
   });
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['admin-Resellers'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-Reseller-counts'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-resellers'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-reseller-counts'] });
   };
 
   const statusMut = useMutation({
     mutationFn: ({ id, next }: { id: string; next: 'approved' | 'suspended' }) =>
       setResellerStatus(id, next),
-    onSuccess: (Reseller, { next }) => {
-      toast.success(
-        next === 'approved'
-          ? `Approved${Reseller.ResellerCode ? `. Code ${Reseller.ResellerCode}` : ''}`
-          : 'Reseller suspended',
-      );
+    onSuccess: (reseller, { next }) => {
+      if (next === 'approved' && reseller.resellerCode) {
+        toast.success(`Approved. Code ${reseller.resellerCode}`, {
+          description: 'Let them know they can log in now.',
+          duration: 15000,
+          action: {
+            label: 'Message on WhatsApp',
+            onClick: () =>
+              window.open(
+                waLink(reseller.whatsapp, approvalMessage(reseller.fullName.trim().split(' ')[0], reseller.resellerCode!)),
+                '_blank',
+              ),
+          },
+        });
+      } else {
+        toast.success(next === 'approved' ? 'Approved' : 'Partner suspended');
+      }
       invalidate();
     },
-    onError: (err: any) => toast.error(err?.message || 'Could not update Reseller'),
+    onError: (err: any) => toast.error(err?.message || 'Could not update partner'),
   });
 
   const deleteMut = useMutation({
@@ -118,21 +144,21 @@ export default function AdminResellers() {
       ? deleteMut.variables
       : null;
 
-  const handleReject = (r: AdminReseller) => {
-    if (confirm(`Reject and delete the application from ${r.fullName}?\n\nThis cannot be undone.`)) {
+  const handleReject = async (r: AdminReseller) => {
+    if (await confirm({ title: 'Reject this application?', message: `The application from ${r.fullName} will be deleted. This cannot be undone.`, confirmText: 'Reject and delete', danger: true })) {
       deleteMut.mutate(r.id);
     }
   };
 
-  const handleSuspend = (r: AdminReseller) => {
-    if (confirm(`Suspend ${r.fullName}${r.ResellerCode ? ` (${r.ResellerCode})` : ''}?`)) {
+  const handleSuspend = async (r: AdminReseller) => {
+    if (await confirm({ title: 'Suspend this partner?', message: `${r.fullName}${r.resellerCode ? ` (${r.resellerCode})` : ''} will lose access to the partner portal and ads.`, confirmText: 'Suspend', danger: true })) {
       statusMut.mutate({ id: r.id, next: 'suspended' });
     }
   };
 
   return (
     <AdminFrame>
-      <SEO title="Resellers — Admin" />
+      <SEO title="Partners — Admin" />
 
       <Link to="/admin" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
         <ArrowLeft className="w-3 h-3" />
@@ -140,14 +166,16 @@ export default function AdminResellers() {
       </Link>
 
       <div className="mb-6">
-        <h1 className="text-2xl md:text-3xl font-black text-white">Resellers</h1>
+        <h1 className="text-2xl md:text-3xl font-black text-white">Partners</h1>
         <p className="text-white/50 text-sm mt-1">
-          Review applications and manage who can sell for Smart Combo.
+          Review applications and manage who can share Smart Combo and earn commission.
         </p>
       </div>
 
+      <ProgramSettingsCard />
+
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
-        <div className="flex gap-1.5 overflow-x-auto" role="tablist" aria-label="Reseller status">
+        <div className="flex gap-1.5 overflow-x-auto" role="tablist" aria-label="Partner status">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -176,7 +204,7 @@ export default function AdminResellers() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, phone, email, code"
-            aria-label="Search Resellers"
+            aria-label="Search partners"
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30"
           />
         </div>
@@ -186,16 +214,16 @@ export default function AdminResellers() {
         <div className="py-20 flex items-center justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-white/40" />
         </div>
-      ) : Resellers.length === 0 ? (
+      ) : resellers.length === 0 ? (
         <p className="text-center py-16 text-white/40">
           {q ? `Nothing matches "${q}" in ${status}.` : EMPTY_TEXT[status]}
         </p>
       ) : (
         <div className="space-y-2">
-          {Resellers.map((r) => (
+          {resellers.map((r) => (
             <ResellerCard
               key={r.id}
-              Reseller={r}
+              reseller={r}
               busy={busyId === r.id}
               onApprove={() => statusMut.mutate({ id: r.id, next: 'approved' })}
               onSuspend={() => handleSuspend(r)}
@@ -209,13 +237,13 @@ export default function AdminResellers() {
 }
 
 function ResellerCard({
-  Reseller: r,
+  reseller: r,
   busy,
   onApprove,
   onSuspend,
   onReject,
 }: {
-  Reseller: AdminReseller;
+  reseller: AdminReseller;
   busy: boolean;
   onApprove: () => void;
   onSuspend: () => void;
@@ -223,9 +251,9 @@ function ResellerCard({
 }) {
   const firstName = r.fullName.trim().split(' ')[0];
   const message =
-    r.status === 'approved' && r.ResellerCode
-      ? `Hi ${firstName}, your Smart Combo Reseller application has been approved. Your Reseller code is ${r.ResellerCode}.`
-      : `Hi ${firstName}, this is Smart Combo about your Reseller application.`;
+    r.status === 'approved' && r.resellerCode
+      ? approvalMessage(firstName, r.resellerCode)
+      : `Hi ${firstName}, this is Smart Combo about your partner application.`;
 
   const btn =
     'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed';
@@ -240,9 +268,9 @@ function ResellerCard({
         <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${STATUS_CHIP[r.status]}`}>
           {r.status}
         </span>
-        {r.ResellerCode && (
+        {r.resellerCode && (
           <span className="text-[11px] font-black px-2 py-0.5 rounded-md bg-primary/15 text-primary border border-primary/30">
-            {r.ResellerCode}
+            {r.resellerCode}
           </span>
         )}
         <span className="ml-auto text-[11px] text-white/35">Applied {formatDate(r.createdAt)}</span>
@@ -267,7 +295,22 @@ function ResellerCard({
             <dd className="truncate">{r.channel}</dd>
           </div>
         )}
+        <div className="flex gap-2 min-w-0 sm:col-span-2">
+          <dt className="text-white/35 w-16 shrink-0">Bank</dt>
+          <dd className="min-w-0">
+            {r.bankName && r.accountNumber ? (
+              <>
+                {r.bankName} · {r.accountNumber}
+                {r.accountName ? ` · ${r.accountName}` : ''}
+              </>
+            ) : (
+              <span className="text-white/35">Not provided (applied before bank details were required)</span>
+            )}
+          </dd>
+        </div>
       </dl>
+
+      <NotesField reseller={r} />
 
       <div className="flex flex-wrap items-center gap-2 mt-4">
         {r.status === 'pending' && (
@@ -305,6 +348,15 @@ function ResellerCard({
           </button>
         )}
 
+        {r.resellerCode && (
+          <Link
+            to={`/admin/partners/${r.id}`}
+            className={`${btn} border border-white/10 text-white/70 hover:border-primary/40 hover:text-primary`}
+          >
+            View sales
+          </Link>
+        )}
+
         <a
           href={waLink(r.whatsapp, message)}
           target="_blank"
@@ -312,9 +364,138 @@ function ResellerCard({
           className={`${btn} border border-white/10 text-white/70 hover:border-primary/40 hover:text-primary sm:ml-auto`}
         >
           <MessageCircle className="w-3.5 h-3.5" />
-          WhatsApp
+          {r.status === 'approved' ? 'Send approval on WhatsApp' : 'WhatsApp'}
         </a>
       </div>
     </div>
+  );
+}
+
+/** Private notes on one partner. Saved with the button, never shown to the partner. */
+function NotesField({ reseller }: { reseller: AdminReseller }) {
+  const queryClient = useQueryClient();
+  const [notes, setNotes] = useState(reseller.adminNotes ?? '');
+  const dirty = notes.trim() !== (reseller.adminNotes ?? '').trim();
+
+  const mut = useMutation({
+    mutationFn: () => saveResellerNotes(reseller.id, notes),
+    onSuccess: () => {
+      toast.success('Note saved');
+      queryClient.invalidateQueries({ queryKey: ['admin-resellers'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not save note'),
+  });
+
+  return (
+    <div className="mt-3">
+      <label className="block text-[10px] uppercase tracking-widest text-white/30 mb-1">
+        Private notes
+      </label>
+      <textarea
+        rows={2}
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        maxLength={1000}
+        placeholder="Only the admin team sees this..."
+        className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30"
+      />
+      {dirty && (
+        <button
+          type="button"
+          onClick={() => mut.mutate()}
+          disabled={mut.isPending}
+          className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-white/10 text-white/70 hover:border-primary/40 hover:text-primary disabled:opacity-50"
+        >
+          {mut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          Save note
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Commission rates, hold period and minimum withdrawal. Applies to future orders only. */
+function ProgramSettingsCard() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['admin-program-settings'],
+    queryFn: getProgramSettings,
+  });
+
+  const [form, setForm] = useState({ comboPercent: '', singlePercent: '', holdDays: '', minWithdrawal: '' });
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        comboPercent: String(data.comboPercent),
+        singlePercent: String(data.singlePercent),
+        holdDays: String(data.holdDays),
+        minWithdrawal: String(data.minWithdrawal),
+      });
+    }
+  }, [data]);
+
+  const mut = useMutation({
+    mutationFn: (input: ProgramSettings) => saveProgramSettings(input),
+    onSuccess: () => {
+      toast.success('Commission settings saved');
+      queryClient.invalidateQueries({ queryKey: ['admin-program-settings'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not save settings'),
+  });
+
+  const onSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    mut.mutate({
+      comboPercent: Number(form.comboPercent),
+      singlePercent: Number(form.singlePercent),
+      holdDays: Number(form.holdDays),
+      minWithdrawal: Number(form.minWithdrawal),
+    });
+  };
+
+  const field = (key: keyof typeof form, label: string, suffix: string) => (
+    <label className="block">
+      <span className="block text-[11px] text-white/45 mb-1">{label}</span>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="any"
+          value={form[key]}
+          onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+          className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white"
+        />
+        <span className="text-xs text-white/40 shrink-0">{suffix}</span>
+      </div>
+    </label>
+  );
+
+  return (
+    <form
+      onSubmit={onSave}
+      className="rounded-xl border border-white/10 p-4 mb-6"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider">Commission settings</h2>
+      <p className="text-[11px] text-white/35 mt-1 mb-4">
+        Changes apply to new orders only. Orders already placed keep the rate they were created with.
+      </p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {field('comboPercent', 'Combos (2+ items)', '%')}
+        {field('singlePercent', 'Single products', '%')}
+        {field('holdDays', 'Wait after delivery', 'days')}
+        {field('minWithdrawal', 'Minimum withdrawal', '₦')}
+      </div>
+      <button
+        type="submit"
+        disabled={mut.isPending || !data}
+        className="btn-primary mt-4 flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
+      >
+        {mut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+        Save settings
+      </button>
+    </form>
   );
 }

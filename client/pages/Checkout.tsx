@@ -8,18 +8,20 @@
  *     Otherwise: navigate straight to /order-confirmation/:orderNumber
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CreditCard, Loader2 } from 'lucide-react';
+import { ArrowLeft, CreditCard, Gift, Loader2 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
-import { useCart } from '@/stores/cart';
+import { GiftPicker } from '@/components/shared/GiftPicker';
+import { GIFT_THRESHOLD, useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatNaira } from '@/lib/format';
 import { createOrder } from '@/api/orders';
 import { initializePaystack } from '@/api/payments';
 import { ApiError } from '@/api/client';
+import { fetchAvailableGifts, fetchGiftProgress, type BankGift } from '@/api/giftProgress';
 import type { PaymentMethod } from '@/types/order';
 import { toast } from 'sonner';
 
@@ -33,7 +35,17 @@ const NIGERIAN_STATES = [
 
 export default function Checkout() {
   const navigate = useNavigate();
-  const { items, subtotal, savings, clear } = useCart();
+  const {
+    items,
+    subtotal,
+    savings,
+    clear,
+    giftCredit,
+    setGiftCredit,
+    selectFreeGift,
+    selectedFreeGift,
+    qualifiesForFreeGift,
+  } = useCart();
   const { settings } = useSettings();
 
   const [submitting, setSubmitting] = useState(false);
@@ -50,6 +62,51 @@ export default function Checkout() {
   });
 
   const update = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  // ── Free gift: spending from the last 30 days (same phone number) counts too.
+  // These hooks stay above the early return for an empty cart.
+  const [gifts, setGifts] = useState<BankGift[] | null>(null);
+
+  useEffect(() => {
+    const digits = form.phone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      setGiftCredit(0);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const p = await fetchGiftProgress(form.phone);
+      if (!cancelled) setGiftCredit(p?.spent ?? 0);
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [form.phone, setGiftCredit]);
+
+  // Leaving checkout forgets the credit
+  useEffect(() => () => setGiftCredit(0), [setGiftCredit]);
+
+  const giftUnlocked = qualifiesForFreeGift();
+  const pickedGift = selectedFreeGift();
+
+  // When the gift unlocks, load the Gift Bank and pick one at random (only gifts in stock)
+  useEffect(() => {
+    if (!giftUnlocked || gifts !== null) return;
+    fetchAvailableGifts().then(setGifts);
+  }, [giftUnlocked, gifts]);
+
+  const giftRef = useRef<HTMLDivElement>(null);
+
+  // The customer picks the gift themselves (one only). Picking another replaces it.
+  const pickGift = (g: BankGift) => {
+    selectFreeGift({
+      id: g._id,
+      name: g.name,
+      image: g.images?.[0] || g.image || '',
+      price: g.price,
+    });
+  };
 
   const codCities = (settings?.shipping?.codCities ?? ['ilorin']).map((c) => c.toLowerCase());
   const isCodEligible =
@@ -91,6 +148,12 @@ export default function Checkout() {
         toast.error(`Please fill in: ${f.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
         return;
       }
+    }
+
+    if (giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
+      toast.error('Please choose your free gift first');
+      giftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
     }
 
     setSubmitting(true);
@@ -218,6 +281,17 @@ export default function Checkout() {
                 </div>
               </Section>
 
+              {giftUnlocked && (
+                <div ref={giftRef}>
+                  <GiftPicker
+                    gifts={gifts}
+                    selectedId={pickedGift?.comboId}
+                    onPick={pickGift}
+                    credit={giftCredit}
+                  />
+                </div>
+              )}
+
               <Section title="Delivery address">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="State" required>
@@ -320,10 +394,58 @@ export default function Checkout() {
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
                       <p className="text-[10px] text-white/40">Qty {item.quantity}</p>
-                      <p className="text-xs text-primary font-bold">{formatNaira(item.unitPrice * item.quantity)}</p>
+                      <p className="text-xs text-primary font-bold">
+                        {item.isFreeGift ? 'FREE' : formatNaira(item.unitPrice * item.quantity)}
+                      </p>
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Free gift progress */}
+              <div
+                className={`mb-4 rounded-xl border p-3 text-xs leading-relaxed ${
+                  giftUnlocked
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-primary/25 bg-primary/5 text-white/70'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <Gift className={`w-4 h-4 shrink-0 mt-0.5 ${giftUnlocked ? 'text-emerald-300' : 'text-primary'}`} />
+                  <div className="flex-1 min-w-0">
+                    {giftUnlocked ? (
+                      <>
+                        <p className="font-bold text-emerald-300">Free gift unlocked!</p>
+                        {pickedGift ? (
+                          <p className="mt-0.5">
+                            Your gift: <span className="font-semibold text-white">{pickedGift.comboName}</span>
+                            <span className="text-emerald-100/70"> (change it in the gift list)</span>
+                          </p>
+                        ) : gifts !== null && gifts.length === 0 ? (
+                          <p className="mt-0.5">No gifts are in stock right now.</p>
+                        ) : (
+                          <p className="mt-0.5">Choose one gift from the list. You can only pick one.</p>
+                        )}
+                        {giftCredit > 0 && (
+                          <p className="mt-0.5 text-emerald-100/70">
+                            Counts your {formatNaira(giftCredit)} spent in the last 30 days.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-bold text-white">
+                          Spend {formatNaira(Math.max(0, GIFT_THRESHOLD - computedSubtotal - giftCredit))} more to unlock a free gift
+                        </p>
+                        <p className="mt-0.5 text-white/55">
+                          {giftCredit > 0
+                            ? `You spent ${formatNaira(giftCredit)} with us in the last 30 days, and it counts.`
+                            : 'Purchases from the last 30 days on the same phone number add up, so you can also come back later.'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">

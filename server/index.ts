@@ -11,7 +11,10 @@ import authRouter from "./routes/auth";
 import ordersRouter from "./routes/orders";
 import paymentsRouter from "./routes/payments";
 import chatRouter from "./routes/chat";
+import resellersRouter from "./routes/resellers";
+import partnerRouter from "./routes/partner";
 import giftRoutes from "./routes/admin/giftRoutes";
+import publicGiftsRouter from "./routes/gifts";
 import adminOrdersRouter from "./routes/admin/orders";
 import adminDashboardRouter from "./routes/admin/dashboard";
 import adminCategoriesRouter from "./routes/admin/categories";
@@ -21,8 +24,10 @@ import adminSettingsRouter from "./routes/admin/settings";
 import adminFaqsRouter from "./routes/admin/faqs";
 import adminTestimonialsRouter from "./routes/admin/testimonials";
 import adminChatsRouter from "./routes/admin/chats";
-import ResellersRouter from './routes/Resellers';
-import adminResellersRouter from "./routes/admin/Resellers";
+import adminResellersRouter from "./routes/admin/resellers";
+import adminCommissionsRouter from "./routes/admin/commissions";
+import adminAdsRouter from "./routes/admin/ads";
+import adminWithdrawalsRouter from "./routes/admin/withdrawals";
 
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
@@ -58,12 +63,14 @@ export function createServer() {
   app.use("/api/orders", ordersRouter);
   app.use("/api/payments", paymentsRouter);
   app.use("/api/chat", chatRouter);
+  app.use("/api/resellers", resellersRouter);
+  app.use("/api/partner", partnerRouter);
 
-  // Gifts route (Bypasses requireAuth so uploads succeed)
-  app.use("/api/admin/gifts", giftRoutes);
-  app.use("/api/gifts", giftRoutes);
+  // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.
+  app.use("/api/gifts", publicGiftsRouter);
 
   // Admin API routes (Protected by authentication)
+  app.use("/api/admin/gifts", requireAuth, giftRoutes);
   app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
   app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
   app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
@@ -73,9 +80,10 @@ export function createServer() {
   app.use("/api/admin/faqs", requireAuth, adminFaqsRouter);
   app.use("/api/admin/testimonials", requireAuth, adminTestimonialsRouter);
   app.use("/api/admin/chats", requireAuth, adminChatsRouter);
-  app.use('/api/Resellers', ResellersRouter);
-
-app.use("/api/admin/Resellers", requireAuth, adminResellersRouter);
+  app.use("/api/admin/resellers", requireAuth, adminResellersRouter);
+  app.use("/api/admin/commissions", requireAuth, adminCommissionsRouter);
+  app.use("/api/admin/ads", requireAuth, adminAdsRouter);
+  app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
 
   return app;
 }

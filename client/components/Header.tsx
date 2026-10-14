@@ -24,6 +24,7 @@ export function Header() {
   const toggleMenu = () => setIsOpen(!isOpen);
 
   return (
+    <>
     <header className="sticky top-0 z-40 glass-card border-b border-[rgba(255,255,255,0.1)]">
       <div className="container-premium">
         <div className="flex items-center justify-between h-20 gap-3 md:gap-4">
@@ -125,6 +126,18 @@ export function Header() {
           </nav>
 
           <div className="hidden md:flex items-center gap-3 flex-shrink-0">
+            <Link
+              to="/partner"
+              className="hidden xl:inline text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
+            >
+              Partner login
+            </Link>
+            <Link
+              to="/#reseller"
+              className="hidden lg:inline-flex text-sm font-bold px-3 py-1.5 rounded-full bg-primary text-black hover:bg-primary/90 transition-colors"
+            >
+              Become a partner
+            </Link>
             <button
               type="button"
               onClick={openCart}
@@ -212,6 +225,10 @@ export function Header() {
               <Sparkles className="w-3.5 h-3.5" />
               Build a Combo & Save
             </Link>
+            <Link to="/#reseller" onClick={toggleMenu} className="block py-2 text-sm font-bold text-primary">
+              Become a partner
+            </Link>
+            <Link to="/partner" onClick={toggleMenu} className="block py-2 text-sm">Partner login</Link>
             <button
               type="button"
               onClick={() => { openCart(); toggleMenu(); }}
@@ -223,5 +240,6 @@ export function Header() {
         )}
       </div>
     </header>
+    </>
   );
 }

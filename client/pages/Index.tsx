@@ -4,13 +4,14 @@
  * Layout (top → bottom):
  *  - Phones:   MobileHero (slider of real combos, 2+ items) → MobileQuickShop
  *              (search + categories) → MobileDeals (deal of the day)
- *  - Desktop:  Hero carousel + Trust bar (unchanged)
+ *  - Desktop:  Hero carousel + Trust bar, then category tiles + Deal of the day
  *  - Promo countdown
  *  - Phones:   MobileProducts (single products, 1 item)
+ *  - Desktop:  DesktopProducts (single products, 1 item)
  *  - 🔥 Featured combo (desktop only: on phones the featured combo leads the hero slider)
  *  - Category sections (one per category that has combos)
  *  - Fallback: if no combos have categories yet, show all in a single grid
- *  - Phones:   MobileResellerSection ("Become a Reseller")
+ *  - PartnerSection ("Become a partner": how it works, what you earn, sign-up form)
  *  - Demo video, features, why-choose-us, testimonials, FAQ, final CTA (DESKTOP ONLY)
  *  - Footer
  *
@@ -19,7 +20,8 @@
  * pictures, and their data.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
@@ -31,8 +33,13 @@ import {
   MobileQuickShop,
   MobileDeals,
   MobileProducts,
-  MobileResellerSection,
 } from '@/sections/MobileHero';
+import {
+  DesktopCategoryStrip,
+  DesktopDeals,
+  DesktopProducts,
+} from '@/sections/DesktopSections';
+import { PartnerSection } from '@/sections/PartnerInfo';
 import { TrustBar } from '@/sections/TrustBar';
 import { PromoCountdown } from '@/sections/PromoCountdown';
 import { DemoVideo } from '@/sections/DemoVideo';
@@ -58,6 +65,19 @@ import { Sparkles } from 'lucide-react';
 export default function Index() {
   const { settings, isLoading: settingsLoading } = useSettings();
   const isMobile = useMobileLayout();
+  const { hash } = useLocation();
+
+  // The header's "Become a partner" link goes to /#reseller: scroll to that section
+  useEffect(() => {
+    if (hash !== '#reseller' || !settings) return;
+    const go = () => document.getElementById('reseller')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const t1 = setTimeout(go, 100);
+    const t2 = setTimeout(go, 800); // again after images above have loaded
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [hash, settings]);
 
   const { data: featuredCombo } = useQuery({
     queryKey: ['featuredCombo'],
@@ -162,6 +182,11 @@ export default function Index() {
             reviewCount={settings.trustStats.reviewCount}
           />
           <TrustBar />
+          <DesktopCategoryStrip
+            categories={categories}
+            allImage={settings.allCategoryImage}
+          />
+          <DesktopDeals featuredCombo={featuredCombo ?? null} combos={combos} />
         </>
       )}
 
@@ -169,6 +194,7 @@ export default function Index() {
 
       {/* Phones: single products (one item) so anyone can buy without a combo */}
       {isMobile && <MobileProducts combos={combos} />}
+      {!isMobile && <DesktopProducts combos={combos} />}
 
       {/* Featured combo section (desktop only: on phones it leads the hero slider) */}
       {featuredCombo && !isMobile && (
@@ -229,8 +255,8 @@ export default function Index() {
         )
       )}
 
-      {/* Phones only: become a Reseller (the button opens the sign-up popup) */}
-      {isMobile && <MobileResellerSection />}
+      {/* Become a partner: explains the program, then opens the sign-up form */}
+      <PartnerSection />
 
       {/* Desktop only: demo video down to the final call-to-action */}
       {!isMobile && (

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Gift, Trash2, Plus, Upload, Loader2, X, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
+import { apiFetch } from '@/api/client';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 export interface IGift {
   _id: string;
@@ -14,6 +18,7 @@ export interface IGift {
 }
 
 export function AdminGiftBank() {
+  const { confirm } = useDialogs();
   const [gifts, setGifts] = useState<IGift[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -23,8 +28,8 @@ export function AdminGiftBank() {
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('10');
-  
-  // Multi-image selection state
+
+  // Multi-image selection state (Cloudinary links)
   const [images, setImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -32,47 +37,35 @@ export function AdminGiftBank() {
     fetchGifts();
   }, []);
 
+  // apiFetch sends the admin login with every request
   const fetchGifts = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/admin/gifts');
-      if (res.ok) {
-        const data = await res.json();
-        setGifts(data);
-      }
-    } catch (err) {
-      console.error('Failed to load gifts', err);
+      const data = await apiFetch<IGift[]>('/api/admin/gifts');
+      setGifts(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to load gifts');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Convert uploaded files to base64 and append to images array
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload the chosen photos to Cloudinary and keep only the links
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    const fileArray = Array.from(files);
+    e.target.value = ''; // so choosing the same file again still works
 
     setIsUploading(true);
-
-    const fileArray = Array.from(files);
-    const readPromises = fileArray.map((file) => {
-      return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = (error) => reject(error);
-        reader.readAsDataURL(file);
-      });
-    });
-
-    Promise.all(readPromises)
-      .then((newBase64Images) => {
-        setImages((prev) => [...prev, ...newBase64Images]);
-      })
-      .catch((err) => console.error('Error reading files:', err))
-      .finally(() => {
-        setIsUploading(false);
-        e.target.value = ''; // Reset input value so continuous selecting works
-      });
+    try {
+      const results = await Promise.all(fileArray.map((f) => uploadToCloudinary(f)));
+      setImages((prev) => [...prev, ...results.map((r) => r.url)]);
+    } catch (err: any) {
+      toast.error(err?.message || 'Photo upload failed');
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleRemoveImage = (index: number) => {
@@ -82,12 +75,12 @@ export function AdminGiftBank() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (images.length === 0) {
-      alert('Please select at least one image.');
+      toast.error('Please select at least one image.');
       return;
     }
 
     setIsSaving(true);
-    
+
     // Save both 'image' (for backwards compatibility) and 'images' (for multi-image)
     const payload = {
       name,
@@ -100,46 +93,45 @@ export function AdminGiftBank() {
     };
 
     try {
-      const res = await fetch('/api/admin/gifts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        setName('');
-        setDescription('');
-        setPrice('');
-        setStock('10');
-        setImages([]);
-        fetchGifts();
-      }
-    } catch (err) {
-      console.error('Failed to create gift:', err);
+      await apiFetch('/api/admin/gifts', { method: 'POST', body: JSON.stringify(payload) });
+      toast.success('Gift added');
+      setName('');
+      setDescription('');
+      setPrice('');
+      setStock('10');
+      setImages([]);
+      fetchGifts();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to add the gift');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this gift?')) return;
+  const handleDelete = async (gift: IGift) => {
+    const ok = await confirm({
+      title: 'Delete this gift?',
+      message: `"${gift.name}" will be removed from the Free Gift Bank.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
-      const res = await fetch(`/api/admin/gifts/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setGifts((prev) => prev.filter((g) => g._id !== id));
-      }
-    } catch (err) {
-      console.error('Failed to delete gift:', err);
+      await apiFetch(`/api/admin/gifts/${gift._id}`, { method: 'DELETE' });
+      setGifts((prev) => prev.filter((g) => g._id !== gift._id));
+      toast.success('Gift deleted');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete the gift');
     }
   };
 
   return (
     <div className="min-h-screen bg-[#0a0b0e] text-white p-4 sm:p-10">
       <div className="max-w-5xl mx-auto space-y-6">
-        
+
         <Link
-          to="/admin/dashboard"
+          to="/admin"
           className="inline-flex items-center gap-2 text-xs font-semibold text-white/50 hover:text-white transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -185,7 +177,7 @@ export function AdminGiftBank() {
                 <label className="block text-xs font-semibold text-white/70 mb-1.5">
                   Product Images ({images.length} Selected)
                 </label>
-                
+
                 <div className="flex flex-wrap gap-2 items-center">
                   {images.map((url, idx) => (
                     <div
@@ -193,7 +185,7 @@ export function AdminGiftBank() {
                       className="relative w-14 h-14 rounded-xl overflow-hidden border border-white/20 group bg-black/40"
                     >
                       <img src={url} alt={`Upload ${idx + 1}`} className="w-full h-full object-cover" />
-                      
+
                       {idx === 0 && (
                         <span className="absolute bottom-0 inset-x-0 bg-emerald-500 text-black font-black text-[7px] text-center py-0.5 uppercase">
                           Cover
@@ -321,7 +313,7 @@ export function AdminGiftBank() {
                         No img
                       </div>
                     )}
-                    
+
                     <div className="flex-1 min-w-0">
                       <h3 className="text-xs font-bold truncate">{gift.name}</h3>
                       <p className="text-[10px] text-white/50">
@@ -335,8 +327,9 @@ export function AdminGiftBank() {
                     </div>
 
                     <button
-                      onClick={() => handleDelete(gift._id)}
+                      onClick={() => handleDelete(gift)}
                       className="text-white/30 hover:text-red-400 p-1.5 transition-colors"
+                      aria-label={`Delete ${gift.name}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

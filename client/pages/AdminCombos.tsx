@@ -19,10 +19,12 @@ import { SEO } from '@/components/shared/SEO';
 import { fetchCombos } from '@/api/combos';
 import { formatNaira } from '@/lib/format';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 export default function AdminCombosPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [searchQuery, setSearchQuery] = useState('');
 
   const { data: combos = [], isLoading } = useQuery({
@@ -36,7 +38,13 @@ export default function AdminCombosPage() {
   );
 
   const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) return;
+    const ok = await confirm({
+      title: 'Delete combo',
+      message: `Are you sure you want to delete "${name}"? This can't be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
       const token = localStorage.getItem('token');

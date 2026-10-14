@@ -31,6 +31,7 @@ import { SEO } from '@/components/shared/SEO';
 import { ImageUploader } from '@/components/admin/ImageUploader';
 import { cldUrl } from '@/lib/cloudinary';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 interface FormState {
   slug: string;
@@ -54,6 +55,7 @@ const EMPTY_FORM: FormState = {
 
 export default function AdminCategories() {
   const { user, logout } = useAuth();
+  const { confirm } = useDialogs();
   const queryClient = useQueryClient();
 
   const { data: categories = [], isLoading } = useQuery({
@@ -262,10 +264,14 @@ export default function AdminCategories() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirm(`Hide "${cat.name}"? Combos using it will be untagged.`)) {
-                            deleteMut.mutate(id);
-                          }
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: 'Hide category',
+                            message: `Hide "${cat.name}"? Combos using it will be untagged.`,
+                            confirmText: 'Hide',
+                            danger: true,
+                          });
+                          if (ok) deleteMut.mutate(id);
                         }}
                         className="p-2 rounded-lg hover:bg-red-500/10 text-white/60 hover:text-red-400"
                         aria-label="Delete"

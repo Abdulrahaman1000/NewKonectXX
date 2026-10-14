@@ -31,6 +31,7 @@ import {
   updateTestimonial,
 } from '@/api/adminTestimonials';
 import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
 
 const EMPTY_FORM: TestimonialPayload = {
   name: '',
@@ -43,6 +44,7 @@ const EMPTY_FORM: TestimonialPayload = {
 
 export default function AdminTestimonials() {
   const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<TestimonialPayload>(EMPTY_FORM);
@@ -116,10 +118,14 @@ export default function AdminTestimonials() {
     updateMut.mutate({ id: item.id, payload: { isPublished: !item.isPublished } });
   };
 
-  const handleDelete = (item: AdminTestimonial) => {
-    if (confirm(`Delete review by ${item.name}?`)) {
-      deleteMut.mutate(item.id);
-    }
+  const handleDelete = async (item: AdminTestimonial) => {
+    const ok = await confirm({
+      title: 'Delete review',
+      message: `Delete the review by ${item.name}? This can't be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (ok) deleteMut.mutate(item.id);
   };
 
   const isFormOpen = showCreate || editingId !== null;
