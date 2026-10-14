@@ -38,6 +38,6 @@
     "shared/**/*",
     "vite.config.ts",
     "vite.config.server.ts"
-  ],
+, "check-case.mjs"  ],
   "exclude": ["node_modules", "dist"]
 }
