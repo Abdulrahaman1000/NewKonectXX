@@ -14,14 +14,19 @@ export function Footer() {
   const address = settings?.contact.address ?? '';
 
   return (
-    <footer className="border-t border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.2)]">
+    <footer className="border-t border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.2)] pb-20 md:pb-0">
       <div className="container-premium section-padding py-12">
+       <div className="px-5 md:px-0">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-12">
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-[#ffed4e] flex items-center justify-center font-bold text-primary-foreground">
-                SC
-              </div>
+              <img
+                src="/logo-mark.png"
+                alt={storeName}
+                width={64}
+                height={40}
+                className="h-10 w-auto object-contain"
+              />
               <span className="font-bold text-lg">{storeName}</span>
             </div>
             <p className="text-sm text-foreground/60">{tagline}</p>
@@ -49,7 +54,7 @@ export function Footer() {
 
           <div className="space-y-4">
             <h3 className="font-semibold text-foreground">Quick Links</h3>
-            <ul className="space-y-2 text-sm">
+            <ul className="space-y-3 text-sm">
               <li><Link to="/" className="text-foreground/70 hover:text-primary transition-colors">Home</Link></li>
               <li><Link to="/products" className="text-foreground/70 hover:text-primary transition-colors">Products</Link></li>
               <li><Link to="/order-tracking" className="text-foreground/70 hover:text-primary transition-colors">Track Order</Link></li>
@@ -59,7 +64,7 @@ export function Footer() {
 
           <div className="space-y-4">
             <h3 className="font-semibold text-foreground">Support</h3>
-            <ul className="space-y-2 text-sm">
+            <ul className="space-y-3 text-sm">
               <li><Link to="/faq" className="text-foreground/70 hover:text-primary transition-colors">FAQ</Link></li>
               <li><Link to="/shipping" className="text-foreground/70 hover:text-primary transition-colors">Shipping Info</Link></li>
               <li><Link to="/returns" className="text-foreground/70 hover:text-primary transition-colors">Returns</Link></li>
@@ -103,6 +108,7 @@ export function Footer() {
             </div>
           </div>
         </div>
+       </div>
       </div>
     </footer>
   );
