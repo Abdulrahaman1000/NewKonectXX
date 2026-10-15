@@ -69,7 +69,7 @@
   }
 
   /* ---------- DARK (your original Dark Luxury palette) ---------- */
-  .dark {
+  .dark,  .force-dark {
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
 
@@ -256,3 +256,28 @@
 .animate-pulse-soft {
   animation: pulse-soft 1.6s ease-in-out infinite;
 }
+
+/* ================= LIGHT MODE BRIDGE ================= */
+.force-dark{color:hsl(var(--foreground))}
+html:not(.dark) :is(.text-white,.hover\:text-white:hover):not(.force-dark *){color:hsl(var(--foreground))}
+html:not(.dark) .text-white\/90:not(.force-dark *){color:hsl(var(--foreground)/.9)}
+html:not(.dark) .text-white\/80:not(.force-dark *){color:hsl(var(--foreground)/.8)}
+html:not(.dark) .text-white\/70:not(.force-dark *){color:hsl(var(--foreground)/.72)}
+html:not(.dark) .text-white\/60:not(.force-dark *){color:hsl(var(--foreground)/.66)}
+html:not(.dark) .text-white\/50:not(.force-dark *){color:hsl(var(--foreground)/.58)}
+html:not(.dark) .text-white\/40:not(.force-dark *){color:hsl(var(--foreground)/.5)}
+html:not(.dark) .text-white\/30:not(.force-dark *){color:hsl(var(--foreground)/.42)}
+html:not(.dark) .text-white\/20:not(.force-dark *){color:hsl(var(--foreground)/.3)}
+html:not(.dark) :is(.bg-white\/5,.bg-white\/\[0\.03\],.bg-white\/\[0\.04\],.bg-white\/\[0\.05\],.hover\:bg-white\/5:hover):not(.force-dark *){background-color:hsl(var(--foreground)/.045)}
+html:not(.dark) :is(.bg-white\/10,.hover\:bg-white\/10:hover):not(.force-dark *){background-color:hsl(var(--foreground)/.08)}
+html:not(.dark) .bg-white\/20:not(.force-dark *){background-color:hsl(var(--foreground)/.12)}
+html:not(.dark) :is(.border-white\/5,.border-white\/10,.border-white\/20,.border-white\/\[0\.08\]):not(.force-dark *){border-color:hsl(var(--border))}
+html:not(.dark) .bg-black:not(.force-dark *){background-color:hsl(var(--background))}
+html:not(.dark) :is(.bg-black\/20,.bg-black\/30,.bg-black\/40,.bg-black\/50,.bg-black\/60,.bg-black\/70,.bg-black\/80,.bg-black\/90):not(.force-dark *){background-color:hsl(var(--card)/.92)}
+html:not(.dark) :is(.placeholder\:text-white\/30,.placeholder\:text-white\/40):not(.force-dark *)::placeholder{color:hsl(var(--muted-foreground))}
+html:not(.dark) [class*="bg-[rgba(255,255,255"]:not(.force-dark *){background-color:hsl(var(--foreground)/.045)}
+html:not(.dark) [class*="border-[rgba(255,255,255"]:not(.force-dark *){border-color:hsl(var(--border))}
+html:not(.dark) :is(.text-green-400,.text-emerald-400):not(.force-dark *){color:#15803d}
+html:not(.dark) :is(.text-red-400,.text-rose-400):not(.force-dark *){color:#dc2626}
+html:not(.dark) :is(.text-yellow-400,.text-amber-400,.text-yellow-300):not(.force-dark *){color:#b45309}
+html:not(.dark) .glass-card{box-shadow:0 1px 2px rgba(15,23,42,.05),0 12px 32px -16px rgba(15,23,42,.18)}

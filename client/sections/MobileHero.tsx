@@ -61,7 +61,7 @@ export function MobileHero({ featuredCombo, combos }: MobileHeroProps) {
 
   return (
     <section
-      className="relative overflow-hidden px-4 pt-6 pb-5"
+      className="force-dark relative overflow-hidden px-4 pt-6 pb-5"
       style={{
         background:
           'radial-gradient(120% 55% at 90% 0%, rgba(255,200,0,0.16), transparent 60%), hsl(var(--background))',
@@ -141,7 +141,7 @@ function ComboSlider({ combos }: { combos: Combo[] }) {
   const goTo = (i: number) => ref.current?.scrollTo({ left: i * step(), behavior: 'smooth' });
 
   return (
-    <div className="mt-4">
+    <div className="force-dark mt-4">
       <div
         ref={ref}
         onScroll={onScroll}
@@ -278,7 +278,7 @@ export function MobileQuickShop({ categories, allImage }: MobileQuickShopProps) 
   };
 
   return (
-    <section className="px-4 pb-4">
+    <section className="force-dark px-4 pb-4">
       <form
         onSubmit={onSearch}
         className="flex items-center rounded-full border border-white/10 bg-white/[0.05] py-1 pl-4 pr-1 focus-within:border-primary/60"
@@ -347,7 +347,7 @@ function DealCountdown() {
   }, []);
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    <span className="flex items-center gap-1 text-xs font-bold tabular-nums text-red-300">
+    <span className="force-dark flex items-center gap-1 text-xs font-bold tabular-nums text-red-300">
       <Clock className="h-3.5 w-3.5" />
       {pad(Math.floor(s / 3600))}:{pad(Math.floor((s % 3600) / 60))}:{pad(s % 60)}
     </span>
@@ -383,7 +383,7 @@ function DealSlider({ combos }: { combos: Combo[] }) {
       onTouchStart={pause}
       onPointerDown={pause}
       onWheel={pause}
-      className="flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1"
+      className="force-dark flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1"
       style={{ scrollbarWidth: 'none' }}
     >
       {combos.map((c) => {
@@ -392,7 +392,7 @@ function DealSlider({ combos }: { combos: Combo[] }) {
           <Link
             key={c.id ?? c.slug}
             to={`/combos/${c.slug}`}
-            className="w-[42%] shrink-0 snap-start overflow-hidden rounded-xl bg-white/[0.06] active:opacity-80"
+            className="force-dark w-[42%] shrink-0 snap-start overflow-hidden rounded-xl bg-white/[0.06] active:opacity-80"
           >
             <div className="relative aspect-square bg-black/40">
               <img
@@ -435,7 +435,7 @@ export function MobileDeals({ featuredCombo, combos }: MobileHeroProps) {
   if (deals.length === 0) return null;
 
   return (
-    <section className="px-4 pb-4">
+    <section className="force-dark px-4 pb-4">
       <div className="rounded-2xl border border-primary/30 bg-white/[0.04] p-3">
         <div className="mb-2.5 flex items-center justify-between">
           <span className="text-sm font-bold text-white">Deal of the day</span>
@@ -462,7 +462,7 @@ export function MobileProducts({ combos }: { combos: Combo[] }) {
   if (products.length === 0) return null;
 
   return (
-    <section className="px-4 pb-6">
+    <section className="force-dark px-4 pb-6">
       <div className="flex items-end justify-between">
         <h2 className="text-lg font-black text-white">Shop single products</h2>
         <Link to="/products" className={`py-1 text-sm font-semibold text-primary ${FOCUS}`}>
@@ -542,7 +542,7 @@ export function MobileResellerSection() {
   const [open, setOpen] = useState(false);
 
   return (
-    <section id="reseller" className="scroll-mt-20 px-4 py-8">
+    <section id="reseller" className="force-dark scroll-mt-20 px-4 py-8">
       <div className="rounded-3xl border border-primary/30 bg-gradient-to-b from-[#1b1a14] to-[#0e0e0e] p-5">
         <h2 className="text-2xl font-black leading-tight text-white">
           Share products, earn 5-10% on every sale.

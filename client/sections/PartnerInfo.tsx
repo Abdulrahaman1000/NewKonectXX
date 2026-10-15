@@ -39,7 +39,7 @@ export function PartnerSection() {
   const [open, setOpen] = useState(false);
 
   return (
-    <section id="reseller" className="section-padding scroll-mt-24 py-8 md:py-14">
+    <section id="reseller" className="force-dark section-padding scroll-mt-24 py-8 md:py-14">
       <div className="container-premium">
         <div className="rounded-3xl border border-primary/30 bg-gradient-to-br from-[#1b1a14] to-[#0e0e0e] p-5 md:p-8 lg:p-12">
           {/* Headline */}

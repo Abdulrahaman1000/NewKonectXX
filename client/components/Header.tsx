@@ -7,7 +7,6 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { fetchCategories } from '@/api/categories';
 import { SearchBar } from '@/components/shared/SearchBar';
 import ThemeToggle from '@/components/ThemeToggle';
-import ThemeToggle from '@/components/ThemeToggle';
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
