@@ -29,9 +29,13 @@ export function Header() {
       <div className="container-premium">
         <div className="flex items-center justify-between h-20 gap-3 md:gap-4">
           <Link to="/" className="flex items-center gap-2 group flex-shrink-0">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-[#ffed4e] flex items-center justify-center font-bold text-primary-foreground group-hover:shadow-lg group-hover:shadow-primary/30 transition-all">
-              SC
-            </div>
+            <img
+              src="/logo-mark.png"
+              alt={storeName}
+              width={64}
+              height={40}
+              className="h-10 w-auto object-contain transition-transform group-hover:scale-105"
+            />
             <span className="hidden sm:inline font-bold text-lg bg-gradient-to-r from-primary via-accent to-[#ffed4e] bg-clip-text text-transparent">
               {storeName}
             </span>
