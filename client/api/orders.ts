@@ -1,7 +1,7 @@
 /**
- * Orders API — frontend client.
+ * Orders API - frontend client.
  *
- * Cart items now include selectedVariants when sent to backend.
+ * Cart items include selectedVariants and the free-gift flag when sent to the backend.
  */
 
 import { apiFetch } from "./client";
@@ -29,12 +29,14 @@ export interface CreateOrderInput {
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
-  // Send each cart item with its selectedVariants
+  // Send each cart item with its selectedVariants and free-gift flag.
+  // The server needs isFreeGift to know the item comes from the Gift Bank.
   const payload = {
     items: input.items.map((it) => ({
       comboId: it.comboId,
       quantity: it.quantity,
       selectedVariants: it.selectedVariants ?? {},
+      isFreeGift: Boolean(it.isFreeGift),
     })),
     shipping: input.shipping,
     paymentMethod: input.paymentMethod,
