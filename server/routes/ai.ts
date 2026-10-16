@@ -2,7 +2,7 @@
  * AI shopping assistant.  POST /api/ai/chat
  *
  * Body:    { messages: [{ role: "user" | "assistant", text }] }   (last one is the customer's question)
- * Returns: { data: { answer, sources: [{id,title,link}], needsHuman } }
+ * Returns: { data: { answer, sources: [{id,title,link}], cards: [{id,title,price,inStock,image,link}], needsHuman } }
  *
  * Separate from checkout, payments and the human chat. Nothing is stored.
  */
@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getKnowledge } from "../ai/knowledge";
 import { retrieve, isGreeting } from "../ai/retrieve";
 import { askGemini, AIError } from "../ai/gemini";
+import { budgetCards, isBudgetListQuestion, toCard, type AICard } from "../ai/cards";
 
 const router = Router();
 
@@ -65,6 +66,8 @@ const visitor = (req: Request) =>
 const fail = (res: Response, status: number, code: string, message: string) =>
   res.status(status).json({ error: { code, message } });
 
+const money = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
+
 router.post("/chat", async (req: Request, res: Response) => {
   try {
     const parsed = Body.safeParse(req.body);
@@ -81,9 +84,9 @@ router.post("/chat", async (req: Request, res: Response) => {
     if (isGreeting(last.text)) {
       return res.json({
         data: {
-          answer:
-            "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
+          answer: "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
           sources: [],
+          cards: [],
           needsHuman: false,
         },
       });
@@ -92,6 +95,18 @@ router.post("/chat", async (req: Request, res: Response) => {
     const knowledge = await getKnowledge();
     const found = retrieve(last.text, knowledge);
 
+    // Budget question ("what can I buy within ₦50,000?"): answered by code from the
+    // real catalogue. No AI call, so it is exact, instant and uses no AI quota.
+    if (found.budget && isBudgetListQuestion(last.text)) {
+      const { cards, total } = budgetCards(knowledge, found.budget);
+      const answer = cards.length
+        ? total > cards.length
+          ? `You can get ${total} in-stock combos within ${money(found.budget)}. Here are the ${cards.length} closest to your budget:`
+          : `Here ${cards.length === 1 ? "is the in-stock combo" : `are the ${cards.length} in-stock combos`} within ${money(found.budget)}:`
+        : `I couldn't find an in-stock combo within ${money(found.budget)}. You can talk to our team for help.`;
+      return res.json({ data: { answer, sources: [], cards, needsHuman: cards.length === 0 } });
+    }
+
     // Nothing relevant in the shop's data: say so, don't spend AI quota, offer a person
     if (!found.matched) {
       return res.json({
@@ -99,6 +114,7 @@ router.post("/chat", async (req: Request, res: Response) => {
           answer:
             "I don't have that information. I can help with our combos, prices, free gifts and delivery, or you can talk to our team.",
           sources: [],
+          cards: [],
           needsHuman: true,
         },
       });
@@ -123,10 +139,23 @@ router.post("/chat", async (req: Request, res: Response) => {
         return { id: d.id, title: d.title, link: d.link ?? null };
       });
 
+    // Product cards for the combos the AI actually used (built from shop data, not by the AI)
+    const seen = new Set<string>();
+    const cards: AICard[] = [];
+    for (const id of result.sources) {
+      const d = byId.get(id);
+      if (!d || seen.has(d.id)) continue;
+      seen.add(d.id);
+      const card = toCard(d);
+      if (card) cards.push(card);
+      if (cards.length >= 4) break;
+    }
+
     res.json({
       data: {
         answer: result.answer || "Sorry, I couldn't answer that. Please talk to our team.",
         sources,
+        cards,
         needsHuman: result.needsHuman || !result.answer,
       },
     });

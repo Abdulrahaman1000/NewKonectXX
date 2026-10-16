@@ -297,8 +297,8 @@ html.light .input-base::placeholder { color: rgba(23, 20, 15, 0.42); }
 html.light .skeleton { background: rgba(23, 20, 15, 0.07); }
 
 /* ---- Fixed colours in the pages, translated for light mode ---- */
-html.light .gradient-text:not(.theme-dark *):not(.theme-dark){background-image:linear-gradient(90deg,#8f5c00,#c48a00 50%,#8f5c00)}
-html.light .bg-clip-text:not(.theme-dark *):not(.theme-dark){background-image:linear-gradient(90deg,#8f5c00,#b87800 50%,#8f5c00)}
+html.light .gradient-text:not(.theme-dark *):not(.theme-dark){background-image:linear-gradient(90deg,#7a4d00,#a86f00 50%,#7a4d00)}
+html.light .bg-clip-text:not(.theme-dark *):not(.theme-dark){background-image:linear-gradient(90deg,#7a4d00,#a86f00 50%,#7a4d00)}
 html.light .text-primary:not(.theme-dark *):not(.theme-dark){color:hsl(var(--gold-text))}
 html.light .text-accent:not(.theme-dark *):not(.theme-dark){color:hsl(var(--gold-text))}
 html.light .text-primary\/40:not(.theme-dark *):not(.theme-dark){color:hsl(var(--gold-text) / 0.4)}
@@ -668,3 +668,4 @@ html.light .theme-dark .glass-card-hover:hover{background:rgba(255,255,255,.08);
 html.light .theme-dark .input-base{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1);color:#fff}
 html.light .theme-dark .input-base::placeholder{color:rgba(255,255,255,.3)}
 html.light .theme-dark .skeleton{background:rgba(255,255,255,.06)}
+html.light :is(.gradient-text,.bg-clip-text),html.light :has(> .gradient-text){text-shadow:none !important}

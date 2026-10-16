@@ -1,7 +1,7 @@
 /**
  * Minimal Gemini client (plain fetch, no extra packages).
- * The API key and model name are read from environment variables on the
- * server only: GEMINI_API_KEY and GEMINI_MODEL.
+ * The API key and model names are read from environment variables on the
+ * server only: GEMINI_API_KEY, GEMINI_MODEL and (optional) GEMINI_FALLBACK_MODEL.
  */
 
 import type { KDoc } from "./retrieve";
@@ -65,7 +65,7 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
     contents: toContents(history),
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: 500,
+      maxOutputTokens: 2048,
       responseMimeType: "application/json",
       responseSchema: {
         type: "OBJECT",
@@ -79,20 +79,35 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
     },
   };
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20_000);
-  let res: Response;
-  try {
-    res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-  } catch {
-    throw new AIError("FAILED", "AI provider unreachable");
-  } finally {
-    clearTimeout(timer);
+  // Try the main model, then the fallback model (or the same model once more)
+  // if Google says it is busy or has a temporary error.
+  const models = [model, process.env.GEMINI_FALLBACK_MODEL || model];
+  let res!: Response;
+  for (let i = 0; i < models.length; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      res = await fetch(
+        `${base}/v1beta/models/${encodeURIComponent(models[i])}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        },
+      );
+    } catch (err) {
+      console.error("Gemini fetch failed:", (err as Error)?.message);
+      if (i < models.length - 1) continue;
+      throw new AIError("FAILED", "AI provider unreachable");
+    } finally {
+      clearTimeout(timer);
+    }
+    if ((res.status === 503 || res.status === 500) && i < models.length - 1) {
+      console.error(`Gemini ${models[i]} busy (${res.status}), trying ${models[i + 1]}`);
+      continue;
+    }
+    break;
   }
 
   if (res.status === 429) throw new AIError("BUSY", "AI provider rate limit");
@@ -107,7 +122,14 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
     .map((p: any) => p?.text ?? "")
     .join("")
     .trim();
-  if (!raw) throw new AIError("FAILED", "Empty AI response");
+  if (!raw) {
+    console.error(
+      "Gemini empty reply, finishReason:",
+      json?.candidates?.[0]?.finishReason,
+      JSON.stringify(json)?.slice(0, 400),
+    );
+    throw new AIError("FAILED", "Empty AI response");
+  }
 
   try {
     const p = JSON.parse(raw.replace(/^```json|```$/g, "").trim());
@@ -117,6 +139,11 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
       needsHuman: Boolean(p.needsHuman),
     };
   } catch {
+    // A reply starting with "{" is cut-off JSON: never show it to a customer
+    if (raw.startsWith("{")) {
+      console.error("Gemini reply was cut off:", json?.candidates?.[0]?.finishReason);
+      throw new AIError("FAILED", "AI reply was cut off");
+    }
     // Model ignored the JSON format: use its text, no claimed sources
     return { answer: raw.slice(0, 800), sources: [], needsHuman: false };
   }

@@ -11,15 +11,15 @@ import { Gift } from "../models/Gift";
 import { FAQ } from "../models/FAQ";
 import { SiteSettings } from "../models/SiteSettings";
 import { GIFT_THRESHOLD, GIFT_WINDOW_DAYS } from "../services/giftProgress";
-import type { KDoc } from "./retrieve";
+import { thumb, type ImgDoc } from "./cards";
 
 const TTL_MS = 60_000;
-let cache: { at: number; docs: KDoc[] } | null = null;
+let cache: { at: number; docs: ImgDoc[] } | null = null;
 
 const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 const cut = (s: unknown, max = 500) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
-export async function getKnowledge(): Promise<KDoc[]> {
+export async function getKnowledge(): Promise<ImgDoc[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.docs;
 
   const [combos, gifts, faqs, settings] = await Promise.all([
@@ -29,7 +29,7 @@ export async function getKnowledge(): Promise<KDoc[]> {
     SiteSettings.findOne().lean(),
   ]);
 
-  const docs: KDoc[] = [];
+  const docs: ImgDoc[] = [];
 
   for (const c of combos as any[]) {
     const inStock = (c.stockLeft ?? 0) > 0;
@@ -46,6 +46,10 @@ export async function getKnowledge(): Promise<KDoc[]> {
         );
       })
       .join("; ");
+
+    // Photo: the combo's hero image, else the first photo of its first item
+    const photo = thumb(c.heroImage) ?? thumb(c.items?.[0]?.images?.[0]?.url);
+
     docs.push({
       id: `combo:${c.slug}`,
       type: "combo",
@@ -53,6 +57,7 @@ export async function getKnowledge(): Promise<KDoc[]> {
       price: c.totalPrice,
       inStock,
       link: `/combos/${c.slug}`,
+      image: photo ?? undefined,
       text: cut(
         `${c.tagline ? c.tagline + ". " : ""}Combo price ${naira(c.totalPrice)}` +
           (save > 0 ? ` (normally ${naira(c.originalPrice)}, you save ${naira(save)})` : "") +

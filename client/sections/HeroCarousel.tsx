@@ -34,6 +34,7 @@ import { fetchCombos } from '@/api/combos';
 import { fetchCategories } from '@/api/categories';
 import { cldUrl } from '@/lib/cloudinary';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useTheme } from '@/lib/theme';
 
 interface HeroCategory {
   id: string;
@@ -56,6 +57,15 @@ interface Props {
   /** Optional: products for the mobile slider. If omitted, the hero loads them itself. */
   combos?: Combo[];
 }
+
+/**
+ * Desktop hero background that follows the light / dark theme.
+ * The two pictures live in the root public/ folder.
+ * Set to false to go back to the slide pictures from Admin.
+ */
+const HERO_THEME_BG = true;
+const HERO_BG_DARK = '/hero-bg-dark.jpg';
+const HERO_BG_LIGHT = '/hero-bg-light.jpg';
 
 const FALLBACK_HEADLINE = 'Wear the Culture. Own the Tech.';
 const FALLBACK_SUBTEXT =
@@ -250,6 +260,8 @@ export function HeroCarousel({
           ...apiCategories.map((c) => ({ id: c.slug, label: c.name, icon: c.icon, image: c.image })),
         ]
       : DEFAULT_CATEGORIES);
+  const { resolved: themeMode } = useTheme();
+  const heroLight = HERO_THEME_BG && themeMode === 'light';
   const [idx, setIdx] = useState(0);
   const [transitioning, setTransitioning] = useState(false);
   const [activeCategory, setActiveCategory] = useState(categories[0]?.id ?? 'all');
@@ -499,9 +511,11 @@ export function HeroCarousel({
 
   /* ─────────────── DESKTOP / TABLET (original, unchanged) ─────────────── */
   return (
-    <section className="theme-dark relative overflow-hidden min-h-[560px] md:min-h-[78vh] flex flex-col">
+    <section
+      className={`${heroLight ? '' : 'theme-dark'} relative overflow-hidden min-h-[560px] md:min-h-[78vh] flex flex-col`}
+    >
       {slides.map((slide, i) => {
-        const imgSrc = slideImage(slide);
+        const imgSrc = HERO_THEME_BG ? (heroLight ? HERO_BG_LIGHT : HERO_BG_DARK) : slideImage(slide);
         return (
           <div
             key={slide.id}
@@ -529,8 +543,11 @@ export function HeroCarousel({
             <div
               className="absolute inset-0"
               style={{
-                background:
-                  'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.7) 100%)',
+                background: heroLight
+                  ? 'linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.10) 50%, rgba(255,255,255,0.35) 100%)'
+                  : HERO_THEME_BG
+                  ? 'linear-gradient(180deg, rgba(0,0,0,0.20) 0%, rgba(0,0,0,0.10) 50%, rgba(0,0,0,0.45) 100%)'
+                  : 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.7) 100%)',
               }}
             />
           </div>
@@ -562,14 +579,18 @@ export function HeroCarousel({
         <div className="w-full max-w-3xl mx-auto text-center space-y-3 md:space-y-4">
           <span
             className="inline-block text-[10px] md:text-[11px] tracking-[0.22em] uppercase font-bold px-4 py-2 rounded-full backdrop-blur-md border border-primary/30 text-primary"
-            style={{ background: 'rgba(10,10,10,0.4)' }}
+            style={{ background: heroLight ? 'rgba(255,255,255,0.75)' : 'rgba(10,10,10,0.4)' }}
           >
             {currentSlide.tag}
           </span>
 
           <h1
             className="text-3xl sm:text-5xl md:text-[3.75rem] font-black leading-[1.05] tracking-tight text-white"
-            style={{ textShadow: '0 6px 40px rgba(0,0,0,0.6)' }}
+            style={{
+              textShadow: heroLight
+                ? 'none'
+                : '0 6px 40px rgba(0,0,0,0.6)',
+            }}
           >
             <span className="gradient-text">{headline}</span>
           </h1>
@@ -583,7 +604,7 @@ export function HeroCarousel({
       <div className="relative z-20 px-4 md:px-8 mt-6 md:mt-8 -mb-10 md:-mb-14">
         <div
           className="max-w-3xl mx-auto rounded-2xl md:rounded-[1.25rem] shadow-2xl overflow-hidden border border-primary/20 backdrop-blur-xl"
-          style={{ background: 'rgba(15,13,8,0.85)' }}
+          style={{ background: heroLight ? 'rgba(255,255,255,0.9)' : 'rgba(15,13,8,0.85)' }}
         >
           <style>{`
             .cat-scroll::-webkit-scrollbar { display: none; }
