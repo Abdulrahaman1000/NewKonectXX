@@ -11,6 +11,7 @@ import authRouter from "./routes/auth";
 import ordersRouter from "./routes/orders";
 import paymentsRouter from "./routes/payments";
 import chatRouter from "./routes/chat";
+import aiRouter from "./routes/ai";
 import resellersRouter from "./routes/resellers";
 import partnerRouter from "./routes/partner";
 import giftRoutes from "./routes/admin/giftRoutes";
@@ -40,6 +41,7 @@ export function createServer() {
   // 50mb body limit for Base64 image payloads
   app.use((req, res, next) => {
     if (req.originalUrl === "/api/payments/webhook/paystack") return next();
+    if (req.originalUrl.startsWith("/api/ai")) return express.json({ limit: "20kb" })(req, res, next);
     return express.json({ limit: "50mb" })(req, res, next);
   });
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
@@ -63,6 +65,7 @@ export function createServer() {
   app.use("/api/orders", ordersRouter);
   app.use("/api/payments", paymentsRouter);
   app.use("/api/chat", chatRouter);
+  app.use("/api/ai", aiRouter);
   app.use("/api/resellers", resellersRouter);
   app.use("/api/partner", partnerRouter);
 

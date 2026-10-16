@@ -20,13 +20,15 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-12">
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <img
-                src="/logo-mark.png"
-                alt={storeName}
-                width={64}
-                height={40}
-                className="h-10 w-auto object-contain"
-              />
+              <span className="flex h-10 items-center rounded-xl px-2.5" style={{ background: '#0B0B0B' }}>
+                <img
+                  src="/logo-mark.png"
+                  alt={storeName}
+                  width={64}
+                  height={40}
+                  className="h-7 w-auto object-contain"
+                />
+              </span>
               <span className="font-bold text-lg">{storeName}</span>
             </div>
             <p className="text-sm text-foreground/60">{tagline}</p>

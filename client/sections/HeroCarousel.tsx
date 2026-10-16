@@ -95,7 +95,7 @@ function HeroBackdrop({ tag }: { tag: string }) {
   const gold = 'rgba(255,215,0,0.30)';
 
   return (
-    <div className="force-dark absolute inset-0 overflow-hidden" aria-hidden>
+    <div className="absolute inset-0 overflow-hidden" aria-hidden>
       <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${sc.a}, ${sc.b})` }} />
       <div className="absolute -top-16 -right-12 w-64 h-64 rounded-full blur-3xl" style={{ background: sc.glow, opacity: 0.55 }} />
       <div className="absolute -bottom-20 -left-12 w-60 h-60 rounded-full blur-3xl" style={{ background: sc.glow2, opacity: 0.4 }} />
@@ -132,7 +132,7 @@ function DealCountdown() {
   }, []);
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    <span className="force-dark flex items-center gap-1 text-xs font-bold text-red-300 tabular-nums">
+    <span className="flex items-center gap-1 text-xs font-bold text-red-300 tabular-nums">
       <Clock className="w-3.5 h-3.5" />
       {pad(Math.floor(s / 3600))}:{pad(Math.floor((s % 3600) / 60))}:{pad(s % 60)}
     </span>
@@ -168,7 +168,7 @@ function DealSlider({ combos }: { combos: Combo[] }) {
       onTouchStart={pause}
       onPointerDown={pause}
       onWheel={pause}
-      className="force-dark flex gap-2.5 overflow-x-auto snap-x snap-mandatory pb-1"
+      className="flex gap-2.5 overflow-x-auto snap-x snap-mandatory pb-1"
       style={{ scrollbarWidth: 'none' }}
     >
       {combos.map((c) => {
@@ -177,7 +177,7 @@ function DealSlider({ combos }: { combos: Combo[] }) {
           <Link
             key={c.id ?? c.slug}
             to={`/combos/${c.slug}`}
-            className="force-dark w-[42%] shrink-0 snap-start rounded-xl overflow-hidden bg-white/[0.06] active:opacity-80"
+            className="w-[42%] shrink-0 snap-start rounded-xl overflow-hidden bg-white/[0.06] active:opacity-80"
           >
             <div className="relative aspect-square bg-black/40">
               <img
@@ -319,10 +319,10 @@ export function HeroCarousel({
       .slice(0, 10);
 
     return (
-      <section className="force-dark relative">
+      <section className="relative">
         {/* Banner: the slides sit behind ONLY the headline + search, so the photo stays visible */}
         <div
-          className="relative overflow-hidden bg-[#0d0d0d]"
+          className="theme-dark relative overflow-hidden bg-[#0d0d0d]"
           onTouchStart={(e) => {
             touchX.current = e.touches[0].clientX;
           }}
@@ -499,13 +499,13 @@ export function HeroCarousel({
 
   /* ─────────────── DESKTOP / TABLET (original, unchanged) ─────────────── */
   return (
-    <section className="force-dark relative overflow-hidden min-h-[560px] md:min-h-[78vh] flex flex-col">
+    <section className="theme-dark relative overflow-hidden min-h-[560px] md:min-h-[78vh] flex flex-col">
       {slides.map((slide, i) => {
         const imgSrc = slideImage(slide);
         return (
           <div
             key={slide.id}
-            className="force-dark absolute inset-0"
+            className="absolute inset-0"
             style={{
               opacity: i === idx ? (transitioning ? 0 : 1) : 0,
               transition: 'opacity 600ms ease-in-out',

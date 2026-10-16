@@ -43,7 +43,7 @@ import Returns from './pages/Returns';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import NotFound from './pages/NotFound';
-import { WhatsAppFloat } from '@/components/shared/WhatsAppFloat';
+import { AIChatLauncher } from '@/components/AIChatLauncher';
 import AdminGiftBankPage from './pages/AdminGiftBankPage';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import AdminResellers from './pages/AdminResellers';
@@ -131,7 +131,7 @@ const App = () => (
                 </Routes>
                 <CustomerOnly>
                   <MobileBottomNav />
-                  <WhatsAppFloat />
+                  <AIChatLauncher />
                 </CustomerOnly>
               </BrowserRouter>
               </ConfirmProvider>
