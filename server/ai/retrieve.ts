@@ -31,13 +31,31 @@ export function stem(w: string): string {
   return w;
 }
 
+/** Different forms of the same word should match each other (withdraw / withdrawn / withdrawal). */
+const SAME: Record<string, string> = {
+  withdrawn: "withdraw", withdrawal: "withdraw", withdrawing: "withdraw", withdrew: "withdraw",
+  paid: "pay", payment: "pay", payout: "pay", paying: "pay",
+  earned: "earn", earning: "earn", earnings: "earn",
+  delivered: "deliver", delivery: "deliver", delivering: "deliver",
+  shipping: "ship", shipped: "ship", shipment: "ship",
+  refunded: "refund", cancelled: "cancel", canceled: "cancel", cancellation: "cancel",
+  ordering: "order", ordered: "order", buying: "buy", bought: "buy",
+  registered: "register", registration: "register", signup: "register", join: "register", apply: "register", application: "register",
+  returned: "return", returns: "return", returning: "return",
+};
+
+export function norm(w: string): string {
+  const s = stem(w);
+  return SAME[w] ?? SAME[s] ?? s;
+}
+
 export function tokenize(s: string): string[] {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 1 && !STOP.has(w))
-    .map(stem);
+    .map(norm);
 }
 
 /** Finds a naira budget in the question: "₦50,000", "50k", "under 50000". */
@@ -65,12 +83,26 @@ export function parseBudget(q: string): number | null {
   return null;
 }
 
-const INTENTS: { id: string; words: string[] }[] = [
-  { id: "policy:gift", words: ["gift", "free", "reward", "qualify", "unlock", "threshold"] },
-  { id: "policy:delivery", words: ["deliver", "delivery", "shipping", "ship", "fee", "arrive", "cod", "cash", "dispatch", "transport"] },
-  { id: "policy:combo", words: ["combo", "bundle", "offer", "save", "saving", "discount", "custom", "build"] },
-  { id: "policy:payment", words: ["pay", "payment", "bank", "transfer", "paystack", "card", "flutterwave"] },
-  { id: "policy:contact", words: ["contact", "whatsapp", "phone", "call", "address", "location", "email", "reach"] },
+/**
+ * Everyday words that point at a group of knowledge entries. `ids` match exactly,
+ * `prefix` matches every entry whose id starts with it.
+ */
+const INTENTS: { ids?: string[]; prefix?: string; words: string[] }[] = [
+  { ids: ["policy:gift"], words: ["gift", "free", "reward", "qualify", "unlock", "threshold"] },
+  { ids: ["policy:delivery"], words: ["deliver", "delivery", "shipping", "ship", "fee", "arrive", "cod", "cash on", "dispatch", "transport", "how long"] },
+  { ids: ["policy:combo"], words: ["combo", "bundle", "offer", "save", "saving", "discount", "custom", "build"] },
+  { ids: ["policy:payment"], words: ["pay", "payment", "bank", "transfer", "paystack", "card", "flutterwave"] },
+  { ids: ["policy:contact"], words: ["contact", "whatsapp", "phone", "call", "address", "location", "email", "reach", "support", "human", "agent"] },
+  { ids: ["policy:overview"], words: ["sell", "about", "who are you", "what is smart combo", "company", "store", "shop", "what do you", "tell me about smart combo"] },
+  {
+    prefix: "partner:",
+    words: ["partner", "reseller", "resell", "affiliate", "commission", "earn", "earning", "withdraw", "withdrawal", "payout", "referral", "refer", "make money", "sell for you", "sell for smart", "side hustle", "agent program", "join you", "work with you"],
+  },
+  {
+    prefix: "order:",
+    words: ["track", "tracking", "my order", "order number", "order status", "status", "where is my", "how to order", "how do i order", "place an order", "checkout", "how to buy", "how do i buy", "shipped", "delivered"],
+  },
+  { prefix: "site:", words: ["return", "refund", "warranty", "guarantee", "privacy", "data", "terms", "policy", "exchange", "damaged", "faulty", "cancel"] },
 ];
 
 const BROWSE = /\b(available|in stock|what do you (have|sell)|products?|catalog(ue)?|list|options?|show me|everything)\b/i;
@@ -88,7 +120,7 @@ export interface Retrieval {
 
 const fmt = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 
-export function retrieve(question: string, all: KDoc[], limit = 6): Retrieval {
+export function retrieve(question: string, all: KDoc[], limit = 8): Retrieval {
   const q = question.trim();
   const qTokens = tokenize(q);
   const qSet = new Set(qTokens);
@@ -114,11 +146,13 @@ export function retrieve(question: string, all: KDoc[], limit = 6): Retrieval {
     if (s > 0) bump(doc, s);
   }
 
-  // Intent boosts: policy documents the question is clearly about
+  // Intent boosts: entries the question is clearly about
   for (const intent of INTENTS) {
-    if (intent.words.some((w) => qSet.has(stem(w)) || lower.includes(w))) {
-      const doc = all.find((d) => d.id === intent.id);
-      if (doc) bump(doc, 5);
+    const hit = intent.words.some((w) => (w.includes(" ") ? lower.includes(w) : qSet.has(norm(w))));
+    if (!hit) continue;
+    for (const doc of all) {
+      const match = intent.ids ? intent.ids.includes(doc.id) : doc.id.startsWith(intent.prefix as string);
+      if (match) bump(doc, intent.prefix ? 4 : 5);
     }
   }
 

@@ -334,7 +334,7 @@ export function HeroCarousel({
       <section className="relative">
         {/* Banner: the slides sit behind ONLY the headline + search, so the photo stays visible */}
         <div
-          className="theme-dark relative overflow-hidden bg-[#0d0d0d]"
+          className={`${heroLight ? 'bg-[#efede8]' : 'theme-dark bg-[#0d0d0d]'} relative overflow-hidden`}
           onTouchStart={(e) => {
             touchX.current = e.touches[0].clientX;
           }}
@@ -354,12 +354,12 @@ export function HeroCarousel({
                 className="absolute inset-0 transition-opacity duration-700"
                 style={{ opacity: i === idx ? 1 : 0 }}
               >
-                <HeroBackdrop tag={slide.tag} />
-                {slideImages(slide)[0] && (
+                {!HERO_THEME_BG && <HeroBackdrop tag={slide.tag} />}
+                {(HERO_THEME_BG || slideImages(slide)[0]) && (
                   <img
-                    src={slideImages(slide)[0]}
+                    src={HERO_THEME_BG ? (heroLight ? HERO_BG_LIGHT : HERO_BG_DARK) : slideImages(slide)[0]}
                     alt=""
-                    className="w-full h-full object-cover"
+                    className="absolute inset-0 w-full h-full object-cover"
                     loading={i === 0 ? 'eager' : 'lazy'}
                     onError={(e) => {
                       if (import.meta.env.DEV) {
@@ -378,26 +378,36 @@ export function HeroCarousel({
             <div
               className="absolute inset-0"
               style={{
-                background:
-                  'linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.2) 45%, rgba(0,0,0,0.65) 100%)',
+                background: heroLight
+                  ? 'linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.45) 100%)'
+                  : HERO_THEME_BG
+                  ? 'linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0.55) 100%)'
+                  : 'linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.2) 45%, rgba(0,0,0,0.65) 100%)',
               }}
             />
           </div>
 
           <div className="relative z-10 px-3 pt-6 pb-8 min-h-[260px] flex flex-col justify-center">
             <div className="text-center">
-              <span className="inline-block text-[11px] font-semibold px-3 py-1 rounded-full border border-primary/30 text-primary bg-black/50">
+              <span
+                className="inline-block text-[11px] font-semibold px-3 py-1 rounded-full border border-primary/30 text-primary"
+                style={{ background: heroLight ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.5)' }}
+              >
                 {currentSlide.tag}
               </span>
               <h1
                 className="mt-2 text-2xl font-black leading-tight text-white"
-                style={{ textShadow: '0 2px 16px rgba(0,0,0,0.8)' }}
+                style={{
+                  textShadow: heroLight ? '0 1px 10px rgba(255,255,255,0.8)' : '0 2px 16px rgba(0,0,0,0.8)',
+                }}
               >
                 {headline}
               </h1>
               <p
                 className="mt-1 text-[13px] text-white/85 leading-snug"
-                style={{ textShadow: '0 1px 8px rgba(0,0,0,0.8)' }}
+                style={{
+                  textShadow: heroLight ? '0 1px 8px rgba(255,255,255,0.8)' : '0 1px 8px rgba(0,0,0,0.8)',
+                }}
               >
                 {hero?.subtext?.trim() || MOBILE_SUBTEXT}
               </p>
@@ -405,7 +415,8 @@ export function HeroCarousel({
 
             <form
               onSubmit={handleSearch}
-              className="mt-4 flex items-center rounded-full border border-primary/30 bg-black/70 pl-4 pr-1 py-1"
+              className="mt-4 flex items-center rounded-full border border-primary/30 pl-4 pr-1 py-1"
+              style={{ background: heroLight ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.7)' }}
             >
               <input
                 type="search"
