@@ -16,6 +16,8 @@ export interface KDoc {
   link?: string;
   inStock?: boolean;
   price?: number;
+  /** For lists built from the catalogue: ids of the combos listed, in order. */
+  refs?: string[];
 }
 
 const STOP = new Set(
@@ -171,6 +173,7 @@ export function retrieve(question: string, all: KDoc[], limit = 8): Retrieval {
     extra.push({
       id: "list:budget",
       type: "policy",
+      refs: [...inStock, ...out].map((d) => d.id),
       title: `Combos within ${fmt(budget)}`,
       text: lines.length || outLines.length
         ? [...lines, ...outLines].join("\n")
@@ -178,12 +181,17 @@ export function retrieve(question: string, all: KDoc[], limit = 8): Retrieval {
     });
   }
 
-  // Browsing question: short overview of what's on sale
-  if (BROWSE.test(q) && !budget) {
+  // Browsing question: short overview of what's on sale.
+  // Not when the customer names a product ("is Avil in stock?"): they want that product.
+  const namesAProduct = all.some(
+    (d) => d.type === "combo" && d.title.length > 3 && lower.includes(d.title.toLowerCase()),
+  );
+  if (BROWSE.test(q) && !budget && !namesAProduct) {
     const combos = all.filter((d) => d.type === "combo");
     extra.push({
       id: "list:catalogue",
       type: "policy",
+      refs: combos.slice(0, 15).map((d) => d.id),
       title: "Current combos",
       text: combos.length
         ? combos
@@ -230,4 +238,31 @@ export function directAnswer(r: Retrieval): { text: string; sourceIds: string[] 
     .map((d) => (d.type === "faq" ? `${d.title}\n${d.text}` : `${d.title}: ${d.text}`))
     .join("\n\n");
   return { text: `Here's what I have on that:\n\n${body}`, sourceIds: picked.map((d) => d.id) };
+}
+
+
+/**
+ * A complete answer for "what can I buy within ₦X" / "what do you have", built from the
+ * live catalogue in code. No AI needed, so it is instant, never cut off, and uses no quota.
+ */
+export function listAnswer(r: Retrieval): { text: string; refs: string[] } | null {
+  const first = r.docs[0];
+  if (!first || !first.id.startsWith("list:")) return null;
+
+  const rows = first.text
+    .split("\n")
+    .map((l) => l.replace(/ \[[^\]]+\]$/, "").replace(/^- /, "").trim())
+    .filter(Boolean);
+  const MAX = 10;
+  const shown = rows.slice(0, MAX).map((l) => `• ${l}`);
+  const more = rows.length > MAX ? `\n…and ${rows.length - MAX} more. Ask me about any of them.` : "";
+
+  const intro =
+    first.id === "list:budget"
+      ? rows[0]?.startsWith("No active combo")
+        ? ""
+        : `Here's what you can get within ${fmt(r.budget as number)}:`
+      : "Here's what we have right now:";
+  if (!intro) return { text: rows[0], refs: [] };
+  return { text: `${intro}\n${shown.join("\n")}${more}`, refs: first.refs ?? [] };
 }

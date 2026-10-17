@@ -16,7 +16,7 @@ export interface AIReply {
   sources: AISource[];
   needsHuman: boolean;
   /** "direct" = built from our own pages because the AI was unavailable */
-  mode?: "ai" | "direct";
+  mode?: "ai" | "direct" | "list";
 }
 
 export interface AITurn {

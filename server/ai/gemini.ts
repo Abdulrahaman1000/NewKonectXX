@@ -55,6 +55,21 @@ function toContents(history: Turn[]) {
   return out;
 }
 
+/**
+ * Optional: make the model think less, for faster replies. Set ONE of these in .env:
+ *   GEMINI_THINKING_LEVEL=minimal   (Gemini 3 models)
+ *   GEMINI_THINKING_BUDGET=0        (Gemini 2.5 models)
+ */
+function thinkingConfig() {
+  const level = (process.env.GEMINI_THINKING_LEVEL || "").trim();
+  const budget = (process.env.GEMINI_THINKING_BUDGET || "").trim();
+  if (level) return { thinkingConfig: { thinkingLevel: level } };
+  if (budget !== "" && !Number.isNaN(Number(budget))) return { thinkingConfig: { thinkingBudget: Number(budget) } };
+  return {};
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new AIError("UNAVAILABLE", "AI key not configured");
@@ -68,7 +83,10 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
     contents: toContents(history),
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: 500,
+      // Gemini's hidden "thinking" shares this allowance with the visible answer,
+      // so it must be generous or answers get cut off mid-sentence.
+      maxOutputTokens: 2048,
+      ...thinkingConfig(),
       responseMimeType: "application/json",
       responseSchema: {
         type: "OBJECT",
@@ -82,20 +100,31 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
     },
   };
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  const send = async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25_000);
+    try {
+      return await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   let res: Response;
   try {
-    res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
+    res = await send();
+    // "Model is overloaded" is usually gone a moment later: try once more
+    if (res.status === 500 || res.status === 503) {
+      await sleep(800);
+      res = await send();
+    }
   } catch {
     throw new AIError("FAILED", "AI provider unreachable");
-  } finally {
-    clearTimeout(timer);
   }
 
   if (res.status === 429) throw new AIError("BUSY", "AI provider rate limit");
@@ -106,10 +135,22 @@ export async function askGemini(history: Turn[], docs: KDoc[]): Promise<AIResult
   }
 
   const json: any = await res.json().catch(() => null);
-  const raw: string = (json?.candidates?.[0]?.content?.parts ?? [])
+  const cand = json?.candidates?.[0];
+  const finish: string | undefined = cand?.finishReason;
+  const usage = json?.usageMetadata;
+  // Safe to log: no customer text and no key, just how the model spent its allowance
+  console.log(
+    `[ai] model=${model} finish=${finish ?? "?"} answerTokens=${usage?.candidatesTokenCount ?? "?"} thinkingTokens=${usage?.thoughtsTokenCount ?? 0}`,
+  );
+
+  const raw: string = (cand?.content?.parts ?? [])
+    .filter((p: any) => !p?.thought)
     .map((p: any) => p?.text ?? "")
     .join("")
     .trim();
+
+  // A reply that ran out of room is never shown: half an answer is worse than none
+  if (finish === "MAX_TOKENS") throw new AIError("FAILED", "AI reply was cut off");
   if (!raw) throw new AIError("FAILED", "Empty AI response");
 
   try {

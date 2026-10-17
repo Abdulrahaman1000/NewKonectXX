@@ -10,7 +10,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { getKnowledge } from "../ai/knowledge";
-import { retrieve, isGreeting, directAnswer, tokenize } from "../ai/retrieve";
+import { retrieve, isGreeting, directAnswer, listAnswer, tokenize } from "../ai/retrieve";
 import { askGemini, AIError } from "../ai/gemini";
 
 const router = Router();
@@ -119,14 +119,30 @@ router.post("/chat", async (req: Request, res: Response) => {
     }
 
     const byId = new Map(found.docs.map((d) => [d.id, d]));
+    const everything = new Map(knowledge.map((d) => [d.id, d]));
     const toSources = (ids: string[]) =>
       ids
-        .filter((id) => byId.has(id) && !id.startsWith("list:"))
+        .filter((id) => (byId.has(id) || everything.has(id)) && !id.startsWith("list:"))
         .slice(0, 4)
         .map((id) => {
-          const d = byId.get(id)!;
+          const d = (byId.get(id) ?? everything.get(id))!;
           return { id: d.id, title: d.title, link: d.link ?? null };
         });
+
+    // Budget / "what do you have" questions: answer completely from the live catalogue, no AI.
+    // (Only when the question is about nothing else, so a mixed question still reaches the AI.)
+    const otherTopic = found.docs.some(
+      (d, i) =>
+        !d.id.startsWith("list:") && d.id !== "policy:overview" && d.type !== "combo" && found.scores[i] >= 5,
+    );
+    if (!otherTopic) {
+      const list = listAnswer(found);
+      if (list) {
+        return res.json({
+          data: { answer: list.text, sources: toSources(list.refs), needsHuman: false, mode: "list" },
+        });
+      }
+    }
 
     // When the AI can't answer (busy, out of quota, down), a clearly on-topic question
     // still gets our own written answer instead of an error.
