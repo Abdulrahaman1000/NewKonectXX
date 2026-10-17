@@ -74,18 +74,27 @@ export function MobileHero({ featuredCombo, combos }: MobileHeroProps) {
           'radial-gradient(120% 55% at 90% 0%, rgba(255,200,0,0.16), transparent 60%), hsl(var(--background))',
       }}
     >
-      {/* HERO_PICTURE_V2: full-width studio picture on top, fading into the page. */}
-      <div aria-hidden className="relative -mx-4 -mt-6 mb-2">
-        <img
-          src={isLight ? HERO_BG_LIGHT : HERO_BG_DARK}
-          alt=""
-          className="block aspect-[16/10] w-full object-cover"
-          style={{
-            WebkitMaskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
-            maskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
-          }}
-        />
-      </div>
+      {/* HERO_PICTURE_V3: picture behind the text, fading out under the buttons. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[330px]"
+        style={{
+          backgroundImage: `url(${isLight ? HERO_BG_LIGHT : HERO_BG_DARK})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center 55%',
+          WebkitMaskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
+          maskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[330px]"
+        style={{
+          background: isLight
+            ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.2) 45%, rgba(255,255,255,0) 100%)'
+            : 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.2) 45%, rgba(0,0,0,0) 100%)',
+        }}
+      />
       <h1 className="relative max-w-[18ch] text-[30px] font-black leading-[1.1] text-white">
         <span className="gradient-text">Build your Smart Combo.</span> Get a free gift.
       </h1>
