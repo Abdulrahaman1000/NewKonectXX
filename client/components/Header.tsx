@@ -7,6 +7,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { fetchCategories } from '@/api/categories';
 import { SearchBar } from '@/components/shared/SearchBar';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
+import Logo from '@/components/shared/Logo';
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
@@ -30,18 +31,7 @@ export function Header() {
       <div className="container-premium">
         <div className="flex items-center justify-between h-20 gap-3 md:gap-4 px-4 md:px-0">
           <Link to="/" className="flex items-center gap-2 group flex-shrink-0">
-            <span className="flex h-10 items-center rounded-xl px-2.5" style={{ background: '#0B0B0B' }}>
-              <img
-                src="/logo-mark.png"
-                alt={storeName}
-                width={64}
-                height={40}
-                className="h-7 w-auto object-contain transition-transform group-hover:scale-105"
-              />
-            </span>
-            <span className="hidden sm:inline font-bold text-lg bg-gradient-to-r from-primary via-accent to-[#ffed4e] bg-clip-text text-transparent">
-              {storeName}
-            </span>
+            <Logo variant="header" alt={storeName} className="h-11 md:h-14 w-auto transition-transform group-hover:scale-105" />
           </Link>
 
           {/* Desktop search bar */}
