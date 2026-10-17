@@ -25,7 +25,12 @@ import type { Combo } from '@/types/combo';
 import { calculateSavings, formatNaira } from '@/lib/format';
 import { GIFT_THRESHOLD } from '@/stores/cart';
 import { cldUrl } from '@/lib/cloudinary';
+import { useTheme } from '@/lib/theme';
 import { ResellerSignupModal } from '@/components/shared/ResellerSignupModal';
+
+/** Same pictures as the desktop hero (root public/ folder). */
+const HERO_BG_DARK = '/hero-bg-dark.jpg';
+const HERO_BG_LIGHT = '/hero-bg-light.jpg';
 
 const FOCUS =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -58,15 +63,38 @@ interface MobileHeroProps {
 
 export function MobileHero({ featuredCombo, combos }: MobileHeroProps) {
   const list = orderCombos(featuredCombo, combos, 12, true);
+  const { resolved: themeMode } = useTheme();
+  const isLight = themeMode === 'light';
 
   return (
     <section
-      className="force-dark relative overflow-hidden px-4 pt-6 pb-5"
+      className="relative isolate overflow-hidden px-4 pt-6 pb-5"
       style={{
         background:
           'radial-gradient(120% 55% at 90% 0%, rgba(255,200,0,0.16), transparent 60%), hsl(var(--background))',
       }}
     >
+      {/* Studio picture behind the headline. It fades out before the buttons. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[270px]"
+        style={{
+          backgroundImage: `url(${isLight ? HERO_BG_LIGHT : HERO_BG_DARK})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          WebkitMaskImage: 'linear-gradient(to bottom, #000 62%, transparent 100%)',
+          maskImage: 'linear-gradient(to bottom, #000 62%, transparent 100%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[270px]"
+        style={{
+          background: isLight
+            ? 'linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))'
+            : 'linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15))',
+        }}
+      />
       <h1 className="max-w-[18ch] text-[28px] font-black leading-[1.12] text-white">
         Build your Smart Combo. Get a free gift.
       </h1>

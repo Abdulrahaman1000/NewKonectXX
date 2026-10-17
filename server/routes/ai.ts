@@ -2,7 +2,7 @@
  * AI shopping assistant.  POST /api/ai/chat
  *
  * Body:    { messages: [{ role: "user" | "assistant", text }] }   (last one is the customer's question)
- * Returns: { data: { answer, sources: [{id,title,link}], cards: [{id,title,price,inStock,image,link}], needsHuman } }
+ * Returns: { data: { answer, sources: [{id,title,link}], needsHuman } }
  *
  * Separate from checkout, payments and the human chat. Nothing is stored.
  */
@@ -10,9 +10,8 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { getKnowledge } from "../ai/knowledge";
-import { retrieve, isGreeting } from "../ai/retrieve";
+import { retrieve, isGreeting, directAnswer, tokenize } from "../ai/retrieve";
 import { askGemini, AIError } from "../ai/gemini";
-import { budgetCards, isBudgetListQuestion, toCard, type AICard } from "../ai/cards";
 
 const router = Router();
 
@@ -60,13 +59,25 @@ function overDailyCap(): boolean {
   return false;
 }
 
+// ---- short memory of recent answers, so popular questions don't use up the AI quota ----
+const CACHE_MS = 2 * 60 * 1000; // short, because prices and stock must stay fresh
+const cache = new Map<string, { at: number; data: any }>();
+function cacheGet(key: string) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  cache.delete(key);
+  return null;
+}
+function cacheSet(key: string, data: any) {
+  if (cache.size >= 300) cache.delete(cache.keys().next().value as string);
+  cache.set(key, { at: Date.now(), data });
+}
+
 const visitor = (req: Request) =>
   String(req.headers["x-forwarded-for"] ?? req.ip ?? "unknown").split(",")[0].trim();
 
 const fail = (res: Response, status: number, code: string, message: string) =>
   res.status(status).json({ error: { code, message } });
-
-const money = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 
 router.post("/chat", async (req: Request, res: Response) => {
   try {
@@ -84,9 +95,9 @@ router.post("/chat", async (req: Request, res: Response) => {
     if (isGreeting(last.text)) {
       return res.json({
         data: {
-          answer: "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
+          answer:
+            "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
           sources: [],
-          cards: [],
           needsHuman: false,
         },
       });
@@ -95,18 +106,6 @@ router.post("/chat", async (req: Request, res: Response) => {
     const knowledge = await getKnowledge();
     const found = retrieve(last.text, knowledge);
 
-    // Budget question ("what can I buy within ₦50,000?"): answered by code from the
-    // real catalogue. No AI call, so it is exact, instant and uses no AI quota.
-    if (found.budget && isBudgetListQuestion(last.text)) {
-      const { cards, total } = budgetCards(knowledge, found.budget);
-      const answer = cards.length
-        ? total > cards.length
-          ? `You can get ${total} in-stock combos within ${money(found.budget)}. Here are the ${cards.length} closest to your budget:`
-          : `Here ${cards.length === 1 ? "is the in-stock combo" : `are the ${cards.length} in-stock combos`} within ${money(found.budget)}:`
-        : `I couldn't find an in-stock combo within ${money(found.budget)}. You can talk to our team for help.`;
-      return res.json({ data: { answer, sources: [], cards, needsHuman: cards.length === 0 } });
-    }
-
     // Nothing relevant in the shop's data: say so, don't spend AI quota, offer a person
     if (!found.matched) {
       return res.json({
@@ -114,51 +113,71 @@ router.post("/chat", async (req: Request, res: Response) => {
           answer:
             "I don't have that information. I can help with our combos, prices, free gifts and delivery, or you can talk to our team.",
           sources: [],
-          cards: [],
           needsHuman: true,
         },
       });
     }
 
+    const byId = new Map(found.docs.map((d) => [d.id, d]));
+    const toSources = (ids: string[]) =>
+      ids
+        .filter((id) => byId.has(id) && !id.startsWith("list:"))
+        .slice(0, 4)
+        .map((id) => {
+          const d = byId.get(id)!;
+          return { id: d.id, title: d.title, link: d.link ?? null };
+        });
+
+    // When the AI can't answer (busy, out of quota, down), a clearly on-topic question
+    // still gets our own written answer instead of an error.
+    const answerDirectly = (why: string) => {
+      const d = directAnswer(found);
+      if (!d) return null;
+      console.warn(`[ai] answering directly from knowledge (${why})`);
+      return {
+        data: { answer: d.text, sources: toSources(d.sourceIds), needsHuman: false, mode: "direct" },
+      };
+    };
+
+    // Same single question asked recently: reuse the answer (no AI call)
+    const cacheKey =
+      messages.length === 1 ? `${tokenize(last.text).join(" ")}|${found.docs.map((d) => d.id).join(",")}` : "";
+    if (cacheKey) {
+      const cached = cacheGet(cacheKey);
+      if (cached) return res.json({ data: cached });
+    }
+
     if (overDailyCap()) {
+      const direct = answerDirectly("daily cap");
+      if (direct) return res.json(direct);
       return fail(res, 503, "BUSY", "Our assistant is very busy today. Please talk to our team instead.");
     }
 
-    const result = await askGemini(
-      messages.map((m) => ({ role: m.role, text: m.text })),
-      found.docs,
-    );
-
-    // Only return sources the AI could really have used
-    const byId = new Map(found.docs.map((d) => [d.id, d]));
-    const sources = result.sources
-      .filter((id) => byId.has(id) && !id.startsWith("list:"))
-      .slice(0, 4)
-      .map((id) => {
-        const d = byId.get(id)!;
-        return { id: d.id, title: d.title, link: d.link ?? null };
-      });
-
-    // Product cards for the combos the AI actually used (built from shop data, not by the AI)
-    const seen = new Set<string>();
-    const cards: AICard[] = [];
-    for (const id of result.sources) {
-      const d = byId.get(id);
-      if (!d || seen.has(d.id)) continue;
-      seen.add(d.id);
-      const card = toCard(d);
-      if (card) cards.push(card);
-      if (cards.length >= 4) break;
+    let result;
+    try {
+      result = await askGemini(
+        messages.map((m) => ({ role: m.role, text: m.text })),
+        found.docs,
+      );
+    } catch (e) {
+      if (e instanceof AIError) {
+        const direct = answerDirectly(e.code);
+        if (direct) return res.json(direct);
+      }
+      throw e;
     }
 
-    res.json({
-      data: {
-        answer: result.answer || "Sorry, I couldn't answer that. Please talk to our team.",
-        sources,
-        cards,
-        needsHuman: result.needsHuman || !result.answer,
-      },
-    });
+    // Only return sources the AI could really have used
+    const sources = toSources(result.sources);
+
+    const data = {
+      answer: result.answer || "Sorry, I couldn't answer that. Please talk to our team.",
+      sources,
+      needsHuman: result.needsHuman || !result.answer,
+      mode: "ai",
+    };
+    if (cacheKey && result.answer) cacheSet(cacheKey, data);
+    res.json({ data });
   } catch (e) {
     if (e instanceof AIError) {
       const status = e.code === "UNAVAILABLE" ? 503 : e.code === "BUSY" ? 503 : 502;

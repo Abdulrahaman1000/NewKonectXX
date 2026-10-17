@@ -114,6 +114,8 @@ export function isGreeting(q: string): boolean {
 
 export interface Retrieval {
   docs: KDoc[];
+  /** Relevance of each doc, same order as docs (lists built from the catalogue score 99). */
+  scores: number[];
   budget: number | null;
   matched: boolean;
 }
@@ -198,6 +200,34 @@ export function retrieve(question: string, all: KDoc[], limit = 8): Retrieval {
     .slice(0, limit)
     .map((x) => x.doc);
 
-  const docs = [...extra, ...ranked.filter((d) => !extra.some((e) => e.id === d.id))].slice(0, limit + extra.length);
-  return { docs, budget, matched: docs.length > 0 };
+  const rest = ranked.filter((d) => !extra.some((e) => e.id === d.id));
+  const docs = [...extra, ...rest].slice(0, limit + extra.length);
+  const scores = docs.map((d) => (extra.some((e) => e.id === d.id) ? 99 : (scored.get(d.id)?.score ?? 0)));
+  return { docs, scores, budget, matched: docs.length > 0 };
+}
+
+/**
+ * An answer built straight from our own written knowledge, with no AI.
+ * Used when the AI is busy or down, but only when the best match is clearly on topic.
+ */
+export function directAnswer(r: Retrieval): { text: string; sourceIds: string[] } | null {
+  if (!r.matched || r.scores[0] < 4) return null;
+  const first = r.docs[0];
+  const strip = (t: string) => t.replace(/ \[[^\]]+\]/g, "");
+
+  if (first.id.startsWith("list:")) {
+    return { text: `${first.title}:\n${strip(first.text)}`, sourceIds: [] };
+  }
+
+  const picked = [first];
+  const second = r.docs[1];
+  if (second && !second.id.startsWith("list:") && r.scores[1] >= r.scores[0] * 0.75) {
+    const total = first.text.length + second.text.length;
+    if (total < 900) picked.push(second);
+  }
+
+  const body = picked
+    .map((d) => (d.type === "faq" ? `${d.title}\n${d.text}` : `${d.title}: ${d.text}`))
+    .join("\n\n");
+  return { text: `Here's what I have on that:\n\n${body}`, sourceIds: picked.map((d) => d.id) };
 }
