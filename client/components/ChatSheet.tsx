@@ -2,7 +2,8 @@
  * ChatSheet — customer chat. Phones: full screen. Desktop: floating panel.
  *
  * Two tabs:
- *  - "Ask AI": answers from the shop's real products, prices and rules, with sources.
+ *  - "Ask AI": answers from the shop's real products, prices and rules, with sources
+ *    and neat product cards (photo, name, price).
  *  - "Talk to us": the existing human chat (name, optional phone, message), unchanged.
  *
  * If the AI can't help it offers a one-tap handoff to the human chat or WhatsApp.
@@ -13,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, MessageCircle, Send, Sparkles, X } from 'lucide-react';
 import { useSettings } from '@/contexts/SettingsContext';
 import { ApiError } from '@/api/client';
-import { askAI, AISource } from '@/api/ai';
+import { askAI, AICard, AISource } from '@/api/ai';
 import {
   ChatMessage,
   clearChatToken,
@@ -24,6 +25,7 @@ import {
   startChat,
 } from '@/api/chat';
 import { chatUI, useChatOpen } from '@/stores/chat';
+import { AIProductCards } from '@/components/AIProductCards';
 
 const QUICK = ['Is this available?', 'How long is delivery?', 'Can I get a discount?'];
 const AI_STARTERS = [
@@ -40,6 +42,7 @@ interface AIMsg {
   role: 'user' | 'assistant';
   text: string;
   sources?: AISource[];
+  cards?: AICard[];
   needsHuman?: boolean;
   direct?: boolean;
 }
@@ -209,7 +212,15 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
         const r = await askAI(turns);
         setMessages((cur) => [
           ...cur,
-          { id: uid(), role: 'assistant', text: r.answer, sources: r.sources, needsHuman: r.needsHuman, direct: r.mode === 'direct' },
+          {
+            id: uid(),
+            role: 'assistant',
+            text: r.answer,
+            sources: r.sources,
+            cards: r.cards ?? [],
+            needsHuman: r.needsHuman,
+            direct: r.mode === 'direct',
+          },
         ]);
       } catch (err) {
         const msg =
@@ -272,6 +283,7 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
 
         {messages.map((m) => {
           const mine = m.role === 'user';
+          const hasCards = !mine && !!m.cards && m.cards.length > 0;
           return (
             <div key={m.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
               <div
@@ -284,11 +296,13 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
                 <p className="text-[15px] leading-snug whitespace-pre-wrap break-words">{m.text}</p>
               </div>
 
+              {hasCards && <AIProductCards cards={m.cards!} onNavigate={close} />}
+
               {!mine && m.direct && (
                 <p className="mt-1 text-[10px] text-muted-foreground">Quick answer from our info pages</p>
               )}
 
-              {!mine && m.sources && m.sources.length > 0 && (
+              {!mine && !hasCards && m.sources && m.sources.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 max-w-[92%]">
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Source</span>
                   {m.sources.map((s) =>

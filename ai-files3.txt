@@ -1,0 +1,1368 @@
+﻿
+Name            
+----            
+cards.ts        
+gemini.ts       
+knowledge.ts    
+retrieve.ts     
+siteContent.json
+
+
+
+===== server\routes\ai.ts =====
+/**
+ * AI shopping assistant.  POST /api/ai/chat
+ *
+ * Body:    { messages: [{ role: "user" | "assistant", text }] }   (last one is the customer's question)
+ * Returns: { data: { answer, sources: [{id,title,link}], needsHuman } }
+ *
+ * Separate from checkout, payments and the human chat. Nothing is stored.
+ */
+
+import { Router, Request, Response } from "express";
+import { z } from "zod";
+import { getKnowledge } from "../ai/knowledge";
+import { retrieve, isGreeting, directAnswer, listAnswer, tokenize } from "../ai/retrieve";
+import { askGemini, AIError } from "../ai/gemini";
+
+const router = Router();
+
+const Body = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        text: z.string().trim().min(1).max(500),
+      }),
+    )
+    .min(1)
+    .max(12),
+});
+
+// ---- limits: per visitor, plus a daily cap so the free quota is never burned by one person ----
+const hits = new Map<string, number[]>();
+function limited(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
+  if (recent.length >= max) {
+    hits.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  hits.set(key, recent);
+  return false;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, arr] of hits) if (!arr.some((t) => now - t < 3600_000)) hits.delete(k);
+}, 10 * 60 * 1000).unref?.();
+
+let day = "";
+let dayCount = 0;
+function overDailyCap(): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== day) {
+    day = today;
+    dayCount = 0;
+  }
+  const cap = parseInt(process.env.AI_DAILY_LIMIT || "300", 10);
+  if (dayCount >= cap) return true;
+  dayCount++;
+  return false;
+}
+
+// ---- short memory of recent answers, so popular questions don't use up the AI quota ----
+const CACHE_MS = 2 * 60 * 1000; // short, because prices and stock must stay fresh
+const cache = new Map<string, { at: number; data: any }>();
+function cacheGet(key: string) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  cache.delete(key);
+  return null;
+}
+function cacheSet(key: string, data: any) {
+  if (cache.size >= 300) cache.delete(cache.keys().next().value as string);
+  cache.set(key, { at: Date.now(), data });
+}
+
+const visitor = (req: Request) =>
+  String(req.headers["x-forwarded-for"] ?? req.ip ?? "unknown").split(",")[0].trim();
+
+const fail = (res: Response, status: number, code: string, message: string) =>
+  res.status(status).json({ error: { code, message } });
+
+router.post("/chat", async (req: Request, res: Response) => {
+  try {
+    const parsed = Body.safeParse(req.body);
+    if (!parsed.success) return fail(res, 400, "BAD_REQUEST", "Please type a shorter question.");
+    const { messages } = parsed.data;
+    const last = messages[messages.length - 1];
+    if (last.role !== "user") return fail(res, 400, "BAD_REQUEST", "Please type a question.");
+
+    const who = visitor(req);
+    if (limited(`min:${who}`, 8, 60_000) || limited(`hr:${who}`, 60, 3600_000)) {
+      return fail(res, 429, "RATE_LIMIT", "You're asking too fast. Please wait a moment.");
+    }
+
+    if (isGreeting(last.text)) {
+      return res.json({
+        data: {
+          answer:
+            "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
+          sources: [],
+          needsHuman: false,
+        },
+      });
+    }
+
+    const knowledge = await getKnowledge();
+    const found = retrieve(last.text, knowledge);
+
+    // Nothing relevant in the shop's data: say so, don't spend AI quota, offer a person
+    if (!found.matched) {
+      return res.json({
+        data: {
+          answer:
+            "I don't have that information. I can help with our combos, prices, free gifts and delivery, or you can talk to our team.",
+          sources: [],
+          needsHuman: true,
+        },
+      });
+    }
+
+    const byId = new Map(found.docs.map((d) => [d.id, d]));
+    const everything = new Map(knowledge.map((d) => [d.id, d]));
+    const toSources = (ids: string[]) =>
+      ids
+        .filter((id) => (byId.has(id) || everything.has(id)) && !id.startsWith("list:"))
+        .slice(0, 4)
+        .map((id) => {
+          const d = (byId.get(id) ?? everything.get(id))!;
+          return { id: d.id, title: d.title, link: d.link ?? null };
+        });
+
+    // Budget / "what do you have" questions: answer completely from the live catalogue, no AI.
+    // (Only when the question is about nothing else, so a mixed question still reaches the AI.)
+    const otherTopic = found.docs.some(
+      (d, i) =>
+        !d.id.startsWith("list:") && d.id !== "policy:overview" && d.type !== "combo" && found.scores[i] >= 5,
+    );
+    if (!otherTopic) {
+      const list = listAnswer(found);
+      if (list) {
+        return res.json({
+          data: { answer: list.text, sources: toSources(list.refs), needsHuman: false, mode: "list" },
+        });
+      }
+    }
+
+    // When the AI can't answer (busy, out of quota, down), a clearly on-topic question
+    // still gets our own written answer instead of an error.
+    const answerDirectly = (why: string) => {
+      const d = directAnswer(found);
+      if (!d) return null;
+      console.warn(`[ai] answering directly from knowledge (${why})`);
+      return {
+        data: { answer: d.text, sources: toSources(d.sourceIds), needsHuman: false, mode: "direct" },
+      };
+    };
+
+    // Same single question asked recently: reuse the answer (no AI call)
+    const cacheKey =
+      messages.length === 1 ? `${tokenize(last.text).join(" ")}|${found.docs.map((d) => d.id).join(",")}` : "";
+    if (cacheKey) {
+      const cached = cacheGet(cacheKey);
+      if (cached) return res.json({ data: cached });
+    }
+
+    if (overDailyCap()) {
+      const direct = answerDirectly("daily cap");
+      if (direct) return res.json(direct);
+      return fail(res, 503, "BUSY", "Our assistant is very busy today. Please talk to our team instead.");
+    }
+
+    let result;
+    try {
+      result = await askGemini(
+        messages.map((m) => ({ role: m.role, text: m.text })),
+        found.docs,
+      );
+    } catch (e) {
+      if (e instanceof AIError) {
+        const direct = answerDirectly(e.code);
+        if (direct) return res.json(direct);
+      }
+      throw e;
+    }
+
+    // Only return sources the AI could really have used
+    const sources = toSources(result.sources);
+
+    const data = {
+      answer: result.answer || "Sorry, I couldn't answer that. Please talk to our team.",
+      sources,
+      needsHuman: result.needsHuman || !result.answer,
+      mode: "ai",
+    };
+    if (cacheKey && result.answer) cacheSet(cacheKey, data);
+    res.json({ data });
+  } catch (e) {
+    if (e instanceof AIError) {
+      const status = e.code === "UNAVAILABLE" ? 503 : e.code === "BUSY" ? 503 : 502;
+      return fail(res, status, e.code, "Our assistant isn't available right now. Please talk to our team.");
+    }
+    console.error("POST /api/ai/chat failed:", e);
+    fail(res, 500, "SERVER_ERROR", "Something went wrong. Please try again.");
+  }
+});
+
+export default router;
+
+===== server\ai\knowledge.ts =====
+/**
+ * Builds the assistant's knowledge from the live database: active combos,
+ * gifts in stock, published FAQs, and the shop's real rules. Cached for 60s.
+ *
+ * Nothing here is invented: every price, stock count and rule comes from your
+ * database or from code that checkout itself uses.
+ */
+
+import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { FAQ } from "../models/FAQ";
+import { SiteSettings } from "../models/SiteSettings";
+import { Category } from "../models/Category";
+import { getProgramSettings } from "../models/Commission";
+import siteContent from "./siteContent.json";
+import { GIFT_THRESHOLD, GIFT_WINDOW_DAYS } from "../services/giftProgress";
+import type { KDoc } from "./retrieve";
+
+const TTL_MS = 60_000;
+let cache: { at: number; docs: KDoc[] } | null = null;
+
+const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
+const cut = (s: unknown, max = 500) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+/** Splits long page text into pieces at line breaks so each piece can be found on its own. */
+function chunk(text: string, max: number): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const line of String(text).split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+    if (cur && cur.length + line.length > max) {
+      out.push(cur);
+      cur = "";
+    }
+    cur += (cur ? " " : "") + line;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+export async function getKnowledge(): Promise<KDoc[]> {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.docs;
+
+  const [combos, gifts, faqs, settings, categories, program] = await Promise.all([
+    Combo.find({ isActive: true }).sort({ isFeatured: -1, createdAt: -1 }).limit(60).lean(),
+    Gift.find({ isActive: { $ne: false }, stock: { $gt: 0 } }).limit(30).lean(),
+    FAQ.find({ isPublished: true }).sort({ order: 1 }).limit(40).lean(),
+    SiteSettings.findOne().lean(),
+    Category.find({ isActive: true }).sort({ displayOrder: 1 }).limit(30).lean(),
+    getProgramSettings().catch(() => null),
+  ]);
+
+  const docs: KDoc[] = [];
+
+  for (const c of combos as any[]) {
+    const inStock = (c.stockLeft ?? 0) > 0;
+    const save = Math.max(0, (c.originalPrice ?? 0) - (c.totalPrice ?? 0));
+    const items = (c.items ?? [])
+      .map((it: any) => {
+        const alts = (it.alternatives ?? []).map((a: any) => a.name).filter(Boolean);
+        const colors = (it.colors ?? []).map((k: any) => k.name).filter(Boolean);
+        return (
+          cut(it.name, 80) +
+          (it.individualPrice ? ` (${naira(it.individualPrice)} on its own)` : "") +
+          (alts.length ? ` — alternatives: ${alts.slice(0, 5).join(", ")}` : "") +
+          (colors.length ? ` — colours: ${colors.slice(0, 8).join(", ")}` : "")
+        );
+      })
+      .join("; ");
+    docs.push({
+      id: `combo:${c.slug}`,
+      type: "combo",
+      title: cut(c.name, 80),
+      price: c.totalPrice,
+      inStock,
+      link: `/combos/${c.slug}`,
+      text: cut(
+        `${c.tagline ? c.tagline + ". " : ""}Combo price ${naira(c.totalPrice)}` +
+          (save > 0 ? ` (normally ${naira(c.originalPrice)}, you save ${naira(save)})` : "") +
+          `. ${inStock ? `In stock, ${c.stockLeft} left` : "Out of stock"}.` +
+          (items ? ` Includes: ${items}.` : ""),
+        900,
+      ),
+    });
+  }
+
+  for (const f of faqs as any[]) {
+    docs.push({
+      id: `faq:${f._id}`,
+      type: "faq",
+      title: cut(f.question, 120),
+      text: cut(f.answer, 700),
+      link: "/faq",
+    });
+  }
+
+  // ---- Rules that checkout really applies ----
+  const ship = (settings as any)?.shipping;
+  const contact = (settings as any)?.contact;
+  const cities: string[] = (ship?.codCities ?? []).filter(Boolean);
+
+  if (ship) {
+    docs.push({
+      id: "policy:delivery",
+      type: "policy",
+      title: "Delivery fee and cash on delivery",
+      link: "/shipping",
+      text:
+        `The standard delivery fee is ${naira(ship.standardFee ?? 0)}. ` +
+        (cities.length
+          ? `If the customer pays cash on delivery in ${cities.join(", ")}, the delivery fee is ${naira(0)}. `
+          : "") +
+        "The exact fee is always shown at checkout before paying.",
+    });
+  }
+
+  docs.push({
+    id: "policy:gift",
+    type: "policy",
+    title: "How to qualify for a free gift",
+    text:
+      `A customer unlocks the free gift when what they spent in the last ${GIFT_WINDOW_DAYS} days plus the current order reaches ${naira(GIFT_THRESHOLD)}. ` +
+      "Spending is added up by phone number. An order counts once it is paid; cash-on-delivery orders count once delivered. Cancelled and refunded orders never count. " +
+      "After a gift is given, the total starts again from zero." +
+      (gifts.length ? ` Gifts available now: ${(gifts as any[]).map((g) => cut(g.name, 60)).join(", ")}.` : " No gifts are in stock right now."),
+  });
+
+  docs.push({
+    id: "policy:combo",
+    type: "policy",
+    title: "How combos work",
+    link: "/products",
+    text:
+      "A combo bundles several items at one combo price, which is lower than buying the items separately; each combo page shows how much you save. " +
+      "Some items let you choose an alternative product or a colour at the same combo price. " +
+      "Customers can also build their own combo at /products?mode=combo-builder.",
+  });
+
+  docs.push({
+    id: "policy:payment",
+    type: "policy",
+    title: "Payment",
+    text:
+      "Payment options are shown at checkout; they include online payment through Paystack, bank transfer, and cash on delivery in selected cities. " +
+      "Bank transfer details are shown at checkout.",
+  });
+
+  if (contact) {
+    docs.push({
+      id: "policy:contact",
+      type: "policy",
+      title: "Contact us",
+      link: "/contact",
+      text:
+        [
+          contact.phone ? `Phone: ${contact.phone}` : "",
+          contact.whatsappNumber ? `WhatsApp: ${contact.whatsappNumber}` : "",
+          contact.email ? `Email: ${contact.email}` : "",
+          contact.address ? `Address: ${contact.address}` : "",
+        ]
+          .filter(Boolean)
+          .join(". ") || "Use the chat to reach the team.",
+    });
+  }
+
+  // ---- Categories, with the combos inside each ----
+  for (const cat of categories as any[]) {
+    const inside = (combos as any[]).filter((c) => (c.categorySlugs ?? []).includes(cat.slug));
+    docs.push({
+      id: `category:${cat.slug}`,
+      type: "policy",
+      title: cut(cat.name, 60),
+      link: `/categories/${cat.slug}`,
+      text: cut(
+        `${cat.description ? cat.description + ". " : ""}Category "${cat.name}". ` +
+          (inside.length
+            ? `Combos in it: ${inside
+                .slice(0, 12)
+                .map((c) => `${cut(c.name, 50)} ${naira(c.totalPrice)} (${(c.stockLeft ?? 0) > 0 ? "in stock" : "out of stock"})`)
+                .join("; ")}.`
+            : "No combos in this category right now."),
+        900,
+      ),
+    });
+  }
+
+  // ---- Store overview (so "what do you sell?" gets a real answer) ----
+  {
+    const list = combos as any[];
+    const available = list.filter((c) => (c.stockLeft ?? 0) > 0);
+    const prices = available.map((c) => c.totalPrice).filter((n) => typeof n === "number");
+    docs.push({
+      id: "policy:overview",
+      type: "policy",
+      title: "About Smart Combo and what we sell",
+      link: "/products",
+      text:
+        "Smart Combo is an online store in Nigeria that sells combos: handpicked bundles of products at one lower price. " +
+        `Right now there are ${list.length} combos listed, ${available.length} in stock` +
+        (prices.length ? `, from ${naira(Math.min(...prices))} to ${naira(Math.max(...prices))}` : "") +
+        "." +
+        ((categories as any[]).length
+          ? ` Categories: ${(categories as any[]).map((c) => cut(c.name, 40)).join(", ")}.`
+          : "") +
+        " Customers can also build their own combo, win a free gift as they spend, and become partners to earn commission.",
+    });
+  }
+
+  // ---- Ordering and tracking (from how checkout and orders really work) ----
+  docs.push({
+    id: "order:how",
+    type: "policy",
+    title: "How to place an order",
+    link: "/products",
+    text:
+      "Add a combo to your cart (or build your own combo), open the cart and go to checkout. " +
+      "Enter your full name, phone number, email, state, city and street address (landmark is optional), choose a payment method and place the order. " +
+      "You get an email when your order is received. The AI assistant can't place orders or take payments; use the website checkout.",
+  });
+  docs.push({
+    id: "order:tracking",
+    type: "policy",
+    title: "How to track an order",
+    link: "/order-tracking",
+    text:
+      "Open Track Order on the website and enter your order number (it looks like SC-2026-000123) and the phone number you used at checkout. " +
+      "Customers are also emailed when the order is received, payment is confirmed, it ships (with a tracking number when available) and when it is delivered.",
+  });
+  docs.push({
+    id: "order:status",
+    type: "policy",
+    title: "What the order statuses mean",
+    link: "/order-tracking",
+    text:
+      "Pending: order received, waiting for payment. Paid: payment confirmed. Processing: being prepared (cash-on-delivery orders start here). " +
+      "Shipped: on its way. Delivered: arrived. Cancelled or refunded: the order was stopped or the money returned.",
+  });
+
+  // ---- Partner program: rates come live from the admin settings ----
+  {
+    const combo = program?.comboPercent ?? 5;
+    const single = program?.singlePercent ?? 10;
+    const hold = program?.holdDays ?? 7;
+    const min = program?.minWithdrawal ?? 2000;
+    docs.push({
+      id: "partner:overview",
+      type: "policy",
+      title: "Smart Combo partner program",
+      link: "/#reseller",
+      text:
+        "Anyone can apply to become a Smart Combo partner (reseller) and earn commission by sharing their own link. " +
+        "It is free to join and partners don't buy or hold stock. The team reviews and approves each application. " +
+        "Approved partners get a personal partner code (like SC1001) and link, and log in on the Partner page.",
+    });
+    docs.push({
+      id: "partner:signup",
+      type: "policy",
+      title: "How to sign up as a partner",
+      link: "/#reseller",
+      text:
+        "Click Become a partner and fill the form: full name, phone number, WhatsApp number, email, a password (at least 8 characters) and bank details for payouts (bank name, 10-digit account number, account name). " +
+        "You can also say which social channel you will promote on. New applications start as pending and you get a confirmation email, then another email when you are approved. " +
+        "You can't log in or get a link until approved. An email address or phone number can only be used for one partner account.",
+    });
+    docs.push({
+      id: "partner:earnings",
+      type: "policy",
+      title: "How much partners earn",
+      link: "/#reseller",
+      text:
+        `Partners earn ${combo}% commission on every combo sold through their link and ${single}% on every single product. ` +
+        "A combo is a bundle of two or more items; a single product is one item. The percentage is worked out on the product price only, not the delivery fee. " +
+        `Example: someone buys a ${naira(40000)} combo with your link and you earn ${naira(Math.round((40000 * combo) / 100))}. ` +
+        "Free gifts earn nothing, cancelled or refunded orders earn nothing, and partners can't earn from their own purchases.",
+    });
+    docs.push({
+      id: "partner:payout",
+      type: "policy",
+      title: "How and when partners get paid",
+      link: "/partner",
+      text:
+        "Commission counts once the customer's order is delivered. A partner's first delivered sale starts a " +
+        `${hold}-day week; when the week ends, everything delivered so far can be withdrawn together. ` +
+        `The partner then requests a withdrawal from the dashboard. The smallest withdrawal is ${naira(min)}, it is paid to the bank account given at sign-up, ` +
+        "and only one withdrawal request can be open at a time. Payouts are made on Fridays.",
+    });
+    docs.push({
+      id: "partner:dashboard",
+      type: "policy",
+      title: "Partner dashboard and marketing material",
+      link: "/partner",
+      text:
+        "Partners log in on the Partner page with their email and password. The dashboard shows their link, clicks, orders, conversion rate and earnings split into pending, approved, paid and cancelled. " +
+        "Approved partners also get ready-made pictures, videos and captions for WhatsApp, Instagram and TikTok, with their own link filled in. " +
+        "To change bank details, contact support.",
+    });
+  }
+
+  // ---- Page text: shipping, returns, privacy, terms, contact (built by build-site-knowledge.mjs) ----
+  for (const page of siteContent as { id: string; title: string; link?: string; text: string }[]) {
+    chunk(page.text, 800).forEach((part, i, all) => {
+      docs.push({
+        id: `site:${page.id}:${i + 1}`,
+        type: "policy",
+        title: all.length > 1 ? `${page.title} (part ${i + 1})` : page.title,
+        link: page.link,
+        text: part,
+      });
+    });
+  }
+
+  cache = { at: Date.now(), docs };
+  return docs;
+}
+
+===== server\ai\cards.ts =====
+/**
+ * Product cards for the AI chat (pure functions, no database here).
+ *
+ * Cards are built in code from the shop's own data, never written by the AI,
+ * so the name, price, stock and photo are always exact.
+ */
+
+import type { KDoc } from "./retrieve";
+
+/** A knowledge document that may carry a photo. */
+export type ImgDoc = KDoc & { image?: string };
+
+export interface AICard {
+  id: string;
+  title: string;
+  price: number;
+  inStock: boolean;
+  image: string | null;
+  link: string | null;
+}
+
+/**
+ * Returns a safe, small photo URL or null.
+ * - Rejects base64 "data:" images (far too big to send in a chat reply).
+ * - Shrinks Cloudinary photos to a 240x240 thumbnail so the chat loads fast.
+ */
+export function thumb(url?: string | null): string | null {
+  if (!url) return null;
+  const u = String(url).trim();
+  if (!u || u.length > 2000 || u.startsWith("data:")) return null;
+  if (!/^https?:\/\//i.test(u) && !u.startsWith("/")) return null;
+  const m = u.match(/^(https?:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\/)(v\d+\/.+)$/i);
+  if (m) return `${m[1]}f_auto,q_auto,c_fill,w_240,h_240/${m[2]}`;
+  return u;
+}
+
+export function toCard(doc: KDoc): AICard | null {
+  if (doc.type !== "combo" || typeof doc.price !== "number") return null;
+  return {
+    id: doc.id,
+    title: doc.title,
+    price: doc.price,
+    inStock: !!doc.inStock,
+    image: (doc as ImgDoc).image ?? null,
+    link: doc.link ?? null,
+  };
+}
+
+/** In-stock combos that cost no more than the budget, closest to the budget first. */
+export function budgetCards(all: KDoc[], budget: number, limit = 6): { cards: AICard[]; total: number } {
+  const fits = all
+    .filter((d) => d.type === "combo" && d.inStock && typeof d.price === "number" && (d.price as number) <= budget)
+    .sort((a, b) => (b.price as number) - (a.price as number));
+  const cards = fits
+    .slice(0, limit)
+    .map(toCard)
+    .filter((c): c is AICard => c !== null);
+  return { cards, total: fits.length };
+}
+
+// Questions that mention a budget but are really about something else
+const OTHER_TOPIC = /\b(deliver\w*|shipping|ship|fee|gift|pay\w*|refund|return\w*|warranty|contact|track\w*)\b/i;
+
+/** True when a budget question should simply be answered with a list of products. */
+export function isBudgetListQuestion(question: string): boolean {
+  return !OTHER_TOPIC.test(question);
+}
+
+===== client\components\ChatSheet.tsx =====
+/**
+ * ChatSheet — customer chat. Phones: full screen. Desktop: floating panel.
+ *
+ * Two tabs:
+ *  - "Ask AI": answers from the shop's real products, prices and rules, with sources.
+ *  - "Talk to us": the existing human chat (name, optional phone, message), unchanged.
+ *
+ * If the AI can't help it offers a one-tap handoff to the human chat or WhatsApp.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowLeft, Loader2, MessageCircle, Send, Sparkles, X } from 'lucide-react';
+import { useSettings } from '@/contexts/SettingsContext';
+import { ApiError } from '@/api/client';
+import { askAI, AISource } from '@/api/ai';
+import {
+  ChatMessage,
+  clearChatToken,
+  fetchChat,
+  getChatToken,
+  saveChatToken,
+  sendChatMessage,
+  startChat,
+} from '@/api/chat';
+import { chatUI, useChatOpen } from '@/stores/chat';
+
+const QUICK = ['Is this available?', 'How long is delivery?', 'Can I get a discount?'];
+const AI_STARTERS = [
+  'What can I buy within ₦50,000?',
+  'How does the combo offer work?',
+  'How do I get the free gift?',
+  'What is your delivery fee?',
+];
+const AI_KEY = 'smartcombo:aiChat';
+const MAX_KEPT = 30;
+
+interface AIMsg {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  sources?: AISource[];
+  needsHuman?: boolean;
+  direct?: boolean;
+}
+
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const timeOf = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+function loadAI(): AIMsg[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AI_KEY) || '[]');
+    return Array.isArray(raw) ? raw.slice(-MAX_KEPT) : [];
+  } catch {
+    return [];
+  }
+}
+function saveAI(m: AIMsg[]) {
+  try {
+    localStorage.setItem(AI_KEY, JSON.stringify(m.slice(-MAX_KEPT)));
+  } catch {
+    /* private mode: chat still works for this visit */
+  }
+}
+
+export function ChatSheet() {
+  const isOpen = useChatOpen();
+  return isOpen ? <ChatPanel /> : null;
+}
+
+function ChatPanel() {
+  const { settings } = useSettings();
+  const [tab, setTab] = useState<'ai' | 'human'>('ai');
+  const [handoff, setHandoff] = useState('');
+
+  const waNumber = settings?.contact?.whatsappNumber?.replace(/\D/g, '') ?? '';
+  const whatsappLink = settings?.contact?.whatsappLink || (waNumber ? `https://wa.me/${waNumber}` : '');
+
+  // Phones only: stop the page behind from scrolling while the chat is full screen
+  useEffect(() => {
+    if (window.matchMedia('(min-width: 768px)').matches) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  // Escape closes the panel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && chatUI.close();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const toHuman = (question?: string) => {
+    setHandoff(question ? question.slice(0, 300) : '');
+    setTab('human');
+  };
+
+  return (
+    <div
+      className="fixed inset-x-0 top-0 z-[70] flex h-[100dvh] flex-col bg-background text-foreground md:inset-x-auto md:top-auto md:bottom-24 md:right-6 md:h-[640px] md:max-h-[calc(100dvh-8rem)] md:w-[400px] md:overflow-hidden md:rounded-2xl md:border md:border-border md:shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Chat"
+    >
+      {/* Header */}
+      <header
+        className="shrink-0 flex items-center gap-3 px-3 pb-2 border-b border-border bg-background"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}
+      >
+        <button
+          type="button"
+          onClick={chatUI.close}
+          aria-label="Close chat"
+          className="w-10 h-10 -ml-1 flex items-center justify-center rounded-full text-foreground/80 active:bg-foreground/10 hover:bg-foreground/5"
+        >
+          <ArrowLeft className="w-5 h-5 md:hidden" />
+          <X className="w-5 h-5 hidden md:block" />
+        </button>
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shrink-0">
+          <Sparkles className="w-4 h-4 text-primary-foreground" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold leading-tight">Smart Combo Assistant</p>
+          <p className="text-[11px] text-muted-foreground leading-tight truncate">
+            Answers from our real products and prices
+          </p>
+        </div>
+        {whatsappLink && (
+          <a
+            href={whatsappLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-xs font-semibold text-emerald-500 border border-emerald-500/40 rounded-full px-3 h-9 flex items-center hover:bg-emerald-500/10"
+          >
+            WhatsApp
+          </a>
+        )}
+      </header>
+
+      {/* Tabs */}
+      <div className="shrink-0 grid grid-cols-2 gap-1 p-2 border-b border-border bg-background">
+        {(
+          [
+            ['ai', 'Ask AI', Sparkles],
+            ['human', 'Talk to us', MessageCircle],
+          ] as const
+        ).map(([id, label, Icon]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            aria-pressed={tab === id}
+            className={`h-10 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+              tab === id
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-foreground/5'
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'ai' ? (
+        <AIChat onHuman={toHuman} whatsappLink={whatsappLink} />
+      ) : (
+        <HumanChat prefill={handoff} />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* AI tab                                                              */
+/* ------------------------------------------------------------------ */
+
+function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; whatsappLink: string }) {
+  const [messages, setMessages] = useState<AIMsg[]>(loadAI);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => saveAI(messages), [messages]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, busy, error]);
+  useEffect(() => {
+    if (window.matchMedia('(min-width: 768px)').matches) inputRef.current?.focus();
+  }, []);
+
+  const lastQuestion = [...messages].reverse().find((m) => m.role === 'user')?.text;
+
+  const ask = useCallback(
+    async (question: string, base: AIMsg[]) => {
+      const next = [...base, { id: uid(), role: 'user' as const, text: question }];
+      setMessages(next);
+      setBusy(true);
+      setError('');
+      try {
+        const turns = next.slice(-10).map((m) => ({ role: m.role, text: m.text }));
+        const r = await askAI(turns);
+        setMessages((cur) => [
+          ...cur,
+          { id: uid(), role: 'assistant', text: r.answer, sources: r.sources, needsHuman: r.needsHuman, direct: r.mode === 'direct' },
+        ]);
+      } catch (err) {
+        const msg =
+          err instanceof ApiError && err.status === 429
+            ? err.message
+            : "Our assistant isn't available right now. You can talk to our team instead.";
+        setError(msg);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = text.trim();
+    if (!q || busy) return;
+    setText('');
+    void ask(q, messages);
+  };
+
+  const retry = () => {
+    if (!lastQuestion || busy) return;
+    // drop the unanswered last question, then ask it again
+    const base = messages.slice(0, messages.length - 1);
+    void ask(lastQuestion, base);
+  };
+
+  const close = () => {
+    if (window.innerWidth < 768) chatUI.close();
+  };
+
+  return (
+    <>
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+        {messages.length === 0 && (
+          <div className="pt-2">
+            <div className="rounded-2xl bg-muted p-4">
+              <p className="font-bold">Hi, I'm the Smart Combo assistant 👋</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Ask me about our combos, prices, free gifts or delivery. I only answer from what's
+                really in our shop.
+              </p>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {AI_STARTERS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => void ask(s, messages)}
+                  className="px-3 py-2 rounded-full border border-primary/40 text-sm text-primary text-left hover:bg-primary/10"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.map((m) => {
+          const mine = m.role === 'user';
+          return (
+            <div key={m.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+              <div
+                className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                  mine
+                    ? 'bg-primary text-primary-foreground rounded-br-md'
+                    : 'bg-muted text-foreground rounded-bl-md'
+                }`}
+              >
+                <p className="text-[15px] leading-snug whitespace-pre-wrap break-words">{m.text}</p>
+              </div>
+
+              {!mine && m.direct && (
+                <p className="mt-1 text-[10px] text-muted-foreground">Quick answer from our info pages</p>
+              )}
+
+              {!mine && m.sources && m.sources.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 max-w-[92%]">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Source</span>
+                  {m.sources.map((s) =>
+                    s.link ? (
+                      <Link
+                        key={s.id}
+                        to={s.link}
+                        onClick={close}
+                        className="text-xs px-2.5 py-1 rounded-full border border-border text-foreground/80 hover:border-primary hover:text-primary truncate max-w-[200px]"
+                      >
+                        {s.title}
+                      </Link>
+                    ) : (
+                      <span
+                        key={s.id}
+                        className="text-xs px-2.5 py-1 rounded-full border border-border text-muted-foreground truncate max-w-[200px]"
+                      >
+                        {s.title}
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
+
+              {!mine && m.needsHuman && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onHuman(lastQuestion)}
+                    className="px-3 h-9 rounded-full bg-primary text-primary-foreground text-sm font-semibold"
+                  >
+                    Talk to a person
+                  </button>
+                  {whatsappLink && (
+                    <a
+                      href={whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 h-9 rounded-full border border-emerald-500/50 text-emerald-500 text-sm font-semibold flex items-center"
+                    >
+                      WhatsApp
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {busy && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl rounded-bl-md bg-muted px-4 py-3 flex gap-1" aria-label="Assistant is typing">
+              {[0, 150, 300].map((d) => (
+                <span
+                  key={d}
+                  className="w-2 h-2 rounded-full bg-muted-foreground/60 animate-bounce"
+                  style={{ animationDelay: `${d}ms` }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-2xl border border-destructive/40 bg-destructive/10 p-3">
+            <p className="text-sm">{error}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={retry}
+                className="px-3 h-9 rounded-full border border-border text-sm font-semibold hover:bg-foreground/5"
+              >
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={() => onHuman(lastQuestion)}
+                className="px-3 h-9 rounded-full bg-primary text-primary-foreground text-sm font-semibold"
+              >
+                Talk to a person
+              </button>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="shrink-0 border-t border-border bg-background">
+        {messages.length > 0 && (
+          <div className="px-4 pt-1.5 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setMessages([]);
+                setError('');
+              }}
+              className="text-[11px] text-muted-foreground hover:text-foreground underline"
+            >
+              Clear chat
+            </button>
+          </div>
+        )}
+        <form
+          onSubmit={submit}
+          className="flex items-center gap-2 px-3 pt-2"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}
+        >
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            maxLength={500}
+            enterKeyHint="send"
+            placeholder="Ask about a product, price or delivery"
+            className="flex-1 min-w-0 h-12 rounded-full border border-border bg-muted/50 px-4 text-base placeholder:text-muted-foreground outline-none focus:border-primary/60"
+          />
+          <button
+            type="submit"
+            disabled={busy || !text.trim()}
+            aria-label="Send"
+            className="w-12 h-12 shrink-0 rounded-full bg-primary text-primary-foreground flex items-center justify-center active:scale-95 transition disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+          </button>
+        </form>
+        <p
+          className="px-4 pb-2 text-[10px] text-muted-foreground text-center"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+        >
+          AI can make mistakes. Always confirm the final price at checkout.
+        </p>
+      </div>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Human chat tab (the original chat, same behaviour)                  */
+/* ------------------------------------------------------------------ */
+
+function HumanChat({ prefill }: { prefill: string }) {
+  const [token, setToken] = useState<string | null>(getChatToken());
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState<boolean>(!!getChatToken());
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [firstMessage, setFirstMessage] = useState(prefill);
+  const [text, setText] = useState('');
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async (t: string) => {
+    try {
+      setMessages(await fetchChat(t));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        // The chat was removed on the server: start fresh
+        clearChatToken();
+        setToken(null);
+        setMessages([]);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    load(token);
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') load(token);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [token, load]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  const begin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !firstMessage.trim() || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      const r = await startChat({
+        name: name.trim(),
+        phone: phone.trim() || undefined,
+        message: firstMessage.trim(),
+      });
+      saveChatToken(r.token);
+      setToken(r.token);
+      setMessages(r.messages);
+    } catch (err: any) {
+      setError(err?.message || 'Could not start the chat. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = text.trim();
+    if (!t || !token || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      await sendChatMessage(token, t);
+      setText('');
+      await load(token);
+    } catch (err: any) {
+      setError(err?.message || 'Message not sent. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!token) {
+    return (
+      <form onSubmit={begin} className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+        <div>
+          <h2 className="text-xl font-black">Talk to our team</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            A real person will reply here. No account needed.
+          </p>
+        </div>
+
+        <label className="block">
+          <span className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+            Your name *
+          </span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={60}
+            autoComplete="name"
+            className="w-full h-12 rounded-xl border border-border bg-transparent px-3.5 text-base placeholder:text-muted-foreground outline-none focus:border-primary/60"
+            placeholder="e.g. Ade"
+          />
+        </label>
+
+        <label className="block">
+          <span className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+            Phone (optional)
+          </span>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            maxLength={30}
+            inputMode="tel"
+            autoComplete="tel"
+            className="w-full h-12 rounded-xl border border-border bg-transparent px-3.5 text-base placeholder:text-muted-foreground outline-none focus:border-primary/60"
+            placeholder="So we can call you back"
+          />
+        </label>
+
+        <div>
+          <span className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+            Your message *
+          </span>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {QUICK.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setFirstMessage(q)}
+                className="px-3 h-9 rounded-full border border-emerald-500/50 text-emerald-500 text-sm hover:bg-emerald-500/10"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={firstMessage}
+            onChange={(e) => setFirstMessage(e.target.value)}
+            maxLength={1000}
+            rows={4}
+            className="w-full rounded-xl border border-border bg-transparent px-3.5 py-3 text-base placeholder:text-muted-foreground outline-none focus:border-primary/60"
+            placeholder="Type your message here"
+          />
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <button
+          type="submit"
+          disabled={sending || !name.trim() || !firstMessage.trim()}
+          className="btn-primary w-full h-12 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          Start chat
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-2.5">
+        {loading ? (
+          <div className="py-16 flex justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          messages.map((m) => {
+            const mine = m.sender === 'customer';
+            return (
+              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[80%] rounded-2xl px-3.5 py-2 ${
+                    mine
+                      ? 'bg-primary text-primary-foreground rounded-br-md'
+                      : 'bg-muted text-foreground rounded-bl-md'
+                  }`}
+                >
+                  <p className="text-[15px] leading-snug whitespace-pre-wrap break-words">{m.text}</p>
+                  <p className={`text-[10px] mt-1 text-right ${mine ? 'opacity-60' : 'text-muted-foreground'}`}>
+                    {timeOf(m.createdAt)}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <p className="px-4 pb-1 text-xs text-destructive">{error}</p>}
+
+      <form
+        onSubmit={send}
+        className="shrink-0 flex items-center gap-2 px-3 pt-2 border-t border-border bg-background"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+      >
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={1000}
+          enterKeyHint="send"
+          placeholder="Type a message"
+          className="flex-1 min-w-0 h-12 rounded-full border border-border bg-muted/50 px-4 text-base placeholder:text-muted-foreground outline-none focus:border-primary/60"
+        />
+        <button
+          type="submit"
+          disabled={sending || !text.trim()}
+          aria-label="Send"
+          className="w-12 h-12 shrink-0 rounded-full bg-primary text-primary-foreground flex items-center justify-center active:scale-95 transition disabled:opacity-50"
+        >
+          {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+        </button>
+      </form>
+    </>
+  );
+}
+
+===== client\components\AIProductCards.tsx =====
+/**
+ * AIProductCards — neat product cards shown under an AI answer.
+ * Uses the same colours and text sizes as the rest of the chat.
+ */
+
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ShoppingBag } from 'lucide-react';
+import type { AICard } from '@/api/ai';
+
+const naira = (n: number) => '₦' + Math.round(n).toLocaleString('en-NG');
+
+function Photo({ src, alt }: { src: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-muted text-muted-foreground">
+        <ShoppingBag className="w-7 h-7" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="w-full h-full object-cover"
+    />
+  );
+}
+
+const clamp2: React.CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+};
+
+export function AIProductCards({
+  cards,
+  onNavigate,
+}: {
+  cards: AICard[];
+  onNavigate?: () => void;
+}) {
+  if (!cards.length) return null;
+
+  return (
+    <div className="mt-2 grid grid-cols-2 gap-2 w-full max-w-[92%]">
+      {cards.map((c) => {
+        const body = (
+          <>
+            <div className="aspect-square w-full overflow-hidden rounded-xl bg-background">
+              <Photo src={c.image} alt={c.title} />
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-snug break-words" style={clamp2}>
+              {c.title}
+            </p>
+            <p className="text-sm font-bold text-primary">{naira(c.price)}</p>
+            {!c.inStock && <p className="text-xs text-muted-foreground">Out of stock</p>}
+          </>
+        );
+        const cls =
+          'block min-w-0 rounded-2xl border border-border bg-muted p-2 text-left transition-colors';
+        return c.link ? (
+          <Link key={c.id} to={c.link} onClick={onNavigate} className={`${cls} hover:border-primary`}>
+            {body}
+          </Link>
+        ) : (
+          <div key={c.id} className={cls}>
+            {body}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+===== client\api\ai.ts =====
+/**
+ * AI assistant API. Nothing is stored on the server; the browser sends the
+ * last few messages with each question.
+ */
+
+import { apiFetch } from "./client";
+
+export interface AISource {
+  id: string;
+  title: string;
+  link: string | null;
+}
+
+export interface AIReply {
+  answer: string;
+  sources: AISource[];
+  needsHuman: boolean;
+  /** "direct" = built from our own pages because the AI was unavailable */
+  mode?: "ai" | "direct" | "list";
+}
+
+export interface AITurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export async function askAI(messages: AITurn[]): Promise<AIReply> {
+  const res = await apiFetch<{ data: AIReply }>("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
+  return res.data;
+}

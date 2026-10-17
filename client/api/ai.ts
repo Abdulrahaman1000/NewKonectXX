@@ -11,9 +11,20 @@ export interface AISource {
   link: string | null;
 }
 
+/** A product shown as a card (photo, name, price) under the assistant's answer. */
+export interface AICard {
+  id: string;
+  title: string;
+  price: number;
+  inStock: boolean;
+  image: string | null;
+  link: string | null;
+}
+
 export interface AIReply {
   answer: string;
   sources: AISource[];
+  cards?: AICard[];
   needsHuman: boolean;
   /** "direct" = built from our own pages because the AI was unavailable */
   mode?: "ai" | "direct" | "list";

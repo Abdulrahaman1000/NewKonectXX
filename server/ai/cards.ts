@@ -1,14 +1,13 @@
 /**
- * Product cards for the AI chat (pure functions, no database here).
+ * Product cards for the AI chat.
  *
  * Cards are built in code from the shop's own data, never written by the AI,
- * so the name, price, stock and photo are always exact.
+ * so the name, price, stock and photo are always exact. Photos are looked up
+ * separately from the knowledge text (and cached for 60s).
  */
 
+import { Combo } from "../models/Combo";
 import type { KDoc } from "./retrieve";
-
-/** A knowledge document that may carry a photo. */
-export type ImgDoc = KDoc & { image?: string };
 
 export interface AICard {
   id: string;
@@ -34,34 +33,47 @@ export function thumb(url?: string | null): string | null {
   return u;
 }
 
-export function toCard(doc: KDoc): AICard | null {
+const IMG_TTL_MS = 60_000;
+let imgCache: { at: number; map: Map<string, string> } | null = null;
+
+/** slug -> thumbnail URL, for every active combo that has a usable photo. */
+export async function getComboImages(): Promise<Map<string, string>> {
+  if (imgCache && Date.now() - imgCache.at < IMG_TTL_MS) return imgCache.map;
+  const map = new Map<string, string>();
+  try {
+    const rows: any[] = await Combo.aggregate([
+      { $match: { isActive: true } },
+      { $limit: 100 },
+      {
+        $project: {
+          slug: 1,
+          hero: "$heroImage",
+          // first photo of the combo's first item
+          first: { $arrayElemAt: [{ $arrayElemAt: ["$items.images", 0] }, 0] },
+        },
+      },
+    ]);
+    for (const r of rows) {
+      const url = thumb(r.hero) ?? thumb(r.first?.url);
+      if (r.slug && url) map.set(String(r.slug), url);
+    }
+  } catch (err) {
+    console.error("[ai] could not load combo photos:", (err as Error)?.message);
+  }
+  imgCache = { at: Date.now(), map };
+  return map;
+}
+
+/** A card for a combo document; null for anything else (FAQ, policy...). */
+export function toCard(doc: KDoc, images: Map<string, string>): AICard | null {
   if (doc.type !== "combo" || typeof doc.price !== "number") return null;
+  const slug = doc.id.replace(/^combo:/, "");
   return {
     id: doc.id,
     title: doc.title,
     price: doc.price,
     inStock: !!doc.inStock,
-    image: (doc as ImgDoc).image ?? null,
+    image: images.get(slug) ?? null,
     link: doc.link ?? null,
   };
-}
-
-/** In-stock combos that cost no more than the budget, closest to the budget first. */
-export function budgetCards(all: KDoc[], budget: number, limit = 6): { cards: AICard[]; total: number } {
-  const fits = all
-    .filter((d) => d.type === "combo" && d.inStock && typeof d.price === "number" && (d.price as number) <= budget)
-    .sort((a, b) => (b.price as number) - (a.price as number));
-  const cards = fits
-    .slice(0, limit)
-    .map(toCard)
-    .filter((c): c is AICard => c !== null);
-  return { cards, total: fits.length };
-}
-
-// Questions that mention a budget but are really about something else
-const OTHER_TOPIC = /\b(deliver\w*|shipping|ship|fee|gift|pay\w*|refund|return\w*|warranty|contact|track\w*)\b/i;
-
-/** True when a budget question should simply be answered with a list of products. */
-export function isBudgetListQuestion(question: string): boolean {
-  return !OTHER_TOPIC.test(question);
 }
