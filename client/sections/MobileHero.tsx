@@ -74,29 +74,20 @@ export function MobileHero({ featuredCombo, combos }: MobileHeroProps) {
           'radial-gradient(120% 55% at 90% 0%, rgba(255,200,0,0.16), transparent 60%), hsl(var(--background))',
       }}
     >
-      {/* Studio picture behind the headline. It fades out before the buttons. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[270px]"
-        style={{
-          backgroundImage: `url(${isLight ? HERO_BG_LIGHT : HERO_BG_DARK})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          WebkitMaskImage: 'linear-gradient(to bottom, #000 62%, transparent 100%)',
-          maskImage: 'linear-gradient(to bottom, #000 62%, transparent 100%)',
-        }}
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[270px]"
-        style={{
-          background: isLight
-            ? 'linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))'
-            : 'linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15))',
-        }}
-      />
-      <h1 className="max-w-[18ch] text-[28px] font-black leading-[1.12] text-white">
-        Build your Smart Combo. Get a free gift.
+      {/* HERO_PICTURE_V2: full-width studio picture on top, fading into the page. */}
+      <div aria-hidden className="relative -mx-4 -mt-6 mb-2">
+        <img
+          src={isLight ? HERO_BG_LIGHT : HERO_BG_DARK}
+          alt=""
+          className="block aspect-[16/10] w-full object-cover"
+          style={{
+            WebkitMaskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
+            maskImage: 'linear-gradient(to bottom, #000 68%, transparent 100%)',
+          }}
+        />
+      </div>
+      <h1 className="relative max-w-[18ch] text-[30px] font-black leading-[1.1] text-white">
+        <span className="gradient-text">Build your Smart Combo.</span> Get a free gift.
       </h1>
 
       <p className="mt-3 max-w-[34ch] text-[15px] leading-snug text-white/70">
