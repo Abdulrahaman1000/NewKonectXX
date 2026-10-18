@@ -197,6 +197,11 @@ export default function AdminOrders() {
                       >
                         <td className="px-4 py-3 font-mono text-primary text-xs">
                           {order.orderNumber}
+                          {order.items.some((i: any) => i.isFreeGift || String(i.name || '').startsWith('[FREE GIFT]')) && (
+                            <span className="ml-2 inline-block rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
+                              Free gift
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-white font-medium text-xs">{order.shipping.fullName}</p>

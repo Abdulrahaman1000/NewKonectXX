@@ -24,6 +24,21 @@ import {
 
 const router = Router();
 
+const ALLOWED_METHODS = ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"];
+
+// Order creation limiter: 10 orders per minute per visitor, so nobody can drain stock by spamming.
+const orderHits = new Map<string, { count: number; resetAt: number }>();
+function orderLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = orderHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    orderHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 10;
+}
+
 // Small in-memory limiter for gift-progress: 30 lookups per minute per IP.
 const progressHits = new Map<string, { count: number; resetAt: number }>();
 function progressLimited(ip: string): boolean {
@@ -65,7 +80,19 @@ router.get("/gift-progress", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
+    if (orderLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many orders. Please wait a minute and try again." },
+      });
+    }
+
     const { items, shipping, paymentMethod, notes } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0 || items.length > 20) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Your cart is empty or has too many items" },
+      });
+    }
 
     // Basic input shape validation
     if (!shipping || typeof shipping !== "object") {
@@ -89,9 +116,15 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
-    if (!paymentMethod) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shipping.email.trim()) || shipping.email.length > 200) {
       return res.status(400).json({
-        error: { code: "BAD_REQUEST", message: "Payment method required" },
+        error: { code: "BAD_REQUEST", message: "Please enter a valid email address" },
+      });
+    }
+
+    if (!paymentMethod || typeof paymentMethod !== "string" || !ALLOWED_METHODS.includes(paymentMethod)) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Choose a valid payment method" },
       });
     }
 

@@ -14,7 +14,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ChevronRight,
-  Clock,
   Gift,
   Layers,
   Search,
@@ -360,28 +359,6 @@ export function MobileQuickShop({ categories, allImage }: MobileQuickShopProps) 
 
 /* ───────────────────────── Deal of the day ───────────────────────── */
 
-/** Ticking time-left-today. Its own component so only it re-renders each second. */
-function DealCountdown() {
-  const calc = () => {
-    const now = new Date();
-    const end = new Date(now);
-    end.setHours(24, 0, 0, 0);
-    return Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
-  };
-  const [s, setS] = useState(calc);
-  useEffect(() => {
-    const id = setInterval(() => setS(calc()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    <span className="force-dark flex items-center gap-1 text-xs font-bold tabular-nums text-red-300">
-      <Clock className="h-3.5 w-3.5" />
-      {pad(Math.floor(s / 3600))}:{pad(Math.floor((s % 3600) / 60))}:{pad(s % 60)}
-    </span>
-  );
-}
-
 /** Auto-sliding strip of products. Swipe to browse; auto-advance pauses while touched. */
 function DealSlider({ combos }: { combos: Combo[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -466,8 +443,7 @@ export function MobileDeals({ featuredCombo, combos }: MobileHeroProps) {
     <section className="force-dark px-4 pb-4">
       <div className="rounded-2xl border border-primary/30 bg-white/[0.04] p-3">
         <div className="mb-2.5 flex items-center justify-between">
-          <span className="text-sm font-bold text-white">Deal of the day</span>
-          <DealCountdown />
+          <span className="text-sm font-bold text-white">Top deals</span>
         </div>
         <DealSlider combos={deals} />
         <Link

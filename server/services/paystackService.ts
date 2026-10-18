@@ -33,6 +33,7 @@ export interface PaystackInitResponse {
 export interface PaystackVerifyResponse {
   status: "success" | "failed" | "abandoned";
   amount: number;        // in kobo
+  currency?: string;
   reference: string;
   paid_at: string | null;
   channel: string;       // 'card', 'bank_transfer', 'ussd', etc.
@@ -72,6 +73,7 @@ export async function initializeTransaction(
       Authorization: `Bearer ${config.paystack.secretKey}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(20000),
     body: JSON.stringify({
       email: args.email,
       amount: args.amountKobo,
@@ -109,6 +111,7 @@ export async function verifyTransaction(
       headers: {
         Authorization: `Bearer ${config.paystack.secretKey}`,
       },
+      signal: AbortSignal.timeout(20000),
     },
   );
 
@@ -137,5 +140,9 @@ export function verifyWebhookSignature(rawBody: string, signature: string | unde
     .update(rawBody)
     .digest("hex");
 
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  // timingSafeEqual throws when lengths differ; a wrong-length signature is just invalid
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }

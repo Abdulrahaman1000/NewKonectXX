@@ -11,7 +11,6 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
-  Clock,
   Gift,
   Glasses,
   Headphones,
@@ -124,28 +123,6 @@ function HeroBackdrop({ tag }: { tag: string }) {
       <Sparkles className="absolute left-8 top-6 w-5 h-5" style={{ color: 'rgba(255,215,0,0.6)' }} />
       <Sparkles className="absolute right-24 top-24 w-3.5 h-3.5" style={{ color: 'rgba(255,255,255,0.5)' }} />
     </div>
-  );
-}
-
-/** Ticking time-left-today. Its own component so only it re-renders each second. */
-function DealCountdown() {
-  const calc = () => {
-    const now = new Date();
-    const end = new Date(now);
-    end.setHours(24, 0, 0, 0);
-    return Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
-  };
-  const [s, setS] = useState(calc);
-  useEffect(() => {
-    const id = setInterval(() => setS(calc()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    <span className="flex items-center gap-1 text-xs font-bold text-red-300 tabular-nums">
-      <Clock className="w-3.5 h-3.5" />
-      {pad(Math.floor(s / 3600))}:{pad(Math.floor((s % 3600) / 60))}:{pad(s % 60)}
-    </span>
   );
 }
 
@@ -493,8 +470,7 @@ export function HeroCarousel({
           {deals.length > 0 && (
             <div className="mt-3 rounded-2xl border border-primary/30 bg-white/[0.04] p-3">
               <div className="flex items-center justify-between mb-2.5">
-                <span className="text-sm font-bold text-white">Deal of the day</span>
-                <DealCountdown />
+                <span className="text-sm font-bold text-white">Top deals</span>
               </div>
               <DealSlider combos={deals} />
               <Link

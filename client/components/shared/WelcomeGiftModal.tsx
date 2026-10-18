@@ -19,7 +19,8 @@ import { cldUrl } from '@/lib/cloudinary';
 type Tab = 'gift' | 'combo';
 
 const STORAGE_KEY = 'welcomeGiftModal:lastClosedAt';
-const REAPPEAR_AFTER_MS = 10 * 60 * 1000; // 10 minutes
+const FIRST_SHOW_DELAY_MS = 12 * 1000; // wait a little before the first popup
+const REAPPEAR_AFTER_MS = 6 * 60 * 60 * 1000; // after closing, stay away for 6 hours
 
 interface GiftItemLite {
   _id: string;
@@ -98,7 +99,7 @@ export function WelcomeGiftModal() {
     const elapsed = Date.now() - lastClosed;
 
     if (!lastClosedRaw || elapsed >= REAPPEAR_AFTER_MS) {
-      setIsOpen(true);
+      timeoutRef.current = setTimeout(() => setIsOpen(true), FIRST_SHOW_DELAY_MS);
     } else {
       const remaining = REAPPEAR_AFTER_MS - elapsed;
       timeoutRef.current = setTimeout(() => setIsOpen(true), remaining);

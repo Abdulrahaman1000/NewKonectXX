@@ -51,7 +51,8 @@ export interface PayoutCycle {
 export async function resolveCommissionStatuses(resellerIds: unknown[], now: Date = new Date()) {
   const statusById = new Map<string, CommissionStatus>();
   const cycleByReseller = new Map<string, PayoutCycle | null>();
-  const ids = [...new Set(resellerIds.map(String))];
+  // Ignore rows with a missing/invalid partner id (e.g. leftover test data) instead of crashing the whole list
+  const ids = [...new Set(resellerIds.filter((x) => x != null).map(String))].filter((x) => /^[a-f0-9]{24}$/i.test(x));
   if (ids.length === 0) return { statusById, cycleByReseller };
 
   const commissions: any[] = await Commission.find({ resellerId: { $in: ids } }).lean();

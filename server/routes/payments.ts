@@ -21,7 +21,9 @@ import {
 import {
   findByOrderNumber,
   markOrderPaid,
+  paymentMatchesOrder,
 } from "../services/orderService";
+import { Order } from "../models/Order";
 
 const router = Router();
 
@@ -56,6 +58,15 @@ router.post("/initialize", async (req: Request, res: Response) => {
       });
     }
 
+    if (order.status === "cancelled" || order.status === "refunded") {
+      return res.status(409).json({
+        error: {
+          code: "ORDER_CLOSED",
+          message: "This order has expired or been cancelled. Please place a new order.",
+        },
+      });
+    }
+
     if (order.paymentMethod !== "paystack") {
       return res.status(400).json({
         error: {
@@ -67,6 +78,9 @@ router.post("/initialize", async (req: Request, res: Response) => {
 
     const reference = `${order.orderNumber}-${Date.now()}`;
     const callbackUrl = `${config.siteUrl}/order-confirmation/${order.orderNumber}?ref=${reference}`;
+
+    // Remember the reference BEFORE the customer pays, so an unpaid order can be re-checked later
+    await Order.updateOne({ _id: order._id }, { $addToSet: { paystackRefs: reference } });
 
     const init = await initializeTransaction({
       email: order.shipping.email,
@@ -122,13 +136,26 @@ router.get("/verify/:reference", async (req: Request, res: Response) => {
       String(verification.metadata?.orderNumber ?? "") ||
       reference.split("-").slice(0, 3).join("-");
 
-    const order = await markOrderPaid(orderNumber, reference);
-    if (!order) {
+    const existing = await findByOrderNumber(orderNumber);
+    if (!existing) {
       return res.status(404).json({
         error: {
           code: "NOT_FOUND",
           message: "Payment succeeded but order not found",
         },
+      });
+    }
+    if (!paymentMatchesOrder(existing, verification, reference)) {
+      console.error(
+        `⚠️  Payment mismatch for ${existing.orderNumber}: paid ${verification.amount} kobo, expected ${Math.round(existing.total * 100)} (ref ${reference})`,
+      );
+      return res.status(200).json({ data: { paid: false, status: "amount_mismatch" } });
+    }
+
+    const order = await markOrderPaid(orderNumber, reference);
+    if (!order) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Payment succeeded but order not found" },
       });
     }
 
@@ -181,10 +208,13 @@ router.post(
         const verification = await verifyTransaction(reference);
         if (verification.status === "success") {
           const orderNumber = String(verification.metadata?.orderNumber ?? "");
-          if (orderNumber) {
-            const order = await markOrderPaid(orderNumber, reference);
-            console.log(
-              `✅ Marked order paid via webhook: ${orderNumber} (${order ? "found" : "not found"})`,
+          const existing = orderNumber ? await findByOrderNumber(orderNumber) : null;
+          if (existing && paymentMatchesOrder(existing, verification, reference)) {
+            await markOrderPaid(orderNumber, reference);
+            console.log(`✅ Marked order paid via webhook: ${orderNumber}`);
+          } else {
+            console.error(
+              `⚠️  Webhook payment did not match an order (order ${orderNumber || "?"}, ref ${reference}, paid ${verification.amount} kobo)`,
             );
           }
         }
@@ -192,8 +222,9 @@ router.post(
 
       return res.status(200).send("OK");
     } catch (err) {
+      // 500 (not 200) so Paystack tries again later instead of the payment being lost
       console.error("Paystack webhook error:", err);
-      return res.status(200).send("OK");
+      return res.status(500).send("Error");
     }
   },
 );

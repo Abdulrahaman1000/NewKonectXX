@@ -18,6 +18,7 @@ import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
 import { SiteSettings } from "../models/SiteSettings";
 import { nextSeq } from "../models/Counter";
 import { config } from "../config";
+import { verifyTransaction, PaystackError } from "./paystackService";
 import {
   sendOrderPlaced,
   sendPaymentConfirmed,
@@ -140,8 +141,8 @@ async function buildItemSnapshots(
     if (!cartItem.comboId) {
       throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
     }
-    if (!cartItem.quantity || cartItem.quantity < 1) {
-      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be at least 1");
+    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > 20) {
+      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number from 1 to 20");
     }
 
     // Free gifts normally come from the Gift Bank
@@ -218,27 +219,53 @@ async function buildItemSnapshots(
   return snapshots;
 }
 
-async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
-  for (const item of items) {
-    // Gift Bank gifts have their own stock
-    if (item.isFreeGift) {
-      const gift = await Gift.findOneAndUpdate(
-        { _id: item.comboId, stock: { $gte: 1 } },
-        { $inc: { stock: -1 } },
-      );
-      if (gift) continue;
-    }
-    const updated = await Combo.findOneAndUpdate(
-      { _id: item.comboId, stockLeft: { $gte: item.quantity } },
-      { $inc: { stockLeft: -item.quantity } },
+/** Takes one item's stock. Says where it came from, or throws if sold out. */
+async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "combo"> {
+  // Gift Bank gifts have their own stock
+  if (item.isFreeGift) {
+    const gift = await Gift.findOneAndUpdate(
+      { _id: item.comboId, stock: { $gte: 1 } },
+      { $inc: { stock: -1 } },
     );
-    if (!updated) {
-      throw new OrderError(
-        409,
-        "INSUFFICIENT_STOCK",
-        `${item.name} sold out before checkout`,
+    if (gift) return "gift";
+  }
+  const updated = await Combo.findOneAndUpdate(
+    { _id: item.comboId, stockLeft: { $gte: item.quantity } },
+    { $inc: { stockLeft: -item.quantity } },
+  );
+  if (!updated) {
+    throw new OrderError(409, "INSUFFICIENT_STOCK", `${item.name} sold out before checkout`);
+  }
+  return "combo";
+}
+
+async function giveStockBackForItem(item: OrderItemSnapshot, kind?: "gift" | "combo"): Promise<void> {
+  if (kind === "combo") {
+    await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+    return;
+  }
+  if (kind === "gift" || item.isFreeGift) {
+    const r = await Gift.updateOne({ _id: item.comboId }, { $inc: { stock: 1 } });
+    if (r.matchedCount > 0) return;
+  }
+  await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+}
+
+/** All-or-nothing: if any item is sold out, everything already taken is put back. */
+async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
+  const taken: Array<{ item: OrderItemSnapshot; kind: "gift" | "combo" }> = [];
+  try {
+    for (const item of items) {
+      const kind = await takeStockForItem(item);
+      taken.push({ item, kind });
+    }
+  } catch (err) {
+    for (const t of taken) {
+      await giveStockBackForItem(t.item, t.kind).catch((e) =>
+        console.error("Stock rollback failed:", e),
       );
     }
+    throw err;
   }
 }
 
@@ -284,18 +311,27 @@ export async function createOrder(input: CreateOrderInput) {
   const initialStatus: OrderStatus =
     input.paymentMethod === "cod" ? "processing" : "pending";
 
-  const order = await Order.create({
-    orderNumber,
-    items,
-    subtotal,
-    shippingFee,
-    total,
-    status: initialStatus,
-    paymentMethod: input.paymentMethod,
-    shipping: input.shipping,
-    phoneKey,
-    notes: input.notes,
-  });
+  let order;
+  try {
+    order = await Order.create({
+      orderNumber,
+      items,
+      subtotal,
+      shippingFee,
+      total,
+      status: initialStatus,
+      paymentMethod: input.paymentMethod,
+      shipping: input.shipping,
+      phoneKey,
+      notes: input.notes,
+    });
+  } catch (err) {
+    // The order could not be saved: put the stock back so nothing is lost.
+    for (const item of items) {
+      await giveStockBackForItem(item).catch((e) => console.error("Stock rollback failed:", e));
+    }
+    throw err;
+  }
 
   const ctx = buildEmailContext(order);
   sendOrderPlaced(ctx).catch(() => {});
@@ -316,36 +352,172 @@ export async function findByOrderNumber(orderNumber: string) {
   return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
 }
 
+/**
+ * A Paystack payment only counts for an order when the reference was started for THAT order,
+ * the payment succeeded, and the amount paid equals the order total (in kobo).
+ * Without this check a customer could pay a small amount and have a big order marked paid.
+ */
+export function paymentMatchesOrder(
+  order: { orderNumber: string; total: number },
+  v: { status: string; amount: number; currency?: string },
+  reference: string,
+): boolean {
+  return (
+    v.status === "success" &&
+    v.amount === Math.round(order.total * 100) &&
+    (!v.currency || v.currency === "NGN") &&
+    reference.startsWith(`${order.orderNumber}-`)
+  );
+}
+
 export async function markOrderPaid(
   orderNumber: string,
   paymentReference: string,
 ): Promise<any> {
-  const order = await Order.findOne({
-    orderNumber: orderNumber.trim().toUpperCase(),
-  });
-  if (!order) return null;
+  const number = orderNumber.trim().toUpperCase();
 
-  if (
-    order.status === "paid" ||
-    order.status === "processing" ||
-    order.status === "shipped" ||
-    order.status === "delivered"
-  ) {
-    if (!order.paymentReference) {
-      order.paymentReference = paymentReference;
-      await order.save();
-    }
-    return order;
+  // Atomic claim: only ONE caller (webhook, return-redirect or admin) can flip
+  // pending -> paid, so emails are never doubled.
+  const claimed = await Order.findOneAndUpdate(
+    { orderNumber: number, status: "pending" },
+    { $set: { status: "paid", paidAt: new Date(), paymentReference } },
+    { new: true },
+  );
+  if (claimed) {
+    sendPaymentConfirmed(buildEmailContext(claimed)).catch(() => {});
+    return claimed;
   }
 
-  order.status = "paid";
-  order.paidAt = new Date();
-  order.paymentReference = paymentReference;
-  await order.save();
+  const order = await Order.findOne({ orderNumber: number });
+  if (!order) return null;
 
-  sendPaymentConfirmed(buildEmailContext(order)).catch(() => {});
+  // Customer paid AFTER the order was auto-cancelled: take the stock again if it is still there.
+  if (order.status === "cancelled" && order.stockRestored) {
+    const revived = await Order.findOneAndUpdate(
+      { orderNumber: number, status: "cancelled", stockRestored: true },
+      { $set: { status: "paid", paidAt: new Date(), paymentReference, stockRestored: false } },
+      { new: true },
+    );
+    if (revived) {
+      try {
+        await decrementStock(revived.items as any);
+      } catch {
+        revived.stockRestored = true;
+        revived.adminNotes =
+          `${revived.adminNotes ? revived.adminNotes + "\n" : ""}LATE PAYMENT: customer paid after the order was cancelled and an item is now out of stock. Ship when restocked or refund on Paystack.`;
+        await revived.save();
+      }
+      sendPaymentConfirmed(buildEmailContext(revived)).catch(() => {});
+      return revived;
+    }
+  }
 
+  // Already paid / processing / shipped / delivered / refunded: nothing to redo
+  if (!order.paymentReference && order.status !== "cancelled") {
+    order.paymentReference = paymentReference;
+    await order.save();
+  }
   return order;
+}
+
+/**
+ * Cancels or refunds an order and gives its stock back, exactly once.
+ *  - cancelled: always puts stock back (if not already).
+ *  - refunded : puts stock back only if the order had not shipped yet
+ *               (shipped/delivered refunds mean goods come back - adjust stock by hand after checking them).
+ */
+export async function cancelOrRefundOrder(
+  orderNumber: string,
+  newStatus: "cancelled" | "refunded",
+  note?: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+  const current = await Order.findOne({ orderNumber: number });
+  if (!current) return null;
+
+  const wasShipped = current.status === "shipped" || current.status === "delivered";
+  const shouldRestock = newStatus === "cancelled" || !wasShipped;
+  const noteLine = note ? `${current.adminNotes ? current.adminNotes + "\n" : ""}${note}` : undefined;
+
+  if (shouldRestock) {
+    const claimed = await Order.findOneAndUpdate(
+      { orderNumber: number, stockRestored: { $ne: true }, status: { $nin: ["cancelled", "refunded"] } },
+      { $set: { status: newStatus, stockRestored: true, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+      { new: true },
+    );
+    if (claimed) {
+      for (const item of claimed.items as any[]) {
+        await giveStockBackForItem(item).catch((e) => console.error("Restock failed:", e));
+      }
+      return claimed;
+    }
+  }
+
+  // Already cancelled/refunded (or no restock wanted): only the label changes
+  return Order.findOneAndUpdate(
+    { orderNumber: number },
+    { $set: { status: newStatus, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+    { new: true },
+  );
+}
+
+/**
+ * Cancels Paystack orders that were never paid so abandoned checkouts do not
+ * lock stock. Before cancelling, it asks Paystack whether the customer actually paid.
+ */
+export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+  const stale = await Order.find({
+    status: "pending",
+    paymentMethod: { $in: ["paystack", "flutterwave"] },
+    createdAt: { $lt: cutoff },
+  })
+    .sort({ createdAt: 1 })
+    .limit(50);
+
+  let cancelled = 0;
+  for (const order of stale) {
+    try {
+      const refs: string[] = (order as any).paystackRefs ?? [];
+      let verdict: "paid" | "unpaid" | "unknown" = "unknown";
+      if (refs.length === 0) {
+        verdict = "unpaid"; // customer never reached the Paystack page
+      } else {
+        let paid = false;
+        let unsure = false;
+        for (const ref of refs) {
+          try {
+            const v = await verifyTransaction(ref);
+            if (paymentMatchesOrder(order, v, ref)) {
+              await markOrderPaid(order.orderNumber, ref);
+              paid = true;
+              break;
+            }
+            if (v.status === "success") {
+              console.error(`[expire] ${order.orderNumber}: paid amount ${v.amount} does not match total, left pending for review`);
+              unsure = true;
+            }
+          } catch (err) {
+            // 404 = Paystack has no such payment (never started); anything else = could not check, so do not cancel
+            if (!(err instanceof PaystackError && err.status === 404)) unsure = true;
+          }
+        }
+        verdict = paid ? "paid" : unsure ? "unknown" : "unpaid";
+      }
+
+      if (verdict === "unpaid") {
+        await cancelOrRefundOrder(
+          order.orderNumber,
+          "cancelled",
+          "Auto-cancelled: payment was not completed in time. Stock returned.",
+        );
+        cancelled++;
+      }
+    } catch (err) {
+      console.error(`[expire] ${order.orderNumber} failed:`, err);
+    }
+  }
+  return cancelled;
 }
 
 export async function markOrderShipped(

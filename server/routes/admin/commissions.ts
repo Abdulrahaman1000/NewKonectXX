@@ -36,7 +36,9 @@ router.get("/by-orders", async (req: Request, res: Response) => {
       .slice(0, 100);
     if (ids.length === 0) return res.json({ data: {} });
 
-    const commissions = await Commission.find({ orderId: { $in: ids } }).lean();
+    const allCommissions = await Commission.find({ orderId: { $in: ids } }).lean();
+    // A commission with no valid partner id (leftover test data) is skipped so it cannot break the list
+    const commissions = allCommissions.filter((c: any) => mongoose.isValidObjectId(c.resellerId));
     if (commissions.length === 0) return res.json({ data: {} });
 
     const [{ statusById }, partners] = await Promise.all([

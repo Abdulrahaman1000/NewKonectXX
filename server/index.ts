@@ -32,9 +32,12 @@ import adminWithdrawalsRouter from "./routes/admin/withdrawals";
 
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
+import { expireStalePendingOrders } from "./services/orderService";
 
 export function createServer() {
   const app = express();
+  // Behind Render's proxy: lets req.ip be the real visitor (rate limits work per person, not for everyone at once)
+  app.set("trust proxy", 1);
 
   app.use(cors());
 
@@ -47,6 +50,16 @@ export function createServer() {
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   connectDB();
+
+  // Live site only: every 15 minutes, release stock held by Paystack orders nobody paid for.
+  // (Skipped on a laptop so local testing never touches live orders.)
+  const g = globalThis as any;
+  if (process.env.NODE_ENV === "production" && !g.__scExpiryTimer) {
+    g.__scExpiryTimer = setInterval(() => {
+      expireStalePendingOrders().catch((e) => console.error("[expire] job failed:", e));
+    }, 15 * 60 * 1000);
+    g.__scExpiryTimer.unref?.();
+  }
 
   app.get("/api/ping", (_req, res) => {
     const ping = process.env.PING_MESSAGE ?? "ping";

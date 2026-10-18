@@ -59,6 +59,8 @@ export interface OrderDocument extends Document {
   status: OrderStatus;
   paymentMethod: PaymentMethod;
   paymentReference?: string;
+  stockRestored?: boolean;
+  paystackRefs?: string[];
   shipping: ShippingAddress;
   phoneKey?: string;
   notes?: string;
@@ -121,6 +123,10 @@ const OrderSchema = new Schema<OrderDocument>(
       required: true,
     },
     paymentReference: { type: String, index: true },
+    // true once this order's stock has been given back (cancel / refund / expiry)
+    stockRestored: { type: Boolean, default: false },
+    // every Paystack reference started for this order (a customer can retry), used to re-check unpaid orders
+    paystackRefs: { type: [String], default: [] },
     shipping: { type: ShippingAddressSchema, required: true },
     phoneKey: { type: String },
     notes: { type: String },

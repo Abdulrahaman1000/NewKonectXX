@@ -17,6 +17,7 @@ import {
   markOrderPaid,
   markOrderShipped,
   markOrderDelivered,
+  cancelOrRefundOrder,
 } from "../../services/orderService";
 
 const router = Router();
@@ -122,7 +123,7 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
     }
 
     // Need the order number to call service helpers
-    const existing = await Order.findById(req.params.id).select("orderNumber").lean();
+    const existing = await Order.findById(req.params.id).select("orderNumber status").lean();
     if (!existing) {
       return res.status(404).json({
         error: { code: "NOT_FOUND", message: "Order not found" },
@@ -130,6 +131,21 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
     }
 
     let updated: any = null;
+
+    // A cancelled or refunded order is finished. Only cancelled -> refunded is allowed
+    // (money returned later); reopening it would hand out stock that is already back on the shelf.
+    if (
+      (existing.status === "cancelled" || existing.status === "refunded") &&
+      !(existing.status === "cancelled" && status === "refunded") &&
+      status !== existing.status
+    ) {
+      return res.status(409).json({
+        error: {
+          code: "ORDER_CLOSED",
+          message: `This order is ${existing.status}. Create a new order instead of reopening it.`,
+        },
+      });
+    }
 
     if (status === "paid") {
       updated = await markOrderPaid(
@@ -145,8 +161,11 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       );
     } else if (status === "delivered") {
       updated = await markOrderDelivered(existing.orderNumber);
+    } else if (status === "cancelled" || status === "refunded") {
+      // Puts the stock back exactly once
+      updated = await cancelOrRefundOrder(existing.orderNumber, status);
     } else {
-      // No email side-effect for processing / cancelled / refunded / pending
+      // processing / pending: no email, no stock change
       const order = await Order.findByIdAndUpdate(
         req.params.id,
         { status },
