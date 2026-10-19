@@ -28,7 +28,7 @@ interface Props {
 function metaLine(combo: Combo) {
   const parts = [combo.items.length > 1 ? `${combo.items.length}-in-1 combo` : 'Single item'];
   if (combo.stockLeft > 0 && combo.stockLeft <= 10) parts.push(`Only ${combo.stockLeft} left`);
-  else parts.push('Free delivery');
+  else parts.push('Jumia delivery');
   return parts.join(' • ');
 }
 
