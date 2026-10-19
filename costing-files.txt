@@ -1,0 +1,4581 @@
+﻿
+===== server\models\Combo.ts =====
+/**
+ * Combo model.
+ *
+ * Each ComboItem can now have:
+ *  - alternatives[]  — different products for the slot (e.g. Smart Watch vs Casio)
+ *  - colors[]        — color variants of the item (e.g. Black, Silver, Gold)
+ *
+ * Both are at the combo's total price — no price difference.
+ */
+
+import mongoose, { Schema, Document } from "mongoose";
+
+export interface ProductImage {
+  url: string;
+  alt?: string;
+}
+
+export interface ComboItemAlternative {
+  id: string;
+  name: string;
+  badge?: string;
+  images: ProductImage[];
+  description?: string;
+}
+
+export interface ComboItemColor {
+  id: string;
+  name: string;            // e.g. "Black", "Silver Gold"
+  hexCode?: string;        // optional CSS hex like "#000000" — if set, shows a dot; if not, shows a label
+  imageUrl?: string;       // optional swatch image override
+}
+
+export interface ComboItem {
+  id: string;
+  name: string;
+  badge: string;
+  individualPrice: number;
+  images: ProductImage[];
+  description?: string;
+  alternatives?: ComboItemAlternative[];
+  colors?: ComboItemColor[];
+}
+
+export interface ComboDocument extends Document {
+  slug: string;
+  name: string;
+  tagline: string;
+  totalPrice: number;
+  originalPrice: number;
+  badge: string;
+  stockLeft: number;
+  isFeatured: boolean;
+  isActive: boolean;
+  /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
+  customComboEligible: boolean;
+  /** Whether this item can explicitly be offered as a free gift in the gift bank */
+  isFreeGiftCandidate: boolean;
+  items: ComboItem[];
+  heroImage?: string;
+  categorySlugs: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ProductImageSchema = new Schema<ProductImage>(
+  {
+    url: { type: String, required: true },
+    alt: { type: String },
+  },
+  { _id: false },
+);
+
+const ComboItemAlternativeSchema = new Schema<ComboItemAlternative>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
+const ComboItemColorSchema = new Schema<ComboItemColor>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    hexCode: { type: String, default: "" },
+    imageUrl: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
+const ComboItemSchema = new Schema<ComboItem>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    individualPrice: { type: Number, required: true, min: 0 },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+    alternatives: { type: [ComboItemAlternativeSchema], default: [] },
+    colors: { type: [ComboItemColorSchema], default: [] },
+  },
+  { _id: false },
+);
+
+const ComboSchema = new Schema<ComboDocument>(
+  {
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+    name: { type: String, required: true, trim: true },
+    tagline: { type: String, default: "", trim: true },
+    totalPrice: { type: Number, required: true, min: 0 },
+    originalPrice: { type: Number, required: true, min: 0 },
+    badge: { type: String, default: "" },
+    stockLeft: { type: Number, default: 0, min: 0 },
+    isFeatured: { type: Boolean, default: false, index: true },
+    isActive: { type: Boolean, default: true, index: true },
+    customComboEligible: { type: Boolean, default: false, index: true },
+    isFreeGiftCandidate: { type: Boolean, default: false, index: true },
+    items: { type: [ComboItemSchema], default: [] },
+    heroImage: { type: String },
+    categorySlugs: {
+      type: [String],
+      default: [],
+      index: true,
+    },
+  },
+  { timestamps: true },
+);
+
+// Guard against Mongoose's "Cannot overwrite model once compiled" error,
+// which happens on every hot-reload without this check.
+export const Combo =
+  (mongoose.models.Combo as mongoose.Model<ComboDocument>) ||
+  mongoose.model<ComboDocument>("Combo", ComboSchema);
+
+===== server\models\Order.ts =====
+/**
+ * Order model.
+ *
+ * Items now snapshot the customer's variant selections so admin knows
+ * exactly what to ship.
+ *
+ * phoneKey is the customer's phone number cleaned to its last 10 digits. It is
+ * how spending is added up for the free gift (customers do not have accounts).
+ */
+
+import { Schema, model, Document, Types } from "mongoose";
+
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded";
+
+export type PaymentMethod =
+  | "paystack"
+  | "flutterwave"
+  | "bank_transfer"
+  | "cod"
+  | "whatsapp";
+
+export interface OrderItemSnapshot {
+  comboId: Types.ObjectId;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;   // itemId → alternativeId
+  variantSummary?: string;                     // human-readable
+  isFreeGift?: boolean;                        // identifies free gift items
+}
+
+export interface ShippingAddress {
+  fullName: string;
+  phone: string;
+  email: string;
+  state: string;
+  city: string;
+  street: string;
+  landmark?: string;
+}
+
+export interface OrderDocument extends Document {
+  orderNumber: string;
+  items: OrderItemSnapshot[];
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  stockRestored?: boolean;
+  paystackRefs?: string[];
+  shipping: ShippingAddress;
+  phoneKey?: string;
+  notes?: string;
+  trackingNumber?: string;
+  trackingProviderUrl?: string;
+  adminNotes?: string;
+  paidAt?: Date;
+  shippedAt?: Date;
+  deliveredAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
+  {
+    comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
+    slug: { type: String, required: true },
+    name: { type: String, required: true },
+    tagline: { type: String },
+    thumbnailUrl: { type: String },
+    unitPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+    subtotal: { type: Number, required: true, min: 0 },
+    selectedVariants: { type: Schema.Types.Mixed, default: {} },
+    variantSummary: { type: String, default: "" },
+    isFreeGift: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const ShippingAddressSchema = new Schema<ShippingAddress>(
+  {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    email: { type: String, required: true },
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    street: { type: String, required: true },
+    landmark: { type: String },
+  },
+  { _id: false },
+);
+
+const OrderSchema = new Schema<OrderDocument>(
+  {
+    orderNumber: { type: String, required: true, unique: true, index: true },
+    items: { type: [OrderItemSnapshotSchema], required: true },
+    subtotal: { type: Number, required: true, min: 0 },
+    shippingFee: { type: Number, required: true, min: 0 },
+    total: { type: Number, required: true, min: 0 },
+    status: {
+      type: String,
+      enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
+      default: "pending",
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"],
+      required: true,
+    },
+    paymentReference: { type: String, index: true },
+    // true once this order's stock has been given back (cancel / refund / expiry)
+    stockRestored: { type: Boolean, default: false },
+    // every Paystack reference started for this order (a customer can retry), used to re-check unpaid orders
+    paystackRefs: { type: [String], default: [] },
+    shipping: { type: ShippingAddressSchema, required: true },
+    phoneKey: { type: String },
+    notes: { type: String },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    adminNotes: { type: String },
+    paidAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
+OrderSchema.index({ phoneKey: 1, createdAt: -1 });
+
+export const Order = model<OrderDocument>("Order", OrderSchema);
+
+===== server\services\orderService.ts =====
+/**
+ * Order service — business logic for orders.
+ *
+ * NEW: buildItemSnapshots reads the customer's selectedVariants per cart
+ * item, looks up the alternative names from the combo, and saves a
+ * human-readable summary like "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ * onto the order item. Admin sees exactly what to ship.
+ *
+ * UPDATED: Added Free Gift validation logic (₦40,000 threshold check and 1 gift max).
+ * UPDATED: The threshold counts what the same phone number already spent in the
+ * last 30 days (see giftProgress.ts), and free gifts can come from the Gift Bank.
+ */
+
+import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
+import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
+import { SiteSettings } from "../models/SiteSettings";
+import { nextSeq } from "../models/Counter";
+import { config } from "../config";
+import { verifyTransaction, PaystackError } from "./paystackService";
+import {
+  sendOrderPlaced,
+  sendPaymentConfirmed,
+  sendOrderShipped,
+  sendOrderDelivered,
+  sendNewOrderAdminAlert,
+} from "./emailService";
+
+interface CartItem {
+  comboId: string;
+  quantity: number;
+  selectedVariants?: Record<string, string>;
+  isFreeGift?: boolean;
+}
+
+export interface CreateOrderInput {
+  items: CartItem[];
+  shipping: ShippingAddress;
+  paymentMethod: PaymentMethod;
+  notes?: string;
+}
+
+export class OrderError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function generateOrderNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const seq = await nextSeq(`order:${year}`);
+  return `SC-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/** Flat delivery fee for customers in Ilorin. Everywhere else Jumia sets the price and the customer pays Jumia directly. */
+export const LOCAL_DELIVERY_FEE = 1000;
+
+async function calculateShippingFee(
+  _paymentMethod: PaymentMethod,
+  city: string,
+): Promise<number> {
+  const settings = await SiteSettings.findOne().lean();
+  const localCities = (settings?.shipping?.codCities ?? ["ilorin"]).map((c: string) => c.toLowerCase());
+  const cityLower = city.trim().toLowerCase();
+  return localCities.includes(cityLower) ? LOCAL_DELIVERY_FEE : 0;
+}
+
+/**
+ * Builds a human-readable summary of what the customer picked for each slot.
+ * Example: "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ */
+function buildVariantSummary(
+  combo: any,
+  selectedVariants: Record<string, string> | undefined,
+): string {
+  return (combo.items ?? [])
+    .map((item: any) => {
+      const chosenId = selectedVariants?.[item.id];
+      if (!chosenId) return item.name; // default
+      const alt = (item.alternatives ?? []).find((a: any) => a.id === chosenId);
+      return alt ? alt.name : item.name;
+    })
+    .join(" · ");
+}
+
+async function buildItemSnapshots(
+  items: CartItem[],
+  priorSpend = 0,
+): Promise<OrderItemSnapshot[]> {
+  if (!items?.length) {
+    throw new OrderError(400, "EMPTY_CART", "Order has no items");
+  }
+
+  // Pass 1: Calculate subtotal from paid items only
+  let paidSubtotal = 0;
+  const freeGiftItems = items.filter((it) => it.isFreeGift);
+
+  if (freeGiftItems.length > 1) {
+    throw new OrderError(400, "INVALID_GIFT", "Only 1 free gift is allowed per order");
+  }
+
+  for (const cartItem of items) {
+    if (!cartItem.isFreeGift) {
+      if (!cartItem.comboId) {
+        throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+      }
+
+      const combo = await Combo.findById(cartItem.comboId);
+      if (combo && combo.isActive) {
+        paidSubtotal += combo.totalPrice * cartItem.quantity;
+      }
+    }
+  }
+
+  // Validate threshold if a free gift is attached
+  // Earlier paid spending by the same phone number counts too.
+  const giftUnlocked = paidSubtotal + priorSpend >= GIFT_THRESHOLD;
+  if (freeGiftItems.length === 1 && !giftUnlocked) {
+    throw new OrderError(
+      400,
+      "GIFT_THRESHOLD_NOT_MET",
+      "Your spending (this order plus the last 30 days) must reach ₦40,000 to qualify for a free gift",
+    );
+  }
+
+  const snapshots: OrderItemSnapshot[] = [];
+
+  // Pass 2: Build snapshot objects
+  for (const cartItem of items) {
+    if (!cartItem.comboId) {
+      throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+    }
+    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > 20) {
+      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number from 1 to 20");
+    }
+
+    // Free gifts normally come from the Gift Bank
+    if (cartItem.isFreeGift) {
+      const gift: any = await Gift.findById(cartItem.comboId).catch(() => null);
+      if (gift) {
+        if (gift.isActive === false || (gift.stock ?? 0) < 1) {
+          throw new OrderError(409, "INSUFFICIENT_STOCK", `${gift.name} is no longer available`);
+        }
+        snapshots.push({
+          comboId: gift._id,
+          slug: `gift-${gift._id}`,
+          name: `[FREE GIFT] ${gift.name}`,
+          tagline: gift.description ?? "",
+          thumbnailUrl: gift.images?.[0] || gift.image || "",
+          unitPrice: 0,
+          quantity: 1,
+          subtotal: 0,
+          selectedVariants: {},
+          variantSummary: "",
+          isFreeGift: true,
+        });
+        continue;
+      }
+    }
+
+    const combo = await Combo.findById(cartItem.comboId);
+    if (!combo) {
+      throw new OrderError(404, "COMBO_NOT_FOUND", `Combo not found: ${cartItem.comboId}`);
+    }
+    if (!combo.isActive) {
+      throw new OrderError(400, "COMBO_INACTIVE", `${combo.name} is no longer available`);
+    }
+    if (combo.stockLeft < cartItem.quantity) {
+      throw new OrderError(
+        409,
+        "INSUFFICIENT_STOCK",
+        `Only ${combo.stockLeft} of ${combo.name} available`,
+      );
+    }
+
+    const isFree = Boolean(cartItem.isFreeGift && giftUnlocked);
+
+    // Ensure the combo itself is eligible to be a free gift candidate
+    if (isFree && !combo.isFreeGiftCandidate && combo.totalPrice > 5000) {
+      throw new OrderError(
+        400,
+        "INELIGIBLE_FREE_GIFT",
+        `${combo.name} is not eligible as a free gift`,
+      );
+    }
+
+    const unitPrice = isFree ? 0 : combo.totalPrice;
+    const subtotal = unitPrice * cartItem.quantity;
+
+    const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
+    const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
+
+    snapshots.push({
+      comboId: combo._id,
+      slug: combo.slug,
+      name: isFree ? `[FREE GIFT] ${combo.name}` : combo.name,
+      tagline: combo.tagline,
+      thumbnailUrl,
+      unitPrice,
+      quantity: isFree ? 1 : cartItem.quantity,
+      subtotal,
+      selectedVariants: cartItem.selectedVariants ?? {},
+      variantSummary,
+      isFreeGift: isFree,
+    });
+  }
+
+  return snapshots;
+}
+
+/** Takes one item's stock. Says where it came from, or throws if sold out. */
+async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "combo"> {
+  // Gift Bank gifts have their own stock
+  if (item.isFreeGift) {
+    const gift = await Gift.findOneAndUpdate(
+      { _id: item.comboId, stock: { $gte: 1 } },
+      { $inc: { stock: -1 } },
+    );
+    if (gift) return "gift";
+  }
+  const updated = await Combo.findOneAndUpdate(
+    { _id: item.comboId, stockLeft: { $gte: item.quantity } },
+    { $inc: { stockLeft: -item.quantity } },
+  );
+  if (!updated) {
+    throw new OrderError(409, "INSUFFICIENT_STOCK", `${item.name} sold out before checkout`);
+  }
+  return "combo";
+}
+
+async function giveStockBackForItem(item: OrderItemSnapshot, kind?: "gift" | "combo"): Promise<void> {
+  if (kind === "combo") {
+    await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+    return;
+  }
+  if (kind === "gift" || item.isFreeGift) {
+    const r = await Gift.updateOne({ _id: item.comboId }, { $inc: { stock: 1 } });
+    if (r.matchedCount > 0) return;
+  }
+  await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+}
+
+/** All-or-nothing: if any item is sold out, everything already taken is put back. */
+async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
+  const taken: Array<{ item: OrderItemSnapshot; kind: "gift" | "combo" }> = [];
+  try {
+    for (const item of items) {
+      const kind = await takeStockForItem(item);
+      taken.push({ item, kind });
+    }
+  } catch (err) {
+    for (const t of taken) {
+      await giveStockBackForItem(t.item, t.kind).catch((e) =>
+        console.error("Stock rollback failed:", e),
+      );
+    }
+    throw err;
+  }
+}
+
+function buildEmailContext(order: any) {
+  return {
+    orderNumber: order.orderNumber,
+    customerName: order.shipping.fullName,
+    customerEmail: order.shipping.email,
+    total: order.total,
+    items: order.items.map((it: any) => ({
+      name: it.variantSummary || it.name,
+      quantity: it.quantity,
+      subtotal: it.subtotal,
+    })),
+    shippingAddress: {
+      fullName: order.shipping.fullName,
+      street: order.shipping.street,
+      city: order.shipping.city,
+      state: order.shipping.state,
+      phone: order.shipping.phone,
+    },
+    paymentMethod: order.paymentMethod,
+    trackingUrl: `${config.siteUrl}/order-tracking?order=${encodeURIComponent(order.orderNumber)}`,
+  };
+}
+
+export async function createOrder(input: CreateOrderInput) {
+  const phoneKey = normalizePhone(input.shipping.phone);
+  const priorSpend = await getPriorSpend(phoneKey);
+  const items = await buildItemSnapshots(input.items, priorSpend);
+
+  const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
+  const shippingFee = await calculateShippingFee(
+    input.paymentMethod,
+    input.shipping.city,
+  );
+  const total = subtotal + shippingFee;
+
+  const orderNumber = await generateOrderNumber();
+
+  await decrementStock(items);
+
+  const initialStatus: OrderStatus =
+    input.paymentMethod === "cod" ? "processing" : "pending";
+
+  let order;
+  try {
+    order = await Order.create({
+      orderNumber,
+      items,
+      subtotal,
+      shippingFee,
+      total,
+      status: initialStatus,
+      paymentMethod: input.paymentMethod,
+      shipping: input.shipping,
+      phoneKey,
+      notes: input.notes,
+    });
+  } catch (err) {
+    // The order could not be saved: put the stock back so nothing is lost.
+    for (const item of items) {
+      await giveStockBackForItem(item).catch((e) => console.error("Stock rollback failed:", e));
+    }
+    throw err;
+  }
+
+  const ctx = buildEmailContext(order);
+  sendOrderPlaced(ctx).catch(() => {});
+  sendNewOrderAdminAlert(ctx).catch(() => {});
+
+  return order;
+}
+
+export async function findByNumberAndPhone(orderNumber: string, phone: string) {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+    "shipping.phone": phone.trim(),
+  }).lean();
+  return order;
+}
+
+export async function findByOrderNumber(orderNumber: string) {
+  return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
+}
+
+/**
+ * A Paystack payment only counts for an order when the reference was started for THAT order,
+ * the payment succeeded, and the amount paid equals the order total (in kobo).
+ * Without this check a customer could pay a small amount and have a big order marked paid.
+ */
+export function paymentMatchesOrder(
+  order: { orderNumber: string; total: number },
+  v: { status: string; amount: number; currency?: string },
+  reference: string,
+): boolean {
+  return (
+    v.status === "success" &&
+    v.amount === Math.round(order.total * 100) &&
+    (!v.currency || v.currency === "NGN") &&
+    reference.startsWith(`${order.orderNumber}-`)
+  );
+}
+
+export async function markOrderPaid(
+  orderNumber: string,
+  paymentReference: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+
+  // Atomic claim: only ONE caller (webhook, return-redirect or admin) can flip
+  // pending -> paid, so emails are never doubled.
+  const claimed = await Order.findOneAndUpdate(
+    { orderNumber: number, status: "pending" },
+    { $set: { status: "paid", paidAt: new Date(), paymentReference } },
+    { new: true },
+  );
+  if (claimed) {
+    sendPaymentConfirmed(buildEmailContext(claimed)).catch(() => {});
+    return claimed;
+  }
+
+  const order = await Order.findOne({ orderNumber: number });
+  if (!order) return null;
+
+  // Customer paid AFTER the order was auto-cancelled: take the stock again if it is still there.
+  if (order.status === "cancelled" && order.stockRestored) {
+    const revived = await Order.findOneAndUpdate(
+      { orderNumber: number, status: "cancelled", stockRestored: true },
+      { $set: { status: "paid", paidAt: new Date(), paymentReference, stockRestored: false } },
+      { new: true },
+    );
+    if (revived) {
+      try {
+        await decrementStock(revived.items as any);
+      } catch {
+        revived.stockRestored = true;
+        revived.adminNotes =
+          `${revived.adminNotes ? revived.adminNotes + "\n" : ""}LATE PAYMENT: customer paid after the order was cancelled and an item is now out of stock. Ship when restocked or refund on Paystack.`;
+        await revived.save();
+      }
+      sendPaymentConfirmed(buildEmailContext(revived)).catch(() => {});
+      return revived;
+    }
+  }
+
+  // Already paid / processing / shipped / delivered / refunded: nothing to redo
+  if (!order.paymentReference && order.status !== "cancelled") {
+    order.paymentReference = paymentReference;
+    await order.save();
+  }
+  return order;
+}
+
+/**
+ * Cancels or refunds an order and gives its stock back, exactly once.
+ *  - cancelled: always puts stock back (if not already).
+ *  - refunded : puts stock back only if the order had not shipped yet
+ *               (shipped/delivered refunds mean goods come back - adjust stock by hand after checking them).
+ */
+export async function cancelOrRefundOrder(
+  orderNumber: string,
+  newStatus: "cancelled" | "refunded",
+  note?: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+  const current = await Order.findOne({ orderNumber: number });
+  if (!current) return null;
+
+  const wasShipped = current.status === "shipped" || current.status === "delivered";
+  const shouldRestock = newStatus === "cancelled" || !wasShipped;
+  const noteLine = note ? `${current.adminNotes ? current.adminNotes + "\n" : ""}${note}` : undefined;
+
+  if (shouldRestock) {
+    const claimed = await Order.findOneAndUpdate(
+      { orderNumber: number, stockRestored: { $ne: true }, status: { $nin: ["cancelled", "refunded"] } },
+      { $set: { status: newStatus, stockRestored: true, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+      { new: true },
+    );
+    if (claimed) {
+      for (const item of claimed.items as any[]) {
+        await giveStockBackForItem(item).catch((e) => console.error("Restock failed:", e));
+      }
+      return claimed;
+    }
+  }
+
+  // Already cancelled/refunded (or no restock wanted): only the label changes
+  return Order.findOneAndUpdate(
+    { orderNumber: number },
+    { $set: { status: newStatus, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+    { new: true },
+  );
+}
+
+/**
+ * Cancels Paystack orders that were never paid so abandoned checkouts do not
+ * lock stock. Before cancelling, it asks Paystack whether the customer actually paid.
+ */
+export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+  const stale = await Order.find({
+    status: "pending",
+    paymentMethod: { $in: ["paystack", "flutterwave"] },
+    createdAt: { $lt: cutoff },
+  })
+    .sort({ createdAt: 1 })
+    .limit(50);
+
+  let cancelled = 0;
+  for (const order of stale) {
+    try {
+      const refs: string[] = (order as any).paystackRefs ?? [];
+      let verdict: "paid" | "unpaid" | "unknown" = "unknown";
+      if (refs.length === 0) {
+        verdict = "unpaid"; // customer never reached the Paystack page
+      } else {
+        let paid = false;
+        let unsure = false;
+        for (const ref of refs) {
+          try {
+            const v = await verifyTransaction(ref);
+            if (paymentMatchesOrder(order, v, ref)) {
+              await markOrderPaid(order.orderNumber, ref);
+              paid = true;
+              break;
+            }
+            if (v.status === "success") {
+              console.error(`[expire] ${order.orderNumber}: paid amount ${v.amount} does not match total, left pending for review`);
+              unsure = true;
+            }
+          } catch (err) {
+            // 404 = Paystack has no such payment (never started); anything else = could not check, so do not cancel
+            if (!(err instanceof PaystackError && err.status === 404)) unsure = true;
+          }
+        }
+        verdict = paid ? "paid" : unsure ? "unknown" : "unpaid";
+      }
+
+      if (verdict === "unpaid") {
+        await cancelOrRefundOrder(
+          order.orderNumber,
+          "cancelled",
+          "Auto-cancelled: payment was not completed in time. Stock returned.",
+        );
+        cancelled++;
+      }
+    } catch (err) {
+      console.error(`[expire] ${order.orderNumber} failed:`, err);
+    }
+  }
+  return cancelled;
+}
+
+export async function markOrderShipped(
+  orderNumber: string,
+  trackingNumber?: string,
+  trackingProviderUrl?: string,
+): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "shipped";
+  order.shippedAt = new Date();
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (trackingProviderUrl) order.trackingProviderUrl = trackingProviderUrl;
+  await order.save();
+
+  const ctx = buildEmailContext(order);
+  sendOrderShipped({ ...ctx, trackingNumber, trackingProviderUrl }).catch(() => {});
+
+  return order;
+}
+
+export async function markOrderDelivered(orderNumber: string): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "delivered";
+  order.deliveredAt = new Date();
+  await order.save();
+
+  sendOrderDelivered(buildEmailContext(order)).catch(() => {});
+
+  return order;
+}
+
+===== server\routes\admin\orders.ts =====
+/**
+ * Admin order routes.
+ *
+ * All endpoints require a valid admin JWT (mounted under requireAuth).
+ *
+ * GET    /api/admin/orders                  — list orders (filterable + paginated)
+ * GET    /api/admin/orders/:id              — order detail (full, including adminNotes)
+ * PATCH  /api/admin/orders/:id/status       — update status. For paid/shipped/delivered
+ *                                              this goes through the service so the
+ *                                              right lifecycle email gets sent.
+ * PATCH  /api/admin/orders/:id              — update tracking URL, admin notes
+ */
+
+import { Router, Request, Response } from "express";
+import { Order, OrderStatus } from "../../models/Order";
+import {
+  markOrderPaid,
+  markOrderShipped,
+  markOrderDelivered,
+  cancelOrRefundOrder,
+} from "../../services/orderService";
+
+const router = Router();
+
+const VALID_STATUSES: OrderStatus[] = [
+  "pending",
+  "paid",
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+  "refunded",
+];
+
+// GET /api/admin/orders
+// Query params: status, search (orderNumber/phone/email), page, limit
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const status = req.query.status as string | undefined;
+    const search = (req.query.search as string | undefined)?.trim();
+    const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt((req.query.limit as string) || "25", 10)),
+    );
+
+    const filter: any = {};
+    if (status && VALID_STATUSES.includes(status as OrderStatus)) {
+      filter.status = status;
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, "i");
+      filter.$or = [
+        { orderNumber: searchRegex },
+        { "shipping.phone": searchRegex },
+        { "shipping.email": searchRegex },
+        { "shipping.fullName": searchRegex },
+      ];
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
+
+    res.json({
+      data: orders,
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/orders failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch orders" },
+    });
+  }
+});
+
+// GET /api/admin/orders/:id
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const order = await Order.findById(req.params.id).lean();
+    if (!order) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    res.json({ data: order });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`GET /api/admin/orders/${req.params.id} failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch order" },
+    });
+  }
+});
+
+// PATCH /api/admin/orders/:id/status
+// Body: { status: OrderStatus, trackingNumber?: string, trackingProviderUrl?: string }
+//
+// For paid/shipped/delivered we route through orderService so the matching
+// lifecycle email is sent. Other statuses (processing/cancelled/refunded) just
+// update directly — there's no customer-facing email for those (you can change
+// that later if needed).
+router.patch("/:id/status", async (req: Request, res: Response) => {
+  try {
+    const { status, trackingNumber, trackingProviderUrl } = req.body;
+    if (!status || !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: `Invalid status. Allowed: ${VALID_STATUSES.join(", ")}`,
+        },
+      });
+    }
+
+    // Need the order number to call service helpers
+    const existing = await Order.findById(req.params.id).select("orderNumber status").lean();
+    if (!existing) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    let updated: any = null;
+
+    // A cancelled or refunded order is finished. Only cancelled -> refunded is allowed
+    // (money returned later); reopening it would hand out stock that is already back on the shelf.
+    if (
+      (existing.status === "cancelled" || existing.status === "refunded") &&
+      !(existing.status === "cancelled" && status === "refunded") &&
+      status !== existing.status
+    ) {
+      return res.status(409).json({
+        error: {
+          code: "ORDER_CLOSED",
+          message: `This order is ${existing.status}. Create a new order instead of reopening it.`,
+        },
+      });
+    }
+
+    if (status === "paid") {
+      updated = await markOrderPaid(
+        existing.orderNumber,
+        // Admin-driven manual mark — use a synthetic ref so we know it wasn't gateway
+        `admin-mark-paid-${Date.now()}`,
+      );
+    } else if (status === "shipped") {
+      updated = await markOrderShipped(
+        existing.orderNumber,
+        typeof trackingNumber === "string" ? trackingNumber.trim() || undefined : undefined,
+        typeof trackingProviderUrl === "string" ? trackingProviderUrl.trim() || undefined : undefined,
+      );
+    } else if (status === "delivered") {
+      updated = await markOrderDelivered(existing.orderNumber);
+    } else if (status === "cancelled" || status === "refunded") {
+      // Puts the stock back exactly once
+      updated = await cancelOrRefundOrder(existing.orderNumber, status);
+    } else {
+      // processing / pending: no email, no stock change
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        { status },
+        { new: true },
+      ).lean();
+      updated = order;
+    }
+
+    if (!updated) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    res.json({ data: updated });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`PATCH /api/admin/orders/${req.params.id}/status failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update status" },
+    });
+  }
+});
+
+// PATCH /api/admin/orders/:id
+// Body: { trackingUrl?: string, adminNotes?: string, trackingNumber?: string }
+router.patch("/:id", async (req: Request, res: Response) => {
+  try {
+    const update: any = {};
+    if (typeof req.body.trackingUrl === "string") {
+      update.trackingProviderUrl = req.body.trackingUrl.trim();
+    }
+    if (typeof req.body.trackingProviderUrl === "string") {
+      update.trackingProviderUrl = req.body.trackingProviderUrl.trim();
+    }
+    if (typeof req.body.trackingNumber === "string") {
+      update.trackingNumber = req.body.trackingNumber.trim();
+    }
+    if (typeof req.body.adminNotes === "string") {
+      update.adminNotes = req.body.adminNotes.trim();
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Nothing to update" },
+      });
+    }
+
+    const order = await Order.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    }).lean();
+
+    if (!order) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    res.json({ data: order });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`PATCH /api/admin/orders/${req.params.id} failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update order" },
+    });
+  }
+});
+
+export default router;
+
+===== server\routes\admin\combos.ts =====
+/**
+ * Admin combos CRUD routes.
+ * Handles `alternatives` and `colors` arrays on each item.
+ */
+
+import { Router, Request, Response } from "express";
+import { Combo } from "../../models/Combo";
+
+const router = Router();
+
+function slugify(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 80) || "item";
+}
+
+function ensureAlternatives(alts: any[]): any[] {
+  if (!Array.isArray(alts)) return [];
+  return alts.map((alt, i) => ({
+    id: alt.id || slugify(alt.name || `alt-${i + 1}`),
+    name: String(alt.name || `Alternative ${i + 1}`).trim(),
+    badge: alt.badge || "",
+    images: Array.isArray(alt.images) ? alt.images : [],
+    description: alt.description || "",
+  }));
+}
+
+function ensureColors(colors: any[]): any[] {
+  if (!Array.isArray(colors)) return [];
+  return colors.map((c, i) => ({
+    id: c.id || slugify(c.name || `color-${i + 1}`),
+    name: String(c.name || `Color ${i + 1}`).trim(),
+    hexCode: typeof c.hexCode === "string" ? c.hexCode.trim() : "",
+    imageUrl: typeof c.imageUrl === "string" ? c.imageUrl.trim() : "",
+  }));
+}
+
+function ensureItemIds(items: any[]): any[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item, i) => ({
+    ...item,
+    id: item.id || slugify(item.name || `item-${i + 1}`),
+    images: Array.isArray(item.images) ? item.images : [],
+    individualPrice: Number(item.individualPrice) || 0,
+    alternatives: ensureAlternatives(item.alternatives),
+    colors: ensureColors(item.colors),
+  }));
+}
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const combos = await Combo.find({}).sort({ createdAt: -1 }).lean();
+    res.json({ data: combos });
+  } catch (err) {
+    console.error("GET /api/admin/combos failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to fetch combos" } });
+  }
+});
+
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const combo = await Combo.findById(req.params.id).lean();
+    if (!combo) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    }
+    res.json({ data: combo });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    }
+    console.error(`GET /api/admin/combos/${req.params.id} failed:`, err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to fetch combo" } });
+  }
+});
+
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.name) {
+      return res.status(400).json({ error: { code: "BAD_REQUEST", message: "Name is required" } });
+    }
+    const slug = body.slug ? slugify(body.slug) : slugify(body.name);
+    const existing = await Combo.findOne({ slug });
+    if (existing) {
+      return res.status(409).json({
+        error: { code: "DUPLICATE", message: `A combo with slug "${slug}" already exists.` },
+      });
+    }
+    if (body.isFeatured) {
+      await Combo.updateMany({ isFeatured: true }, { $set: { isFeatured: false } });
+    }
+    const combo = await Combo.create({
+      slug,
+      name: String(body.name).trim(),
+      tagline: body.tagline ?? "",
+      totalPrice: Number(body.totalPrice) || 0,
+      originalPrice: Number(body.originalPrice) || 0,
+      badge: body.badge ?? "",
+      stockLeft: Number(body.stockLeft) || 0,
+      isFeatured: Boolean(body.isFeatured),
+      isActive: body.isActive !== false,
+      customComboEligible: Boolean(body.customComboEligible),
+      items: ensureItemIds(body.items),
+      heroImage: body.heroImage ?? "",
+      categorySlugs: Array.isArray(body.categorySlugs) ? body.categorySlugs : [],
+    });
+    res.status(201).json({ data: combo });
+  } catch (err: any) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: err.message } });
+    }
+    console.error("POST /api/admin/combos failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to create combo" } });
+  }
+});
+
+router.patch("/:id", async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const update: any = {};
+
+    if (body.name !== undefined) update.name = String(body.name).trim();
+    if (body.tagline !== undefined) update.tagline = body.tagline;
+    if (body.totalPrice !== undefined) update.totalPrice = Number(body.totalPrice) || 0;
+    if (body.originalPrice !== undefined) update.originalPrice = Number(body.originalPrice) || 0;
+    if (body.badge !== undefined) update.badge = body.badge;
+    if (body.stockLeft !== undefined) update.stockLeft = Number(body.stockLeft) || 0;
+    if (body.isActive !== undefined) update.isActive = Boolean(body.isActive);
+    if (body.customComboEligible !== undefined) update.customComboEligible = Boolean(body.customComboEligible);
+    if (body.heroImage !== undefined) update.heroImage = body.heroImage;
+    if (Array.isArray(body.categorySlugs)) update.categorySlugs = body.categorySlugs;
+    if (Array.isArray(body.items)) update.items = ensureItemIds(body.items);
+
+    if (body.slug !== undefined) {
+      const newSlug = slugify(body.slug);
+      const existing = await Combo.findOne({ slug: newSlug, _id: { $ne: req.params.id } });
+      if (existing) {
+        return res.status(409).json({
+          error: { code: "DUPLICATE", message: `A different combo already uses slug "${newSlug}".` },
+        });
+      }
+      update.slug = newSlug;
+    }
+
+    if (body.isFeatured === true) {
+      await Combo.updateMany(
+        { _id: { $ne: req.params.id }, isFeatured: true },
+        { $set: { isFeatured: false } },
+      );
+      update.isFeatured = true;
+    } else if (body.isFeatured === false) {
+      update.isFeatured = false;
+    }
+
+    const combo = await Combo.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+      runValidators: true,
+    }).lean();
+
+    if (!combo) {
+      return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    }
+    res.json({ data: combo });
+  } catch (err: any) {
+    if (err.name === "CastError") return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    if (err.name === "ValidationError") return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: err.message } });
+    console.error(`PATCH /api/admin/combos/${req.params.id} failed:`, err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to update combo" } });
+  }
+});
+
+router.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    const combo = await Combo.findByIdAndDelete(req.params.id).lean();
+    if (!combo) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    res.json({ data: { id: req.params.id, deleted: true } });
+  } catch (err: any) {
+    if (err.name === "CastError") return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
+    console.error(`DELETE /api/admin/combos/${req.params.id} failed:`, err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to delete combo" } });
+  }
+});
+
+export default router;
+
+===== server\routes\admin\dashboard.ts =====
+/**
+ * Admin dashboard stats — aggregates for the homepage of /admin.
+ *
+ * GET /api/admin/dashboard/stats
+ *
+ * Returns:
+ *   - ordersToday: count of orders created today
+ *   - revenueToday: sum of totals from PAID orders today (excludes pending)
+ *   - pendingOrders: count of orders with status "pending"
+ *   - customers: distinct unique customers (by phone) ever
+ *   - recentOrders: last 5 orders for quick preview
+ */
+
+import { Router, Request, Response } from "express";
+import { Order } from "../../models/Order";
+
+const router = Router();
+
+router.get("/stats", async (_req: Request, res: Response) => {
+  try {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [ordersToday, revenueAggResult, pendingOrders, customerAgg, recentOrders] =
+      await Promise.all([
+        Order.countDocuments({ createdAt: { $gte: startOfToday } }),
+
+        // Revenue today = sum of totals for orders that are 'paid' OR beyond
+        // (paid, processing, shipped, delivered) created today.
+        // We exclude 'pending' so revenue reflects actual confirmed money.
+        Order.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startOfToday },
+              status: { $in: ["paid", "processing", "shipped", "delivered"] },
+            },
+          },
+          { $group: { _id: null, total: { $sum: "$total" } } },
+        ]),
+
+        Order.countDocuments({ status: "pending" }),
+
+        // Unique customers ever (by phone)
+        Order.aggregate([
+          { $group: { _id: "$shipping.phone" } },
+          { $count: "uniqueCustomers" },
+        ]),
+
+        // Recent 5 orders, lightweight
+        Order.find({})
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .select("orderNumber status total shipping.fullName createdAt")
+          .lean(),
+      ]);
+
+    const revenueToday = revenueAggResult[0]?.total ?? 0;
+    const customers = customerAgg[0]?.uniqueCustomers ?? 0;
+
+    res.json({
+      data: {
+        ordersToday,
+        revenueToday,
+        pendingOrders,
+        customers,
+        recentOrders,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/dashboard/stats failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch stats" },
+    });
+  }
+});
+
+export default router;
+
+===== server\routes\orders.ts =====
+/**
+ * Orders — public routes.
+ *
+ * POST /api/orders                — create a new order (customer checkout)
+ * GET  /api/orders/track          — look up an order by orderNumber + phone
+ * GET  /api/orders/gift-progress  — how much this phone number has spent toward the free gift
+ *
+ * Admin order management lives in routes/admin/orders.ts (Phase 5D).
+ */
+
+import { Router, Request, Response } from "express";
+import {
+  createOrder,
+  findByNumberAndPhone,
+  OrderError,
+} from "../services/orderService";
+import { attachReferral } from "../services/referralService";
+import {
+  GIFT_THRESHOLD,
+  GIFT_WINDOW_DAYS,
+  getPriorSpend,
+  normalizePhone,
+} from "../services/giftProgress";
+
+const router = Router();
+
+const ALLOWED_METHODS = ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"];
+
+// Order creation limiter: 10 orders per minute per visitor, so nobody can drain stock by spamming.
+const orderHits = new Map<string, { count: number; resetAt: number }>();
+function orderLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = orderHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    orderHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 10;
+}
+
+// Small in-memory limiter for gift-progress: 30 lookups per minute per IP.
+const progressHits = new Map<string, { count: number; resetAt: number }>();
+function progressLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = progressHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    progressHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 30;
+}
+
+router.get("/gift-progress", async (req: Request, res: Response) => {
+  try {
+    if (progressLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many requests. Try again in a minute." },
+      });
+    }
+    const phoneKey = normalizePhone(req.query.phone);
+    const spent = await getPriorSpend(phoneKey);
+    // Only the total is returned, never order details.
+    return res.json({
+      data: {
+        spent,
+        threshold: GIFT_THRESHOLD,
+        remaining: Math.max(0, GIFT_THRESHOLD - spent),
+        windowDays: GIFT_WINDOW_DAYS,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/orders/gift-progress failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Could not check gift progress" },
+    });
+  }
+});
+
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    if (orderLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many orders. Please wait a minute and try again." },
+      });
+    }
+
+    const { items, shipping, paymentMethod, notes } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0 || items.length > 20) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Your cart is empty or has too many items" },
+      });
+    }
+
+    // Basic input shape validation
+    if (!shipping || typeof shipping !== "object") {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Missing shipping details" },
+      });
+    }
+    const required: (keyof typeof shipping)[] = [
+      "fullName",
+      "email",
+      "phone",
+      "state",
+      "city",
+      "street",
+    ];
+    for (const field of required) {
+      if (!shipping[field] || typeof shipping[field] !== "string") {
+        return res.status(400).json({
+          error: { code: "BAD_REQUEST", message: `Missing field: ${field}` },
+        });
+      }
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shipping.email.trim()) || shipping.email.length > 200) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Please enter a valid email address" },
+      });
+    }
+
+    if (!paymentMethod || typeof paymentMethod !== "string" || !ALLOWED_METHODS.includes(paymentMethod)) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Choose a valid payment method" },
+      });
+    }
+
+    const order = await createOrder({ items, shipping, paymentMethod, notes });
+    await attachReferral(order, req.body.ref);
+
+    return res.status(201).json({ data: order });
+  } catch (err: any) {
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({
+        error: { code: err.code, message: err.message },
+      });
+    }
+    console.error("POST /api/orders failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to create order" },
+    });
+  }
+});
+
+router.get("/track", async (req: Request, res: Response) => {
+  try {
+    const orderNumber = String(req.query.orderNumber ?? "").trim();
+    const phone = String(req.query.phone ?? "").trim();
+
+    if (!orderNumber || !phone) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: "orderNumber and phone are required",
+        },
+      });
+    }
+
+    const order = await findByNumberAndPhone(orderNumber, phone);
+    if (!order) {
+      return res.status(404).json({
+        error: {
+          code: "NOT_FOUND",
+          message: "No order matches those details",
+        },
+      });
+    }
+
+    // Strip sensitive internal fields before returning to public
+    const { adminNotes: _drop, ...publicOrder } = order;
+    return res.json({ data: publicOrder });
+  } catch (err) {
+    console.error("GET /api/orders/track failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to track order" },
+    });
+  }
+});
+
+export default router;
+
+===== server\index.ts =====
+import express from "express";
+import cors from "cors";
+import { handleDemo } from "./routes/demo";
+import combosRouter from "./routes/combos";
+import categoriesRouter from "./routes/categories";
+import settingsRouter from "./routes/settings";
+import heroSlidesRouter from "./routes/heroSlides";
+import testimonialsRouter from "./routes/testimonials";
+import faqsRouter from "./routes/faqs";
+import authRouter from "./routes/auth";
+import ordersRouter from "./routes/orders";
+import paymentsRouter from "./routes/payments";
+import chatRouter from "./routes/chat";
+import aiRouter from "./routes/ai";
+import resellersRouter from "./routes/resellers";
+import partnerRouter from "./routes/partner";
+import giftRoutes from "./routes/admin/giftRoutes";
+import publicGiftsRouter from "./routes/gifts";
+import adminOrdersRouter from "./routes/admin/orders";
+import adminDashboardRouter from "./routes/admin/dashboard";
+import adminCategoriesRouter from "./routes/admin/categories";
+import adminCombosRouter from "./routes/admin/combos";
+import adminHeroSlidesRouter from "./routes/admin/heroSlides";
+import adminSettingsRouter from "./routes/admin/settings";
+import adminFaqsRouter from "./routes/admin/faqs";
+import adminTestimonialsRouter from "./routes/admin/testimonials";
+import adminChatsRouter from "./routes/admin/chats";
+import adminResellersRouter from "./routes/admin/resellers";
+import adminCommissionsRouter from "./routes/admin/commissions";
+import adminAdsRouter from "./routes/admin/ads";
+import adminWithdrawalsRouter from "./routes/admin/withdrawals";
+
+import { requireAuth } from "./middleware/requireAuth";
+import { connectDB } from "./db";
+import { expireStalePendingOrders } from "./services/orderService";
+
+export function createServer() {
+  const app = express();
+  // Behind Render's proxy: lets req.ip be the real visitor (rate limits work per person, not for everyone at once)
+  app.set("trust proxy", 1);
+
+  app.use(cors());
+
+  // 50mb body limit for Base64 image payloads
+  app.use((req, res, next) => {
+    if (req.originalUrl === "/api/payments/webhook/paystack") return next();
+    if (req.originalUrl.startsWith("/api/ai")) return express.json({ limit: "20kb" })(req, res, next);
+    return express.json({ limit: "50mb" })(req, res, next);
+  });
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  connectDB();
+
+  // Live site only: every 15 minutes, release stock held by Paystack orders nobody paid for.
+  // (Skipped on a laptop so local testing never touches live orders.)
+  const g = globalThis as any;
+  if (process.env.NODE_ENV === "production" && !g.__scExpiryTimer) {
+    g.__scExpiryTimer = setInterval(() => {
+      expireStalePendingOrders().catch((e) => console.error("[expire] job failed:", e));
+    }, 15 * 60 * 1000);
+    g.__scExpiryTimer.unref?.();
+  }
+
+  app.get("/api/ping", (_req, res) => {
+    const ping = process.env.PING_MESSAGE ?? "ping";
+    res.json({ message: ping });
+  });
+  app.get("/api/demo", handleDemo);
+
+  // Public API routes
+  app.use("/api/auth", authRouter);
+  app.use("/api/combos", combosRouter);
+  app.use("/api/categories", categoriesRouter);
+  app.use("/api/settings", settingsRouter);
+  app.use("/api/hero-slides", heroSlidesRouter);
+  app.use("/api/testimonials", testimonialsRouter);
+  app.use("/api/faqs", faqsRouter);
+  app.use("/api/orders", ordersRouter);
+  app.use("/api/payments", paymentsRouter);
+  app.use("/api/chat", chatRouter);
+  app.use("/api/ai", aiRouter);
+  app.use("/api/resellers", resellersRouter);
+  app.use("/api/partner", partnerRouter);
+
+  // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.
+  app.use("/api/gifts", publicGiftsRouter);
+
+  // Admin API routes (Protected by authentication)
+  app.use("/api/admin/gifts", requireAuth, giftRoutes);
+  app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
+  app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
+  app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
+  app.use("/api/admin/combos", requireAuth, adminCombosRouter);
+  app.use("/api/admin/hero-slides", requireAuth, adminHeroSlidesRouter);
+  app.use("/api/admin/settings", requireAuth, adminSettingsRouter);
+  app.use("/api/admin/faqs", requireAuth, adminFaqsRouter);
+  app.use("/api/admin/testimonials", requireAuth, adminTestimonialsRouter);
+  app.use("/api/admin/chats", requireAuth, adminChatsRouter);
+  app.use("/api/admin/resellers", requireAuth, adminResellersRouter);
+  app.use("/api/admin/commissions", requireAuth, adminCommissionsRouter);
+  app.use("/api/admin/ads", requireAuth, adminAdsRouter);
+  app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
+
+  return app;
+}
+
+===== client\pages\AdminComboEdit.tsx =====
+/**
+ * Admin Combo Editor — handles alternatives and colors.
+ *
+ * For each item:
+ *   - Default product (name, price, images, description)
+ *   - Alternatives section (variants like "Casio Watch")
+ *   - Colors section (Red, Green, Black — with optional hex code)
+ */
+
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Palette,
+  Plus,
+  Save,
+  Trash2,
+} from 'lucide-react';
+import { AdminFrame } from '@/components/admin/AdminFrame';
+import { ImageUploader } from '@/components/admin/ImageUploader';
+import { SEO } from '@/components/shared/SEO';
+import {
+  ComboPayload,
+  createCombo,
+  getComboAdmin,
+  updateCombo,
+} from '@/api/adminCombos';
+import { fetchCategories } from '@/api/categories';
+import type { Combo } from '@/types/combo';
+import { toast } from 'sonner';
+
+interface AlternativeForm {
+  id?: string;
+  name: string;
+  badge: string;
+  description: string;
+  images: Array<{ url: string; alt?: string }>;
+}
+
+interface ColorForm {
+  id?: string;
+  name: string;
+  hexCode: string;
+  imageUrl: string;
+}
+
+interface ItemForm {
+  id?: string;
+  name: string;
+  badge: string;
+  individualPrice: number;
+  description: string;
+  images: Array<{ url: string; alt?: string }>;
+  alternatives: AlternativeForm[];
+  colors: ColorForm[];
+}
+
+interface FormState {
+  slug: string;
+  name: string;
+  tagline: string;
+  totalPrice: number;
+  originalPrice: number;
+  badge: string;
+  stockLeft: number;
+  isFeatured: boolean;
+  isActive: boolean;
+  customComboEligible: boolean;
+  heroImage: string;
+  categorySlugs: string[];
+  items: ItemForm[];
+}
+
+const EMPTY_ALT: AlternativeForm = { name: '', badge: '', description: '', images: [] };
+const EMPTY_COLOR: ColorForm = { name: '', hexCode: '', imageUrl: '' };
+const EMPTY_ITEM: ItemForm = {
+  name: '', badge: '', individualPrice: 0, description: '', images: [],
+  alternatives: [], colors: [],
+};
+
+const EMPTY_FORM: FormState = {
+  slug: '', name: '', tagline: '', totalPrice: 0, originalPrice: 0, badge: '',
+  stockLeft: 0, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
+  categorySlugs: [], items: [],
+};
+
+function slugify(s: string): string {
+  return (s ?? '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 80);
+}
+
+function fromCombo(combo: Combo): FormState {
+  return {
+    slug: combo.slug,
+    name: combo.name,
+    tagline: combo.tagline ?? '',
+    totalPrice: combo.totalPrice,
+    originalPrice: combo.originalPrice,
+    badge: combo.badge ?? '',
+    stockLeft: combo.stockLeft,
+    isFeatured: combo.isFeatured,
+    isActive: combo.isActive,
+    customComboEligible: combo.customComboEligible ?? false,
+    heroImage: combo.heroImage ?? '',
+    categorySlugs: combo.categorySlugs ?? [],
+    items: (combo.items ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      badge: item.badge ?? '',
+      individualPrice: item.individualPrice,
+      description: item.description ?? '',
+      images: item.images ?? [],
+      alternatives: (item.alternatives ?? []).map((alt) => ({
+        id: alt.id,
+        name: alt.name,
+        badge: alt.badge ?? '',
+        description: alt.description ?? '',
+        images: alt.images ?? [],
+      })),
+      colors: (item.colors ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        hexCode: c.hexCode ?? '',
+        imageUrl: c.imageUrl ?? '',
+      })),
+    })),
+  };
+}
+
+export default function AdminComboEdit() {
+  const { id } = useParams<{ id: string }>();
+  const isEdit = !!id;
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [expandedAlts, setExpandedAlts] = useState<Set<number>>(new Set());
+  const [expandedColors, setExpandedColors] = useState<Set<number>>(new Set());
+
+  const { data: combo, isLoading: loadingCombo } = useQuery({
+    queryKey: ['admin-combo', id],
+    queryFn: () => getComboAdmin(id!),
+    enabled: isEdit,
+  });
+
+  useEffect(() => {
+    if (combo) {
+      setForm(fromCombo(combo));
+      setSlugTouched(true);
+    }
+  }, [combo]);
+
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: fetchCategories,
+  });
+
+  const handleNameChange = (name: string) => {
+    setForm((f) => ({ ...f, name, slug: slugTouched ? f.slug : slugify(name) }));
+  };
+  const handleSlugChange = (slug: string) => {
+    setForm((f) => ({ ...f, slug: slugify(slug) }));
+    setSlugTouched(true);
+  };
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const toggleCategory = (slug: string) => {
+    setForm((f) => ({
+      ...f,
+      categorySlugs: f.categorySlugs.includes(slug)
+        ? f.categorySlugs.filter((s) => s !== slug)
+        : [...f.categorySlugs, slug],
+    }));
+  };
+
+  // Item ops
+  const addItem = () => setForm((f) => ({ ...f, items: [...f.items, { ...EMPTY_ITEM }] }));
+  const updateItem = (idx: number, patch: Partial<ItemForm>) =>
+    setForm((f) => ({ ...f, items: f.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
+  const removeItem = (idx: number) =>
+    setForm((f) => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  const addItemImage = (itemIdx: number, url: string) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, images: [...it.images, { url, alt: it.name }] } : it,
+      ),
+    }));
+  };
+  const removeItemImage = (itemIdx: number, imgIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, images: it.images.filter((_, j) => j !== imgIdx) } : it,
+      ),
+    }));
+  };
+
+  // Alternative ops
+  const addAlternative = (itemIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, alternatives: [...it.alternatives, { ...EMPTY_ALT }] } : it,
+      ),
+    }));
+    setExpandedAlts((s) => new Set(s).add(itemIdx));
+  };
+  const updateAlternative = (itemIdx: number, altIdx: number, patch: Partial<AlternativeForm>) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx
+          ? { ...it, alternatives: it.alternatives.map((a, j) => (j === altIdx ? { ...a, ...patch } : a)) }
+          : it,
+      ),
+    }));
+  };
+  const removeAlternative = (itemIdx: number, altIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, alternatives: it.alternatives.filter((_, j) => j !== altIdx) } : it,
+      ),
+    }));
+  };
+  const addAlternativeImage = (itemIdx: number, altIdx: number, url: string) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx
+          ? {
+              ...it,
+              alternatives: it.alternatives.map((a, j) =>
+                j === altIdx ? { ...a, images: [...a.images, { url, alt: a.name }] } : a,
+              ),
+            }
+          : it,
+      ),
+    }));
+  };
+  const removeAlternativeImage = (itemIdx: number, altIdx: number, imgIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx
+          ? {
+              ...it,
+              alternatives: it.alternatives.map((a, j) =>
+                j === altIdx ? { ...a, images: a.images.filter((_, k) => k !== imgIdx) } : a,
+              ),
+            }
+          : it,
+      ),
+    }));
+  };
+
+  // Color ops
+  const addColor = (itemIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, colors: [...it.colors, { ...EMPTY_COLOR }] } : it,
+      ),
+    }));
+    setExpandedColors((s) => new Set(s).add(itemIdx));
+  };
+  const updateColor = (itemIdx: number, colorIdx: number, patch: Partial<ColorForm>) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx
+          ? { ...it, colors: it.colors.map((c, j) => (j === colorIdx ? { ...c, ...patch } : c)) }
+          : it,
+      ),
+    }));
+  };
+  const removeColor = (itemIdx: number, colorIdx: number) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((it, i) =>
+        i === itemIdx ? { ...it, colors: it.colors.filter((_, j) => j !== colorIdx) } : it,
+      ),
+    }));
+  };
+
+  const toggleAlts = (itemIdx: number) => {
+    setExpandedAlts((s) => {
+      const next = new Set(s);
+      if (next.has(itemIdx)) next.delete(itemIdx); else next.add(itemIdx);
+      return next;
+    });
+  };
+  const toggleColors = (itemIdx: number) => {
+    setExpandedColors((s) => {
+      const next = new Set(s);
+      if (next.has(itemIdx)) next.delete(itemIdx); else next.add(itemIdx);
+      return next;
+    });
+  };
+
+  const validate = (): string | null => {
+    if (!form.name.trim()) return 'Name is required';
+    if (!form.slug.trim()) return 'Slug is required';
+    if (form.totalPrice < 0) return 'Total price cannot be negative';
+    if (form.originalPrice < 0) return 'Original price cannot be negative';
+    if (form.items.length === 0) return 'Add at least one item';
+    for (const [i, item] of form.items.entries()) {
+      if (!item.name.trim()) return `Item ${i + 1}: name is required`;
+      for (const [j, alt] of item.alternatives.entries()) {
+        if (!alt.name.trim()) return `Item ${i + 1} alternative ${j + 1}: name is required`;
+      }
+      for (const [j, color] of item.colors.entries()) {
+        if (!color.name.trim()) return `Item ${i + 1} color ${j + 1}: name is required`;
+      }
+    }
+    return null;
+  };
+
+  const buildPayload = (): ComboPayload => ({
+    slug: form.slug,
+    name: form.name.trim(),
+    tagline: form.tagline.trim(),
+    totalPrice: form.totalPrice,
+    originalPrice: form.originalPrice,
+    badge: form.badge.trim(),
+    stockLeft: form.stockLeft,
+    isFeatured: form.isFeatured,
+    isActive: form.isActive,
+    customComboEligible: form.customComboEligible,
+    heroImage: form.heroImage.trim(),
+    categorySlugs: form.categorySlugs,
+    items: form.items.map((it) => ({
+      id: it.id,
+      name: it.name.trim(),
+      badge: it.badge.trim(),
+      individualPrice: it.individualPrice,
+      description: it.description.trim(),
+      images: it.images,
+      alternatives: it.alternatives.map((a) => ({
+        id: a.id,
+        name: a.name.trim(),
+        badge: a.badge.trim(),
+        description: a.description.trim(),
+        images: a.images,
+      })),
+      colors: it.colors.map((c) => ({
+        id: c.id,
+        name: c.name.trim(),
+        hexCode: c.hexCode.trim(),
+        imageUrl: c.imageUrl.trim(),
+      })),
+    })),
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['admin-combos'] });
+    queryClient.invalidateQueries({ queryKey: ['combos'] });
+    queryClient.invalidateQueries({ queryKey: ['featuredCombo'] });
+  };
+
+  const createMut = useMutation({
+    mutationFn: () => createCombo(buildPayload()),
+    onSuccess: () => {
+      toast.success('Combo created');
+      invalidate();
+      navigate('/admin/combos');
+    },
+    onError: (err: any) => toast.error(err?.message || 'Failed to create'),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: () => updateCombo(id!, buildPayload()),
+    onSuccess: () => {
+      toast.success('Combo updated');
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['admin-combo', id] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Failed to update'),
+  });
+
+  const handleSave = () => {
+    const error = validate();
+    if (error) { toast.error(error); return; }
+    if (isEdit) updateMut.mutate(); else createMut.mutate();
+  };
+
+  const saving = createMut.isPending || updateMut.isPending;
+
+  if (isEdit && loadingCombo) {
+    return (
+      <AdminFrame>
+        <div className="py-20 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+        </div>
+      </AdminFrame>
+    );
+  }
+
+  return (
+    <AdminFrame>
+      <SEO title={isEdit ? `Edit ${form.name || 'Combo'} — Admin` : 'New Combo — Admin'} />
+
+      <Link to="/admin/combos" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+        <ArrowLeft className="w-3 h-3" />
+        Back to combos
+      </Link>
+
+      <div className="flex items-end justify-between mb-8">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-black text-white">{isEdit ? 'Edit combo' : 'New combo'}</h1>
+          {isEdit && <p className="text-white/50 text-sm mt-1">/{form.slug}</p>}
+        </div>
+        <button type="button" onClick={handleSave} disabled={saving}
+          className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm font-bold disabled:opacity-50">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {isEdit ? 'Save changes' : 'Create combo'}
+        </button>
+      </div>
+
+      <div className="space-y-6 max-w-4xl">
+        <Section title="Basic info">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Combo name" required>
+              <input type="text" value={form.name} onChange={(e) => handleNameChange(e.target.value)}
+                className={inputCls} placeholder="Smart Combo Pack" />
+            </Field>
+            <Field label="Slug (URL)" required>
+              <input type="text" value={form.slug} onChange={(e) => handleSlugChange(e.target.value)}
+                className={inputCls} placeholder="smart-combo-pack" />
+            </Field>
+          </div>
+          <Field label="Tagline">
+            <input type="text" value={form.tagline} onChange={(e) => update('tagline', e.target.value)}
+              className={inputCls} placeholder="Style · Tech · Luxury — All In One" />
+          </Field>
+          <Field label="Badge text (optional)">
+            <input type="text" value={form.badge} onChange={(e) => update('badge', e.target.value)}
+              className={inputCls} placeholder="🔥 BEST SELLER" />
+          </Field>
+        </Section>
+
+        <Section title="Pricing & stock">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Field label="Combo price (₦)" required>
+              <input type="number" value={form.totalPrice}
+                onChange={(e) => update('totalPrice', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
+            </Field>
+            <Field label="Original price (₦)">
+              <input type="number" value={form.originalPrice}
+                onChange={(e) => update('originalPrice', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
+            </Field>
+            <Field label="Stock available">
+              <input type="number" value={form.stockLeft}
+                onChange={(e) => update('stockLeft', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
+            </Field>
+          </div>
+        </Section>
+
+        <Section title="Visibility">
+          <div className="space-y-2">
+            <Toggle label="Featured (show on homepage hero)" hint="Only one combo can be featured at a time."
+              checked={form.isFeatured} onChange={(v) => update('isFeatured', v)} />
+            <Toggle label="Active" hint="Hide from the storefront without deleting."
+              checked={form.isActive} onChange={(v) => update('isActive', v)} />
+            <Toggle label="Available for Build-Your-Own Combo"
+              hint="Lets customers pick this product into their own custom 2-3 item combo for a discount. Only makes sense for single-item products."
+              checked={form.customComboEligible} onChange={(v) => update('customComboEligible', v)} />
+          </div>
+        </Section>
+
+        <Section title="Categories">
+          {categories.length === 0 ? (
+            <p className="text-xs text-white/40">
+              No categories yet.{' '}
+              <Link to="/admin/categories" className="text-primary hover:underline">Create some →</Link>
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-white/40 mb-3">Pick all that apply.</p>
+              <div className="flex flex-wrap gap-2">
+                {categories.map((cat) => {
+                  const active = form.categorySlugs.includes(cat.slug);
+                  return (
+                    <button key={cat.slug} type="button" onClick={() => toggleCategory(cat.slug)}
+                      className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${
+                        active ? 'bg-primary/20 border-primary/40 text-primary'
+                        : 'border-white/10 text-white/60 hover:border-white/30 hover:text-white/90'}`}>
+                      <span>{cat.icon}</span><span>{cat.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </Section>
+
+        <Section title={`Items (${form.items.length})`}>
+          <p className="text-xs text-white/40 mb-3">
+            Each item is one slot. Add alternatives (variants) and colors per item.
+          </p>
+
+          <div className="space-y-4">
+            {form.items.map((item, idx) => {
+              const altsExpanded = expandedAlts.has(idx);
+              const colorsExpanded = expandedColors.has(idx);
+              return (
+                <div key={idx} className="rounded-xl border border-white/10 p-4"
+                  style={{ background: 'rgba(255,255,255,0.015)' }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs uppercase tracking-widest text-primary/70 font-bold">
+                      Item {idx + 1} (Default)
+                    </p>
+                    <button type="button" onClick={() => removeItem(idx)}
+                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-white/50 hover:text-red-400">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <Field label="Item name" required>
+                      <input type="text" value={item.name}
+                        onChange={(e) => updateItem(idx, { name: e.target.value })}
+                        className={inputCls} placeholder="Smart Watch Pro" />
+                    </Field>
+                    <Field label="Badge">
+                      <input type="text" value={item.badge}
+                        onChange={(e) => updateItem(idx, { badge: e.target.value })}
+                        className={inputCls} placeholder="SMART WATCH" />
+                    </Field>
+                  </div>
+
+                  <Field label="Individual price (₦)">
+                    <input type="number" value={item.individualPrice}
+                      onChange={(e) => updateItem(idx, { individualPrice: parseInt(e.target.value) || 0 })}
+                      className={inputCls} min={0} />
+                  </Field>
+
+                  <Field label="Description (optional)">
+                    <textarea rows={2} value={item.description}
+                      onChange={(e) => updateItem(idx, { description: e.target.value })} className={inputCls} />
+                  </Field>
+
+                  <div className="mt-4">
+                    <p className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-2">
+                      Images ({item.images.length})
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+                      {item.images.map((img, imgIdx) => (
+                        <div key={imgIdx} className="relative aspect-square rounded-lg overflow-hidden border border-white/10 group">
+                          <img src={img.url} alt="" className="w-full h-full object-cover" />
+                          <button type="button" onClick={() => removeItemImage(idx, imgIdx)}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 hover:bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <ImageUploader value="" onChange={(url) => { if (url) addItemImage(idx, url); }} aspect="square" />
+                  </div>
+
+                  {/* Alternatives */}
+                  <div className="mt-6 pt-5 border-t border-white/5">
+                    <button type="button" onClick={() => toggleAlts(idx)}
+                      className="w-full flex items-center justify-between text-left mb-3 group">
+                      <div>
+                        <p className="text-xs uppercase tracking-widest text-emerald-300/80 font-bold">
+                          Alternatives ({item.alternatives.length})
+                        </p>
+                        <p className="text-[10px] text-white/40 mt-0.5">
+                          Variants customers can swap in at the same combo price
+                        </p>
+                      </div>
+                      {altsExpanded
+                        ? <ChevronUp className="w-4 h-4 text-white/50 group-hover:text-white" />
+                        : <ChevronDown className="w-4 h-4 text-white/50 group-hover:text-white" />}
+                    </button>
+
+                    {altsExpanded && (
+                      <div className="space-y-3 mt-3">
+                        {item.alternatives.map((alt, altIdx) => (
+                          <div key={altIdx} className="rounded-lg border border-emerald-500/15 p-3"
+                            style={{ background: 'rgba(16,185,129,0.02)' }}>
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-[10px] uppercase tracking-wider text-emerald-300/70 font-bold">
+                                Alternative {altIdx + 1}
+                              </p>
+                              <button type="button" onClick={() => removeAlternative(idx, altIdx)}
+                                className="p-1 rounded-md hover:bg-red-500/10 text-white/40 hover:text-red-400">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                              <Field label="Variant name" required>
+                                <input type="text" value={alt.name}
+                                  onChange={(e) => updateAlternative(idx, altIdx, { name: e.target.value })}
+                                  className={inputCls} placeholder="Casio Watch" />
+                              </Field>
+                              <Field label="Badge">
+                                <input type="text" value={alt.badge}
+                                  onChange={(e) => updateAlternative(idx, altIdx, { badge: e.target.value })}
+                                  className={inputCls} placeholder="CLASSIC" />
+                              </Field>
+                            </div>
+
+                            <Field label="Description (optional)">
+                              <textarea rows={2} value={alt.description}
+                                onChange={(e) => updateAlternative(idx, altIdx, { description: e.target.value })}
+                                className={inputCls} />
+                            </Field>
+
+                            <div className="mt-3">
+                              <p className="block text-[10px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+                                Images ({alt.images.length})
+                              </p>
+                              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-2">
+                                {alt.images.map((img, imgIdx) => (
+                                  <div key={imgIdx} className="relative aspect-square rounded-md overflow-hidden border border-white/10 group">
+                                    <img src={img.url} alt="" className="w-full h-full object-cover" />
+                                    <button type="button" onClick={() => removeAlternativeImage(idx, altIdx, imgIdx)}
+                                      className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 hover:bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      <Trash2 className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <ImageUploader value=""
+                                onChange={(url) => { if (url) addAlternativeImage(idx, altIdx, url); }}
+                                aspect="square" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button type="button" onClick={() => addAlternative(idx)}
+                      className="mt-3 w-full py-2 rounded-lg border border-dashed border-emerald-500/25 hover:border-emerald-500/50 text-[11px] font-bold text-emerald-300/70 hover:text-emerald-300 flex items-center justify-center gap-1.5 transition-colors">
+                      <Plus className="w-3 h-3" />
+                      Add alternative for this slot
+                    </button>
+                  </div>
+
+                  {/* Colors */}
+                  <div className="mt-6 pt-5 border-t border-white/5">
+                    <button type="button" onClick={() => toggleColors(idx)}
+                      className="w-full flex items-center justify-between text-left mb-3 group">
+                      <div className="flex items-center gap-2">
+                        <Palette className="w-3.5 h-3.5 text-pink-300/70" />
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-pink-300/80 font-bold">
+                            Colors ({item.colors.length})
+                          </p>
+                          <p className="text-[10px] text-white/40 mt-0.5">
+                            Color options customers can pick (e.g. Red, Green, Black)
+                          </p>
+                        </div>
+                      </div>
+                      {colorsExpanded
+                        ? <ChevronUp className="w-4 h-4 text-white/50 group-hover:text-white" />
+                        : <ChevronDown className="w-4 h-4 text-white/50 group-hover:text-white" />}
+                    </button>
+
+                    {colorsExpanded && (
+                      <div className="space-y-2 mt-3">
+                        {item.colors.map((color, colorIdx) => (
+                          <div key={colorIdx} className="rounded-lg border border-pink-500/15 p-3 flex items-start gap-3"
+                            style={{ background: 'rgba(236,72,153,0.02)' }}>
+                            {/* Swatch preview */}
+                            <div className="flex-shrink-0">
+                              {color.hexCode ? (
+                                <div className="w-10 h-10 rounded-full border-2 border-white/20"
+                                  style={{ background: color.hexCode || '#888' }} />
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[8px] text-white/40">
+                                  ?
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <Field label="Color name" required>
+                                  <input type="text" value={color.name}
+                                    onChange={(e) => updateColor(idx, colorIdx, { name: e.target.value })}
+                                    className={inputCls} placeholder="Red" />
+                                </Field>
+                                <Field label="Hex code (optional)" hint="For a color dot. Leave empty for label only.">
+                                  <input type="text" value={color.hexCode}
+                                    onChange={(e) => updateColor(idx, colorIdx, { hexCode: e.target.value })}
+                                    className={inputCls} placeholder="#ff0000" />
+                                </Field>
+                              </div>
+                            </div>
+
+                            <button type="button" onClick={() => removeColor(idx, colorIdx)}
+                              className="p-1 rounded-md hover:bg-red-500/10 text-white/40 hover:text-red-400 flex-shrink-0">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button type="button" onClick={() => addColor(idx)}
+                      className="mt-3 w-full py-2 rounded-lg border border-dashed border-pink-500/25 hover:border-pink-500/50 text-[11px] font-bold text-pink-300/70 hover:text-pink-300 flex items-center justify-center gap-1.5 transition-colors">
+                      <Plus className="w-3 h-3" />
+                      Add color for this slot
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button type="button" onClick={addItem}
+            className="mt-4 w-full py-3 rounded-xl border-2 border-dashed border-white/15 hover:border-primary/40 text-xs font-bold text-white/60 hover:text-primary flex items-center justify-center gap-2 transition-colors">
+            <Plus className="w-4 h-4" />
+            Add item
+          </button>
+        </Section>
+
+        <div className="flex justify-end gap-3 pt-4">
+          <Link to="/admin/combos"
+            className="px-4 py-2 rounded-lg border border-white/10 hover:border-white/30 text-xs font-medium text-white/70">
+            Cancel
+          </Link>
+          <button type="button" onClick={handleSave} disabled={saving}
+            className="btn-primary flex items-center gap-2 px-5 py-2 text-sm font-bold disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Save changes' : 'Create combo'}
+          </button>
+        </div>
+      </div>
+    </AdminFrame>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <h2 className="text-sm font-black text-white mb-4">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} {required && <span className="text-primary/70">*</span>}
+      </span>
+      {children}
+      {hint && <p className="text-[10px] text-white/40 mt-1">{hint}</p>}
+    </label>
+  );
+}
+
+const inputCls = 'w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+
+function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-start gap-3 cursor-pointer p-2 -m-2 rounded-lg hover:bg-white/[0.02]">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 mt-0.5 rounded" />
+      <div className="flex-1">
+        <p className="text-sm text-white">{label}</p>
+        {hint && <p className="text-[11px] text-white/40">{hint}</p>}
+      </div>
+    </label>
+  );
+}
+
+===== client\pages\AdminCombos.tsx =====
+/**
+ * Admin Combos Management Page (/admin/combos)
+ * Clean datatable with direct routing to /admin/combos/:id for editing.
+ */
+
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Edit2,
+  Plus,
+  Search,
+  Trash2,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
+import { SEO } from '@/components/shared/SEO';
+import { fetchCombos } from '@/api/combos';
+import { formatNaira } from '@/lib/format';
+import { toast } from 'sonner';
+import { useDialogs } from '@/components/shared/ConfirmProvider';
+
+export default function AdminCombosPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { confirm } = useDialogs();
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const { data: combos = [], isLoading } = useQuery({
+    queryKey: ['combos'],
+    queryFn: () => fetchCombos(),
+  });
+
+  const filteredCombos = combos.filter((combo: any) =>
+    combo.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    combo.tagline?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleDelete = async (id: string, name: string) => {
+    const ok = await confirm({
+      title: 'Delete combo',
+      message: `Are you sure you want to delete "${name}"? This can't be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/combos/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) throw new Error('Failed to delete combo');
+
+      toast.success(`"${name}" deleted successfully`);
+      queryClient.invalidateQueries({ queryKey: ['combos'] });
+    } catch (err: any) {
+      toast.error(err.message || 'Error deleting combo');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Manage Combos - Admin" />
+
+      {/* Header */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <div className="flex items-center gap-3">
+            <Link
+              to="/admin"
+              className="p-2 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-white/70 hover:text-white"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+            <div>
+              <h1 className="text-base font-bold text-white">Manage Combos</h1>
+              <p className="text-xs text-white/50">{combos.length} total combos available</p>
+            </div>
+          </div>
+
+          <Link
+            to="/admin/combos/new"
+            className="px-3.5 py-2 rounded-xl bg-primary text-black font-bold hover:bg-primary/90 transition-colors text-xs flex items-center gap-1.5 shadow-[0_0_20px_rgba(255,215,0,0.2)]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create New Combo</span>
+          </Link>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 section-padding py-8">
+        <div className="container-premium">
+          {/* Search Bar */}
+          <div className="flex flex-col sm:flex-row gap-3 items-center justify-between mb-6">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search combos..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-white/40 focus:outline-none focus:border-primary/50 transition-colors"
+              />
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/[0.01]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-white/5">
+                  <tr className="text-left text-xs uppercase text-white/50 tracking-wide border-b border-white/10">
+                    <th className="px-5 py-3.5">Combo Name</th>
+                    <th className="px-5 py-3.5">Price</th>
+                    <th className="px-5 py-3.5">Stock</th>
+                    <th className="px-5 py-3.5">Status</th>
+                    <th className="px-5 py-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-5 py-12 text-center text-white/40 text-sm">
+                        Loading combos...
+                      </td>
+                    </tr>
+                  ) : filteredCombos.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-5 py-12 text-center text-white/40 text-sm">
+                        No combos found.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredCombos.map((combo: any) => (
+                      <tr key={combo.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-5 py-4">
+                          <p className="text-white font-medium">{combo.name}</p>
+                          <p className="text-white/40 text-xs truncate max-w-xs">{combo.tagline}</p>
+                        </td>
+                        <td className="px-5 py-4 text-white/80 font-mono text-xs tabular-nums">
+                          {formatNaira(combo.totalPrice)}
+                        </td>
+                        <td className="px-5 py-4 text-white/80 font-mono text-xs tabular-nums">
+                          {combo.stockLeft} units
+                        </td>
+                        <td className="px-5 py-4">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                              combo.isActive
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+                                : 'bg-gray-500/15 text-gray-400 border-gray-500/25'
+                            }`}
+                          >
+                            {combo.isActive ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                            {combo.isActive ? 'ACTIVE' : 'HIDDEN'}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/admin/combos/${combo.id}`)}
+                              className="px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 text-white/80 hover:text-white transition-colors text-xs font-medium flex items-center gap-1.5"
+                            >
+                              <Edit2 className="w-3.5 h-3.5 text-primary" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(combo.id, combo.name)}
+                              className="p-1.5 rounded-lg border border-red-500/20 hover:border-red-500/40 hover:bg-red-500/10 text-red-400 transition-colors"
+                              title="Delete Combo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\pages\AdminOrders.tsx =====
+/**
+ * Admin Orders list page.
+ *
+ * Shows all orders in a table with:
+ *  - Status filter chips (All / Pending / Paid / Processing / Shipped / Delivered / Cancelled)
+ *  - Search by order number, name, phone, or email
+ *  - Pagination
+ *  - A Partner column showing who referred the order and the commission it earned
+ *  - Click any row to view detail
+ */
+
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, LogOut, Search } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { listOrders } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
+import { formatNaira } from '@/lib/format';
+import type { OrderStatus } from '@/types/order';
+import { SEO } from '@/components/shared/SEO';
+
+const STATUS_FILTERS: Array<{ value: OrderStatus | 'all'; label: string }> = [
+  { value: 'all',        label: 'All' },
+  { value: 'pending',    label: 'Pending' },
+  { value: 'paid',       label: 'Paid' },
+  { value: 'processing', label: 'Processing' },
+  { value: 'shipped',    label: 'Shipped' },
+  { value: 'delivered',  label: 'Delivered' },
+  { value: 'cancelled',  label: 'Cancelled' },
+];
+
+const STATUS_STYLES: Record<OrderStatus, string> = {
+  pending:    'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  paid:       'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  processing: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  shipped:    'bg-purple-500/15 text-purple-300 border-purple-500/25',
+  delivered:  'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
+  cancelled:  'bg-red-500/15 text-red-300 border-red-500/25',
+  refunded:   'bg-gray-500/15 text-gray-300 border-gray-500/25',
+};
+
+export default function AdminOrders() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const [status, setStatus] = useState<OrderStatus | 'all'>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-orders', status, search, page],
+    queryFn: () => listOrders({ status, search, page, limit: 25 }),
+  });
+
+  const orderIds = (data?.data ?? [])
+    .map((o) => o._id ?? o.id ?? '')
+    .filter(Boolean);
+
+  // Only orders that came through a partner's link appear in this map
+  const { data: commissions = {} } = useQuery({
+    queryKey: ['admin-commissions-by-orders', orderIds.join(',')],
+    queryFn: () => getCommissionsByOrders(orderIds),
+    enabled: orderIds.length > 0,
+  });
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearch(searchInput);
+    setPage(1);
+  };
+
+  const orders = data?.data ?? [];
+  const meta = data?.meta;
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Orders — Admin" />
+
+      {/* Top bar */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          <Link to="/admin" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+            <ArrowLeft className="w-3 h-3" />
+            Back to dashboard
+          </Link>
+
+          <div className="flex items-end justify-between mb-8">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-black text-white">Orders</h1>
+              <p className="text-white/50 text-sm mt-1">
+                {meta ? `${meta.total} total` : 'Loading...'}
+              </p>
+            </div>
+          </div>
+
+          {/* Filters + search */}
+          <div className="flex flex-col gap-3 mb-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => { setStatus(filter.value); setPage(1); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${
+                    status === filter.value
+                      ? 'bg-primary/15 border-primary/40 text-primary'
+                      : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSearch} className="relative flex-shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search by name, phone, order #..."
+                className="pl-9 pr-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30 w-full sm:w-72"
+              />
+            </form>
+          </div>
+
+          {/* Table */}
+          <div
+            className="rounded-2xl border border-white/10 overflow-hidden"
+            style={{ background: 'rgba(255,255,255,0.02)' }}
+          >
+            {isLoading ? (
+              <div className="py-20 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+              </div>
+            ) : error ? (
+              <div className="py-12 text-center text-red-400 text-sm">
+                Failed to load orders. Try refreshing.
+              </div>
+            ) : orders.length === 0 ? (
+              <div className="py-16 text-center text-white/40 text-sm">
+                No orders match your filters.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-white/5 text-xs uppercase text-white/50 tracking-wide">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Order #</th>
+                    <th className="px-4 py-3 text-left">Customer</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Items</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Partner</th>
+                    <th className="px-4 py-3 text-left">Total</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map((order) => {
+                    const id = order._id ?? order.id ?? '';
+                    const commission = commissions[id];
+                    return (
+                      <tr
+                        key={id}
+                        onClick={() => navigate(`/admin/orders/${id}`)}
+                        className="border-t border-white/5 hover:bg-white/[0.03] cursor-pointer transition-colors"
+                      >
+                        <td className="px-4 py-3 font-mono text-primary text-xs">
+                          {order.orderNumber}
+                          {order.items.some((i: any) => i.isFreeGift || String(i.name || '').startsWith('[FREE GIFT]')) && (
+                            <span className="ml-2 inline-block rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
+                              Free gift
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="text-white font-medium text-xs">{order.shipping.fullName}</p>
+                          <p className="text-white/40 text-[10px]">{order.shipping.phone}</p>
+                          {commission && (
+                            <p className="md:hidden mt-0.5 text-[10px] text-primary/80">
+                              Partner {commission.resellerCode}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-white/60 text-xs">
+                          {order.items.reduce((s, i) => s + i.quantity, 0)} item{order.items.reduce((s, i) => s + i.quantity, 0) !== 1 ? 's' : ''}
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-xs">
+                          {commission ? (
+                            <div>
+                              <p className="text-white/80 font-medium">
+                                {commission.partnerName}{' '}
+                                <span className="font-mono text-primary text-[10px]">{commission.resellerCode}</span>
+                              </p>
+                              <p className="mt-0.5 flex items-center gap-1.5 text-white/50 text-[10px]">
+                                <span className="tabular-nums">{formatNaira(commission.amount)}</span>
+                                <span
+                                  className={`font-bold px-1.5 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                                >
+                                  {COMMISSION_STATUS_LABEL[commission.status]}
+                                </span>
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-white/20">&mdash;</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-white tabular-nums font-medium text-xs">
+                          {formatNaira(order.total)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLES[order.status]}`}>
+                            {order.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-white/40 text-xs">
+                          {new Date(order.createdAt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {meta && meta.pages > 1 && (
+            <div className="flex items-center justify-between mt-6">
+              <p className="text-xs text-white/40">
+                Page {meta.page} of {meta.pages} · {meta.total} orders
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-3 h-3" /> Prev
+                </button>
+                <button
+                  type="button"
+                  disabled={page >= meta.pages}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                  Next <ChevronRight className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\pages\AdminOrderDetail.tsx =====
+/**
+ * Admin Order Detail page.
+ *
+ * Shows everything about an order:
+ *  - Customer + shipping address
+ *  - Items snapshot with prices
+ *  - Totals
+ *  - Status updater (dropdown — pending/paid/processing/shipped/delivered/cancelled)
+ *  - Tracking URL field (saved on update)
+ *  - Admin notes (private — never shown to customer)
+ *  - Payment method, paymentReference, paidAt
+ *  - Partner commission (when the order came through a partner's link)
+ */
+
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  Loader2,
+  LogOut,
+  Mail,
+  MapPin,
+  Phone,
+  Save,
+} from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { getOrder, updateOrder, updateOrderStatus } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
+import { formatNaira } from '@/lib/format';
+import type { OrderStatus } from '@/types/order';
+import { SEO } from '@/components/shared/SEO';
+import { toast } from 'sonner';
+
+const STATUS_OPTIONS: OrderStatus[] = [
+  'pending',
+  'paid',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled',
+  'refunded',
+];
+
+const STATUS_STYLES: Record<OrderStatus, string> = {
+  pending:    'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  paid:       'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  processing: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  shipped:    'bg-purple-500/15 text-purple-300 border-purple-500/25',
+  delivered:  'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
+  cancelled:  'bg-red-500/15 text-red-300 border-red-500/25',
+  refunded:   'bg-gray-500/15 text-gray-300 border-gray-500/25',
+};
+
+export default function AdminOrderDetail() {
+  const { id } = useParams<{ id: string }>();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const { data: order, isLoading, error } = useQuery({
+    queryKey: ['admin-order', id],
+    queryFn: () => getOrder(id!),
+    enabled: !!id,
+  });
+
+  // Present only when the order came through a partner's link
+  const { data: commissions } = useQuery({
+    queryKey: ['admin-commissions-by-orders', id, order?.status],
+    queryFn: () => getCommissionsByOrders([id!]),
+    enabled: !!id && !!order,
+  });
+  const commission = id ? commissions?.[id] : undefined;
+
+  const [trackingUrl, setTrackingUrl] = useState('');
+  const [adminNotes, setAdminNotes] = useState('');
+
+  // Sync local form state when order loads/changes
+  useEffect(() => {
+    if (order) {
+      setTrackingUrl(order.trackingUrl ?? '');
+      setAdminNotes(order.adminNotes ?? '');
+    }
+  }, [order]);
+
+  const statusMutation = useMutation({
+    mutationFn: (status: OrderStatus) => updateOrderStatus(id!, status),
+    onSuccess: (updated) => {
+      toast.success(`Status changed to ${updated.status}`);
+      queryClient.invalidateQueries({ queryKey: ['admin-order', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-commissions-by-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+    onError: () => toast.error('Failed to update status'),
+  });
+
+  const fieldsMutation = useMutation({
+    mutationFn: () => updateOrder(id!, { trackingUrl, adminNotes }),
+    onSuccess: () => {
+      toast.success('Order updated');
+      queryClient.invalidateQueries({ queryKey: ['admin-order', id] });
+    },
+    onError: () => toast.error('Failed to save'),
+  });
+
+  if (isLoading) {
+    return (
+      <FrameWrapper user={user} onLogout={logout}>
+        <div className="py-20 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+        </div>
+      </FrameWrapper>
+    );
+  }
+
+  if (error || !order) {
+    return (
+      <FrameWrapper user={user} onLogout={logout}>
+        <div className="py-20 text-center">
+          <p className="text-red-400 mb-4">Order not found</p>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/orders')}
+            className="text-xs text-primary hover:underline"
+          >
+            ← Back to orders
+          </button>
+        </div>
+      </FrameWrapper>
+    );
+  }
+
+  return (
+    <FrameWrapper user={user} onLogout={logout}>
+      <SEO title={`Order ${order.orderNumber} — Admin`} />
+
+      <Link to="/admin/orders" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+        <ArrowLeft className="w-3 h-3" />
+        Back to orders
+      </Link>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-white/40 mb-1">Order</p>
+          <h1 className="text-2xl md:text-3xl font-black text-white font-mono">
+            {order.orderNumber}
+          </h1>
+          <p className="text-sm text-white/50 mt-1">
+            Placed {new Date(order.createdAt).toLocaleString('en-NG', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit',
+            })}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${STATUS_STYLES[order.status]}`}>
+            {order.status.toUpperCase()}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        {/* Left: Items + customer */}
+        <div className="space-y-6">
+          <Card title="Items">
+            <div className="space-y-3">
+              {order.items.map((item, idx) => (
+                <div key={idx} className="flex items-start gap-3 pb-3 border-b border-white/5 last:border-0 last:pb-0">
+                  {item.thumbnailUrl && (
+                    <img
+                      src={item.thumbnailUrl}
+                      alt={item.name}
+                      className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0"
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white">{item.name}</p>
+                    {item.tagline && <p className="text-[11px] text-white/40">{item.tagline}</p>}
+                    <p className="text-[11px] text-white/50 mt-1">
+                      Qty {item.quantity} × {formatNaira(item.unitPrice)}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-primary tabular-nums whitespace-nowrap">
+                    {formatNaira(item.subtotal)}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-white/10 mt-5 pt-4 space-y-1.5 text-xs">
+              <Row label="Subtotal" value={formatNaira(order.subtotal)} />
+              <Row label="Shipping" value={order.shippingFee === 0 ? 'Free' : formatNaira(order.shippingFee)} />
+            </div>
+            <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+              <span className="text-sm text-white/70 font-bold">Total</span>
+              <span className="text-xl text-primary font-black tabular-nums">
+                {formatNaira(order.total)}
+              </span>
+            </div>
+          </Card>
+
+          <Card title="Customer">
+            <p className="text-sm text-white font-bold mb-2">{order.shipping.fullName}</p>
+            <div className="space-y-1.5 text-xs">
+              <p className="flex items-center gap-2 text-white/70">
+                <Phone className="w-3 h-3 text-white/40" />
+                {order.shipping.phone}
+              </p>
+              <p className="flex items-center gap-2 text-white/70">
+                <Mail className="w-3 h-3 text-white/40" />
+                {order.shipping.email}
+              </p>
+              <p className="flex items-start gap-2 text-white/70">
+                <MapPin className="w-3 h-3 text-white/40 mt-0.5 flex-shrink-0" />
+                <span>
+                  {order.shipping.street}<br />
+                  {order.shipping.landmark && <>{order.shipping.landmark}<br /></>}
+                  {order.shipping.city}, {order.shipping.state}
+                </span>
+              </p>
+            </div>
+            {order.notes && (
+              <div className="mt-3 pt-3 border-t border-white/10">
+                <p className="text-[10px] uppercase tracking-widest text-white/30 mb-1">Customer note</p>
+                <p className="text-xs text-white/60 italic">"{order.notes}"</p>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Right: Status + admin fields */}
+        <div className="space-y-6">
+          <Card title="Status">
+            <select
+              value={order.status}
+              onChange={(e) => statusMutation.mutate(e.target.value as OrderStatus)}
+              disabled={statusMutation.isPending}
+              className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-white/30 mt-2">
+              Changes save immediately.
+            </p>
+          </Card>
+
+          <Card title="Payment">
+            <div className="space-y-1.5 text-xs">
+              <Row label="Method" value={paymentLabel(order.paymentMethod)} />
+              {order.paymentReference && (
+                <Row label="Reference" value={order.paymentReference} />
+              )}
+              {order.paidAt && (
+                <Row label="Paid at" value={new Date(order.paidAt).toLocaleString('en-NG')} />
+              )}
+            </div>
+          </Card>
+
+          {commission && (
+            <Card title="Partner commission">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{commission.partnerName}</p>
+                  <p className="font-mono text-[11px] text-primary">{commission.resellerCode}</p>
+                </div>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                >
+                  {COMMISSION_STATUS_LABEL[commission.status].toUpperCase()}
+                </span>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                {commission.comboBase > 0 && (
+                  <Row
+                    label={`Combos at ${commission.comboRate}%`}
+                    value={`${formatNaira(commission.comboBase)} → ${formatNaira(Math.round((commission.comboBase * commission.comboRate) / 100))}`}
+                  />
+                )}
+                {commission.singleBase > 0 && (
+                  <Row
+                    label={`Single products at ${commission.singleRate}%`}
+                    value={`${formatNaira(commission.singleBase)} → ${formatNaira(Math.round((commission.singleBase * commission.singleRate) / 100))}`}
+                  />
+                )}
+                <div className="border-t border-white/10 pt-2 mt-2 flex items-center justify-between">
+                  <span className="text-white/70 font-bold">Commission</span>
+                  <span className="text-primary font-black tabular-nums">{formatNaira(commission.amount)}</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-white/30 mt-3">
+                Delivery is not counted. It becomes Approved {commission.holdDays} days after delivery,
+                and is cancelled automatically if the order is cancelled or refunded.
+              </p>
+            </Card>
+          )}
+
+          <Card title="Tracking URL">
+            <input
+              type="url"
+              value={trackingUrl}
+              onChange={(e) => setTrackingUrl(e.target.value)}
+              placeholder="https://courier.com/track/..."
+              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30"
+            />
+            <p className="text-[10px] text-white/30 mt-2">
+              Shown to the customer when they track this order.
+            </p>
+          </Card>
+
+          <Card title="Admin notes">
+            <textarea
+              rows={4}
+              value={adminNotes}
+              onChange={(e) => setAdminNotes(e.target.value)}
+              placeholder="Internal note (not visible to customer)..."
+              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30"
+            />
+            <button
+              type="button"
+              onClick={() => fieldsMutation.mutate()}
+              disabled={fieldsMutation.isPending}
+              className="btn-primary w-full mt-3 py-2 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {fieldsMutation.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" /> Save tracking & notes
+                </>
+              )}
+            </button>
+          </Card>
+        </div>
+      </div>
+    </FrameWrapper>
+  );
+}
+
+function paymentLabel(method: string): string {
+  const labels: Record<string, string> = {
+    bank_transfer: 'Bank transfer',
+    cod: 'Cash on delivery',
+    paystack: 'Paystack',
+    flutterwave: 'Flutterwave',
+    whatsapp: 'WhatsApp',
+  };
+  return labels[method] ?? method;
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-white/40">{label}</span>
+      <span className="text-white/80 text-right">{value}</span>
+    </div>
+  );
+}
+
+function FrameWrapper({
+  children,
+  user,
+  onLogout,
+}: {
+  children: React.ReactNode;
+  user: any;
+  onLogout: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80">View store</Link>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-6xl">
+          {children}
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\pages\AdminDashboard.tsx =====
+/**
+ * Admin Dashboard.
+ * Clean overview page with navigation to management sub-pages.
+ */
+
+import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import {
+  HelpCircle,
+  Image as ImageIcon,
+  LayoutGrid,
+  LogOut,
+  MessageCircle,
+  MessageSquareQuote,
+  Package,
+  Settings,
+  ShoppingBag,
+  Users,
+  UserPlus,
+  ArrowRight,
+  Gift,
+  Megaphone,
+  Banknote,
+} from 'lucide-react';
+import { SEO } from '@/components/shared/SEO';
+import { useAuth } from '@/contexts/AuthContext';
+import { getDashboardStats } from '@/api/adminOrders';
+import { getChatUnreadCount } from '@/api/adminChats';
+import { getResellerCounts } from '@/api/adminResellers';
+import { listWithdrawals } from '@/api/adminWithdrawals';
+import { formatNaira } from '@/lib/format';
+
+export default function AdminDashboard() {
+  const { user, logout } = useAuth();
+
+  const { data: stats } = useQuery({
+    queryKey: ['admin-stats'],
+    queryFn: getDashboardStats,
+    refetchInterval: 30000,
+  });
+
+  const { data: unreadChats = 0 } = useQuery({
+    queryKey: ['admin-chat-unread'],
+    queryFn: getChatUnreadCount,
+    refetchInterval: 15000,
+  });
+
+  const { data: payoutCounts } = useQuery({
+    queryKey: ['admin-withdrawal-counts'],
+    queryFn: () => listWithdrawals('requested').then((r) => r.counts),
+    refetchInterval: 30000,
+  });
+  const { data: resellerCounts } = useQuery({
+    queryKey: ['admin-reseller-counts'],
+    queryFn: getResellerCounts,
+    refetchInterval: 30000,
+  });
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Admin Dashboard" />
+
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          <div className="mb-8">
+            <p className="text-xs uppercase tracking-[0.28em] text-primary/70 font-bold mb-2">
+              {user?.role === 'superadmin' ? 'Super Admin' : 'Admin'}
+            </p>
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-1">
+              Welcome back, {user?.name?.split(' ')[0] ?? 'there'} 👋
+            </h1>
+            <p className="text-white/45 text-sm">Here's what's happening with your store today.</p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+            <StatCard label="Orders today" value={(stats?.ordersToday ?? 0).toString()} />
+            <StatCard label="Revenue today" value={formatNaira(stats?.revenueToday ?? 0)} />
+            <StatCard label="Pending orders" value={(stats?.pendingOrders ?? 0).toString()} />
+            <StatCard label="Customers" value={(stats?.customers ?? 0).toString()} />
+          </div>
+
+          <h2 className="text-base font-bold text-white mb-4">Manage Store</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
+            <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
+            <TileLink to="/admin/combos" Icon={ShoppingBag} label="Combos Management" desc="Add, edit, toggle visibility, and delete combos" highlight />
+            <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />
+            <TileLink to="/admin/payouts" Icon={Banknote} label="Partner Payouts" desc="Withdrawal requests to pay each week" badge={payoutCounts?.requested ?? 0} badgeLabel="to pay" />
+            <TileLink to="/admin/ads" Icon={Megaphone} label="Partner Ads" desc="Images, videos and captions partners can download" />
+            <TileLink to="/admin/gift-bank" Icon={Gift} label="Free Gift Bank" desc="Manage standalone free gift items for cart threshold rewards" />
+            <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
+            <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
+            <TileLink to="/admin/settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" />
+            <TileLink to="/admin/faqs" Icon={HelpCircle} label="FAQs" desc="Frequently asked questions" />
+            <TileLink to="/admin/testimonials" Icon={MessageSquareQuote} label="Testimonials" desc="Customer reviews shown on homepage" />
+            <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
+          </div>
+
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <p className="text-[11px] uppercase tracking-widest text-white/40 mb-1">{label}</p>
+      <p className="text-2xl font-black text-white tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function TileLink({
+  to, Icon, label, desc, disabled, badge, badgeLabel = 'pending', highlight,
+}: {
+  to: string;
+  Icon: any;
+  label: string;
+  desc: string;
+  disabled?: boolean;
+  badge?: number;
+  badgeLabel?: string;
+  highlight?: boolean;
+}) {
+  const content = (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center border ${
+          highlight 
+            ? 'bg-primary/20 border-primary/40 text-primary' 
+            : 'bg-primary/10 border-primary/20 text-primary'
+        }`}>
+          <Icon className="w-4 h-4" />
+        </div>
+        {!!badge && badge > 0 && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+            {badge} {badgeLabel}
+          </span>
+        )}
+        {disabled && (
+          <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">Soon</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
+        {highlight && <ArrowRight className="w-4 h-4 text-primary" />}
+      </div>
+      <p className="text-xs text-white/50">{desc}</p>
+    </>
+  );
+
+  const baseCls = 'block text-left p-5 rounded-2xl border transition-all';
+  const enabledCls = highlight 
+    ? 'border-primary/40 bg-primary/5 hover:border-primary hover:bg-primary/10 cursor-pointer shadow-lg shadow-primary/5' 
+    : 'border-white/10 hover:border-primary/40 cursor-pointer';
+  const disabledCls = 'border-white/5 opacity-50 cursor-not-allowed';
+
+  if (disabled) {
+    return (
+      <div className={`${baseCls} ${disabledCls}`} style={{ background: 'rgba(255,255,255,0.02)' }}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Link to={to} className={`${baseCls} ${enabledCls}`} style={!highlight ? { background: 'rgba(255,255,255,0.02)' } : undefined}>
+      {content}
+    </Link>
+  );
+}
+
+===== client\components\admin\AdminFrame.tsx =====
+/**
+ * Shared admin layout — top bar with logo, sign out, view store link.
+ * Wraps admin pages so we don't repeat the same header in every file.
+ */
+
+import { Link } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+
+export function AdminFrame({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth();
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          {children}
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\App.tsx =====
+import './global.css';
+
+import { Toaster } from '@/components/ui/toaster';
+import { createRoot } from 'react-dom/client';
+import { Toaster as Sonner } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { HelmetProvider } from 'react-helmet-async';
+
+import { SettingsProvider } from '@/contexts/SettingsContext';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
+import { ConfirmProvider } from '@/components/shared/ConfirmProvider';
+import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
+
+import Index from './pages/Index';
+import Products from './pages/Products';
+import Categories from './pages/Categories';
+import CategoryPage from './pages/CategoryPage';
+import ComboDetail from './pages/ComboDetail';
+import Checkout from './pages/Checkout';
+import OrderConfirmation from './pages/OrderConfirmation';
+import OrderTracking from './pages/OrderTracking';
+import Dashboard from './pages/Dashboard';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminLogin from './pages/AdminLogin';
+import AdminOrders from './pages/AdminOrders';
+import AdminOrderDetail from './pages/AdminOrderDetail';
+import AdminCategories from './pages/AdminCategories';
+import AdminCombos from './pages/AdminCombos';
+import AdminComboEdit from './pages/AdminComboEdit';
+import AdminHeroSlides from './pages/AdminHeroSlides';
+import AdminSettings from './pages/AdminSettings';
+import AdminFaqs from './pages/AdminFaqs';
+import AdminTestimonials from './pages/AdminTestimonials';
+import AdminTestUpload from './pages/AdminTestUpload';
+import AdminChats from './pages/AdminChats';
+import FAQ from './pages/FAQ';
+import Contact from './pages/Contact';
+import Shipping from './pages/Shipping';
+import Returns from './pages/Returns';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
+import NotFound from './pages/NotFound';
+import { AIChatLauncher } from '@/components/AIChatLauncher';
+import AdminGiftBankPage from './pages/AdminGiftBankPage';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import AdminResellers from './pages/AdminResellers';
+import PartnerPortal from './pages/PartnerPortal';
+import AdminAds from './pages/AdminAds';
+import AdminWithdrawals from './pages/AdminWithdrawals';
+import AdminPartnerSales from './pages/AdminPartnerSales';
+import { captureReferral } from "@/lib/referral";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+captureReferral();
+/** Customer-only widgets (WhatsApp button, bottom nav) are hidden on the partner and admin pages. */
+const CustomerOnly = ({ children }: { children: React.ReactNode }) => {
+  const { pathname } = useLocation();
+  if (pathname.startsWith('/admin') || pathname.startsWith('/partner')) return null;
+  return <>{children}</>;
+};
+
+const App = () => (
+  <ErrorBoundary>
+    <HelmetProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <SettingsProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <ConfirmProvider>
+              <BrowserRouter>
+                <Routes>
+                  <Route path="/" element={<Index />} />
+
+                  <Route path="/products" element={<Products />} />
+                  <Route path="/combos/:slug" element={<ComboDetail />} />
+                  <Route path="/categories" element={<Categories />} />
+                  <Route path="/categories/:slug" element={<CategoryPage />} />
+                  <Route path="/checkout" element={<Checkout />} />
+                  <Route path="/order-confirmation/:orderNumber" element={<OrderConfirmation />} />
+                  <Route path="/order-tracking" element={<OrderTracking />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+
+                  {/* Admin routes */}
+                  <Route path="/admin/login" element={<AdminLogin />} />
+                  <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
+                  <Route path="/admin/gift-bank" element={<AdminProtectedRoute><AdminGiftBankPage /></AdminProtectedRoute>} />
+                  <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/hero-slides" element={<AdminProtectedRoute><AdminHeroSlides /></AdminProtectedRoute>} />
+                  <Route path="/admin/settings" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />
+                  <Route path="/admin/faqs" element={<AdminProtectedRoute><AdminFaqs /></AdminProtectedRoute>} />
+                  <Route path="/admin/testimonials" element={<AdminProtectedRoute><AdminTestimonials /></AdminProtectedRoute>} />
+                  <Route path="/admin/chats" element={<AdminProtectedRoute><AdminChats /></AdminProtectedRoute>} />
+                  <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
+                  <Route path="/admin/resellers" element={<AdminProtectedRoute><AdminResellers /></AdminProtectedRoute>} />
+
+                  <Route path="/admin/partners/:id" element={<AdminProtectedRoute><AdminPartnerSales /></AdminProtectedRoute>} />
+                  <Route path="/admin/payouts" element={<AdminProtectedRoute><AdminWithdrawals /></AdminProtectedRoute>} />
+                  <Route path="/admin/ads" element={<AdminProtectedRoute><AdminAds /></AdminProtectedRoute>} />
+
+                  {/* Partner portal */}
+                  <Route path="/partner" element={<PartnerPortal />} />
+
+                  {/* Footer pages */}
+                  <Route path="/faq" element={<FAQ />} />
+                  <Route path="/contact" element={<Contact />} />
+                  <Route path="/shipping" element={<Shipping />} />
+                  <Route path="/returns" element={<Returns />} />
+                  <Route path="/privacy" element={<Privacy />} />
+                  <Route path="/terms" element={<Terms />} />
+
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+                <CustomerOnly>
+                  <MobileBottomNav />
+                  <AIChatLauncher />
+                </CustomerOnly>
+              </BrowserRouter>
+              </ConfirmProvider>
+            </TooltipProvider>
+          </SettingsProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </HelmetProvider>
+  </ErrorBoundary>
+);
+
+createRoot(document.getElementById('root')!).render(<App />);
+
+===== .\client\api\adminAds.ts =====
+/** Admin ads API. Destination: client/api/adminAds.ts */
+import { apiFetch } from "./client";
+
+export type AdKind = "image" | "video" | "text";
+
+export interface AdminAd {
+  id: string;
+  title: string;
+  product: string;
+  kind: AdKind;
+  url: string;
+  whatsappCaption: string;
+  instagramCaption: string;
+  tiktokCaption: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface NewAd {
+  title: string;
+  product?: string;
+  url?: string;
+  whatsappCaption?: string;
+  instagramCaption?: string;
+  tiktokCaption?: string;
+  active?: boolean;
+}
+
+interface ApiResponse<T> { data: T }
+
+export async function listAds(): Promise<AdminAd[]> {
+  return (await apiFetch<ApiResponse<AdminAd[]>>("/api/admin/ads")).data;
+}
+export async function createAd(input: NewAd): Promise<AdminAd> {
+  return (await apiFetch<ApiResponse<AdminAd>>("/api/admin/ads", { method: "POST", body: JSON.stringify(input) })).data;
+}
+export async function updateAd(id: string, patch: Partial<NewAd>): Promise<AdminAd> {
+  return (await apiFetch<ApiResponse<AdminAd>>(`/api/admin/ads/${id}`, { method: "PUT", body: JSON.stringify(patch) })).data;
+}
+export async function deleteAd(id: string): Promise<void> {
+  await apiFetch(`/api/admin/ads/${id}`, { method: "DELETE" });
+}
+
+===== .\client\api\adminChats.ts =====
+/**
+ * Admin chat API — requires admin login (token attached by apiFetch).
+ */
+
+import { apiFetch } from "./client";
+import type { ChatMessage } from "./chat";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+export interface ChatListItem {
+  id: string;
+  name: string;
+  phone: string;
+  lastMessagePreview: string;
+  lastMessageAt: string;
+  unreadForAdmin: number;
+}
+
+export interface ChatThread {
+  id: string;
+  name: string;
+  phone: string;
+  createdAt: string;
+  messages: ChatMessage[];
+}
+
+export async function listChats(): Promise<ChatListItem[]> {
+  const res = await apiFetch<ApiResponse<ChatListItem[]>>("/api/admin/chats");
+  return res.data;
+}
+
+export async function getChat(id: string): Promise<ChatThread> {
+  const res = await apiFetch<ApiResponse<ChatThread>>(`/api/admin/chats/${id}`);
+  return res.data;
+}
+
+export async function replyToChat(id: string, text: string): Promise<void> {
+  await apiFetch(`/api/admin/chats/${id}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  await apiFetch(`/api/admin/chats/${id}`, { method: "DELETE" });
+}
+
+export async function getChatUnreadCount(): Promise<number> {
+  const res = await apiFetch<ApiResponse<{ count: number }>>("/api/admin/chats/unread-count");
+  return res.data.count;
+}
+
+===== .\client\api\adminCombos.ts =====
+/**
+ * Admin combos API — frontend client.
+ * Items support both alternatives[] and colors[].
+ */
+
+import { apiFetch } from "./client";
+import type { Combo } from "@/types/combo";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+interface BackendCombo extends Omit<Combo, "id"> {
+  _id: string;
+}
+
+function normalize(raw: BackendCombo): Combo {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+interface AlternativePayload {
+  id?: string;
+  name: string;
+  badge?: string;
+  description?: string;
+  images: Array<{ url: string; alt?: string }>;
+}
+
+interface ColorPayload {
+  id?: string;
+  name: string;
+  hexCode?: string;
+  imageUrl?: string;
+}
+
+export interface ComboPayload {
+  slug?: string;
+  name: string;
+  tagline?: string;
+  totalPrice: number;
+  originalPrice: number;
+  badge?: string;
+  stockLeft: number;
+  isFeatured: boolean;
+  isActive: boolean;
+  customComboEligible: boolean;
+  items: Array<{
+    id?: string;
+    name: string;
+    badge?: string;
+    individualPrice: number;
+    images: Array<{ url: string; alt?: string }>;
+    description?: string;
+    alternatives?: AlternativePayload[];
+    colors?: ColorPayload[];
+  }>;
+  heroImage?: string;
+  categorySlugs: string[];
+}
+
+export async function listCombosAdmin(): Promise<Combo[]> {
+  const res = await apiFetch<ApiResponse<BackendCombo[]>>("/api/admin/combos");
+  return res.data.map(normalize);
+}
+
+export async function getComboAdmin(id: string): Promise<Combo> {
+  const res = await apiFetch<ApiResponse<BackendCombo>>(`/api/admin/combos/${id}`);
+  return normalize(res.data);
+}
+
+export async function createCombo(payload: ComboPayload): Promise<Combo> {
+  const res = await apiFetch<ApiResponse<BackendCombo>>("/api/admin/combos", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function updateCombo(id: string, payload: Partial<ComboPayload>): Promise<Combo> {
+  const res = await apiFetch<ApiResponse<BackendCombo>>(`/api/admin/combos/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function deleteCombo(id: string): Promise<void> {
+  await apiFetch(`/api/admin/combos/${id}`, { method: "DELETE" });
+}
+
+===== .\client\api\adminCommissions.ts =====
+/**
+ * Admin commissions API — frontend client.
+ * Destination: client/api/adminCommissions.ts
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+export type CommissionStatus = "pending" | "approved" | "paid" | "cancelled";
+
+export interface OrderCommission {
+  partnerName: string;
+  resellerCode: string;
+  /** Product price the commission was worked out from (delivery excluded) */
+  base: number;
+  /** Blended percent actually applied */
+  rate: number;
+  comboBase: number;
+  comboRate: number;
+  singleBase: number;
+  singleRate: number;
+  holdDays: number;
+  amount: number;
+  paidAt: string | null;
+  status: CommissionStatus;
+}
+
+/** Commissions for the given orders, keyed by order id. Orders without a partner are absent. */
+export async function getCommissionsByOrders(
+  ids: string[],
+): Promise<Record<string, OrderCommission>> {
+  const clean = ids.filter(Boolean);
+  if (clean.length === 0) return {};
+  const res = await apiFetch<ApiResponse<Record<string, OrderCommission>>>(
+    `/api/admin/commissions/by-orders?ids=${encodeURIComponent(clean.join(","))}`,
+  );
+  return res.data;
+}
+
+export interface ProgramSettings {
+  comboPercent: number;
+  singlePercent: number;
+  holdDays: number;
+  minWithdrawal: number;
+}
+
+export async function getProgramSettings(): Promise<ProgramSettings> {
+  const res = await apiFetch<ApiResponse<ProgramSettings>>("/api/admin/commissions/settings");
+  return res.data;
+}
+
+export async function saveProgramSettings(input: ProgramSettings): Promise<ProgramSettings> {
+  const res = await apiFetch<ApiResponse<ProgramSettings>>("/api/admin/commissions/settings", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return res.data;
+}
+
+export const COMMISSION_STATUS_LABEL: Record<CommissionStatus, string> = {
+  pending: "Pending",
+  approved: "Approved",
+  paid: "Paid",
+  cancelled: "Cancelled",
+};
+
+export const COMMISSION_STATUS_STYLE: Record<CommissionStatus, string> = {
+  pending: "bg-amber-500/15 text-amber-300 border-amber-500/25",
+  approved: "bg-emerald-500/15 text-emerald-300 border-emerald-500/25",
+  paid: "bg-blue-500/15 text-blue-300 border-blue-500/25",
+  cancelled: "bg-red-500/15 text-red-300 border-red-500/25",
+};
+
+export interface PartnerSalesRow {
+  orderId: string;
+  orderNumber: string;
+  date: string;
+  customer: string;
+  orderStatus: string;
+  deliveredAt: string | null;
+  orderTotal: number | null;
+  base: number;
+  rate: number;
+  amount: number;
+  status: CommissionStatus;
+  /** Set when this commission is part of a withdrawal request */
+  withdrawalId: string | null;
+  paidAt: string | null;
+}
+
+export interface PartnerSales {
+  partner: {
+    id: string; fullName: string; resellerCode: string; status: string;
+    phone: string; whatsapp: string; email: string;
+    bankName: string; accountNumber: string; accountName: string;
+  };
+  stats: { clicks: number; orders: number };
+  totals: Record<CommissionStatus, number>;
+  requested: number;
+  cycle: { startedAt: string; releaseAt: string } | null;
+  rows: PartnerSalesRow[];
+  withdrawals: { id: string; date: string; amount: number; orderCount: number; status: "requested" | "paid" | "rejected"; paidAt: string | null; note: string }[];
+}
+
+export async function getPartnerSales(resellerId: string): Promise<PartnerSales> {
+  const res = await apiFetch<ApiResponse<PartnerSales>>(`/api/admin/commissions/partner/${resellerId}`);
+  return res.data;
+}
+
+===== .\client\api\adminFaqs.ts =====
+/**
+ * Admin FAQs API — frontend client.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> { data: T; }
+
+export interface AdminFaq {
+  id: string;
+  question: string;
+  answer: string;
+  order: number;
+  isPublished: boolean;
+}
+
+interface BackendFaq {
+  _id: string;
+  question: string;
+  answer: string;
+  order: number;
+  isPublished: boolean;
+}
+
+function normalize(raw: BackendFaq): AdminFaq {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+export interface FaqPayload {
+  question: string;
+  answer: string;
+  order?: number;
+  isPublished?: boolean;
+}
+
+export async function listFaqsAdmin(): Promise<AdminFaq[]> {
+  const res = await apiFetch<ApiResponse<BackendFaq[]>>("/api/admin/faqs");
+  return res.data.map(normalize);
+}
+
+export async function createFaq(payload: FaqPayload): Promise<AdminFaq> {
+  const res = await apiFetch<ApiResponse<BackendFaq>>("/api/admin/faqs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function updateFaq(id: string, payload: Partial<FaqPayload>): Promise<AdminFaq> {
+  const res = await apiFetch<ApiResponse<BackendFaq>>(`/api/admin/faqs/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function deleteFaq(id: string): Promise<void> {
+  await apiFetch(`/api/admin/faqs/${id}`, { method: "DELETE" });
+}
+
+export async function reorderFaqs(ids: string[]): Promise<AdminFaq[]> {
+  const res = await apiFetch<ApiResponse<BackendFaq[]>>("/api/admin/faqs/reorder", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+  return res.data.map(normalize);
+}
+
+===== .\client\api\adminHeroSlides.ts =====
+/**
+ * Admin hero slides API — frontend client.
+ * Uses the existing schema field names.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+export interface AdminHeroSlide {
+  id: string;
+  desktopImage: string;
+  mobileImage?: string;
+  tag?: string;
+  headline?: string;
+  subtitle?: string;
+  buttonText?: string;
+  buttonLink?: string;
+  accent: string;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+interface BackendSlide {
+  _id: string;
+  desktopImage: string;
+  mobileImage?: string;
+  tag?: string;
+  headline?: string;
+  subtitle?: string;
+  buttonText?: string;
+  buttonLink?: string;
+  accent: string;
+  displayOrder: number;
+  isActive: boolean;
+}
+
+function normalize(raw: BackendSlide): AdminHeroSlide {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+export interface HeroSlidePayload {
+  desktopImage: string;
+  mobileImage?: string;
+  tag?: string;
+  headline?: string;
+  subtitle?: string;
+  buttonText?: string;
+  buttonLink?: string;
+  accent?: string;
+  displayOrder?: number;
+  isActive?: boolean;
+}
+
+export async function listHeroSlidesAdmin(): Promise<AdminHeroSlide[]> {
+  const res = await apiFetch<ApiResponse<BackendSlide[]>>("/api/admin/hero-slides");
+  return res.data.map(normalize);
+}
+
+export async function createHeroSlide(payload: HeroSlidePayload): Promise<AdminHeroSlide> {
+  const res = await apiFetch<ApiResponse<BackendSlide>>("/api/admin/hero-slides", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function updateHeroSlide(
+  id: string,
+  payload: Partial<HeroSlidePayload>,
+): Promise<AdminHeroSlide> {
+  const res = await apiFetch<ApiResponse<BackendSlide>>(`/api/admin/hero-slides/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function deleteHeroSlide(id: string): Promise<void> {
+  await apiFetch(`/api/admin/hero-slides/${id}`, { method: "DELETE" });
+}
+
+export async function reorderHeroSlides(ids: string[]): Promise<AdminHeroSlide[]> {
+  const res = await apiFetch<ApiResponse<BackendSlide[]>>(
+    "/api/admin/hero-slides/reorder",
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+  return res.data.map(normalize);
+}
+
+===== .\client\api\adminOrders.ts =====
+/**
+ * Admin orders API — frontend client.
+ *
+ * All requests go through apiFetch, which automatically attaches the
+ * admin JWT from localStorage. If the token is invalid/expired,
+ * apiFetch will throw a 401, AdminProtectedRoute redirects to login.
+ */
+
+import { apiFetch } from "./client";
+import type { Order, OrderStatus } from "@/types/order";
+
+interface ListResponse {
+  data: Order[];
+  meta: { total: number; page: number; limit: number; pages: number };
+}
+
+interface ItemResponse {
+  data: Order;
+}
+
+interface StatsResponse {
+  data: {
+    ordersToday: number;
+    revenueToday: number;
+    pendingOrders: number;
+    customers: number;
+    recentOrders: Pick<
+      Order,
+      "_id" | "orderNumber" | "status" | "total" | "createdAt"
+    > &
+      { shipping: { fullName: string } }[];
+  };
+}
+
+export interface ListOrdersParams {
+  status?: OrderStatus | "all";
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export async function listOrders(
+  params: ListOrdersParams = {},
+): Promise<ListResponse> {
+  const qs = new URLSearchParams();
+  if (params.status && params.status !== "all") qs.set("status", params.status);
+  if (params.search?.trim()) qs.set("search", params.search.trim());
+  if (params.page) qs.set("page", String(params.page));
+  if (params.limit) qs.set("limit", String(params.limit));
+
+  const query = qs.toString();
+  return apiFetch<ListResponse>(
+    `/api/admin/orders${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getOrder(id: string): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}`);
+  return res.data;
+}
+
+export async function updateOrderStatus(
+  id: string,
+  status: OrderStatus,
+): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return res.data;
+}
+
+export async function updateOrder(
+  id: string,
+  payload: { trackingUrl?: string; adminNotes?: string },
+): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function getDashboardStats() {
+  const res = await apiFetch<StatsResponse>("/api/admin/dashboard/stats");
+  return res.data;
+}
+
+===== .\client\api\adminResellers.ts =====
+/**
+ * Admin partners (resellers) API — frontend client.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+export type ResellerStatus = "pending" | "approved" | "suspended";
+
+export interface AdminReseller {
+  id: string;
+  fullName: string;
+  phone: string;
+  whatsapp: string;
+  email: string;
+  channel: string;
+  /** Payout details collected at sign-up. Empty for partners who applied before these existed. */
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  /** Private notes for the admin team. */
+  adminNotes?: string;
+  status: ResellerStatus;
+  /** Set the first time the reseller is approved. */
+  resellerCode?: string;
+  createdAt: string;
+  approvedAt?: string;
+}
+
+interface BackendReseller extends Omit<AdminReseller, "id"> {
+  _id: string;
+}
+
+function normalize(raw: BackendReseller): AdminReseller {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+export async function listResellersAdmin(params: {
+  status?: ResellerStatus;
+  q?: string;
+}): Promise<AdminReseller[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.q) qs.set("q", params.q);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const res = await apiFetch<ApiResponse<BackendReseller[]>>(`/api/admin/resellers${suffix}`);
+  return res.data.map(normalize);
+}
+
+export async function getResellerCounts(): Promise<Record<ResellerStatus, number>> {
+  const res = await apiFetch<ApiResponse<Record<ResellerStatus, number>>>(
+    "/api/admin/resellers/counts",
+  );
+  return res.data;
+}
+
+export async function setResellerStatus(
+  id: string,
+  status: "approved" | "suspended",
+): Promise<AdminReseller> {
+  const res = await apiFetch<ApiResponse<BackendReseller>>(`/api/admin/resellers/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return normalize(res.data);
+}
+
+/** Rejects (deletes) a pending application. The server refuses for anyone already approved. */
+export async function deleteReseller(id: string): Promise<void> {
+  await apiFetch(`/api/admin/resellers/${id}`, { method: "DELETE" });
+}
+
+/** Saves the private admin notes on a partner. */
+export async function saveResellerNotes(id: string, adminNotes: string): Promise<AdminReseller> {
+  const res = await apiFetch<ApiResponse<BackendReseller>>(`/api/admin/resellers/${id}/notes`, {
+    method: "PATCH",
+    body: JSON.stringify({ adminNotes }),
+  });
+  return normalize(res.data);
+}
+
+===== .\client\api\adminSettings.ts =====
+/**
+ * Admin site settings API — frontend client.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> { data: T; }
+
+export interface AdminSiteSettings {
+  storeName: string;
+  tagline: string;
+  defaultHeroImage: string;
+  /** Picture for the "All" category tile. */
+  allCategoryImage?: string;
+  hero?: {
+    headline: string;
+    subtext: string;
+  };
+  /** Pictures for the welcome popup tabs (Cloudinary URLs, max 5 each). */
+  welcomePopup?: {
+    giftImages: string[];
+    comboImages: string[];
+  };
+  promo: {
+    endsAt: string;     // ISO date string
+    enabled: boolean;
+    headline: string;
+    subline: string;
+  };
+  contact: {
+    whatsappNumber: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
+  video: {
+    url: string;
+    thumbnail: string;
+    title: string;
+    duration: string;
+  };
+  trustStats: {
+    rating: number;
+    reviewCount: number;
+  };
+  bankAccount: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  };
+  shipping: {
+    standardFee: number;
+    codCities: string[];
+    freeShippingThreshold: number;
+  };
+}
+
+export async function getAdminSettings(): Promise<AdminSiteSettings> {
+  const res = await apiFetch<ApiResponse<AdminSiteSettings>>("/api/admin/settings");
+  return res.data;
+}
+
+export async function updateAdminSettings(
+  payload: Partial<AdminSiteSettings>,
+): Promise<AdminSiteSettings> {
+  const res = await apiFetch<ApiResponse<AdminSiteSettings>>("/api/admin/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+===== .\client\api\adminTestimonials.ts =====
+/**
+ * Admin testimonials API — frontend client.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> { data: T; }
+
+export interface AdminTestimonial {
+  id: string;
+  name: string;
+  location: string;
+  rating: number;
+  text: string;
+  isVerified: boolean;
+  isPublished: boolean;
+}
+
+interface BackendTestimonial {
+  _id: string;
+  name: string;
+  location: string;
+  rating: number;
+  text: string;
+  isVerified: boolean;
+  isPublished: boolean;
+}
+
+function normalize(raw: BackendTestimonial): AdminTestimonial {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+export interface TestimonialPayload {
+  name: string;
+  location: string;
+  rating: number;
+  text: string;
+  isVerified?: boolean;
+  isPublished?: boolean;
+}
+
+export async function listTestimonialsAdmin(): Promise<AdminTestimonial[]> {
+  const res = await apiFetch<ApiResponse<BackendTestimonial[]>>("/api/admin/testimonials");
+  return res.data.map(normalize);
+}
+
+export async function createTestimonial(payload: TestimonialPayload): Promise<AdminTestimonial> {
+  const res = await apiFetch<ApiResponse<BackendTestimonial>>("/api/admin/testimonials", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function updateTestimonial(id: string, payload: Partial<TestimonialPayload>): Promise<AdminTestimonial> {
+  const res = await apiFetch<ApiResponse<BackendTestimonial>>(`/api/admin/testimonials/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function deleteTestimonial(id: string): Promise<void> {
+  await apiFetch(`/api/admin/testimonials/${id}`, { method: "DELETE" });
+}
+
+===== .\client\api\adminWithdrawals.ts =====
+/** Admin withdrawals API. Destination: client/api/adminWithdrawals.ts */
+import { apiFetch } from "./client";
+
+export type WithdrawalStatus = "requested" | "paid" | "rejected";
+
+export interface AdminWithdrawal {
+  id: string;
+  resellerId: string;
+  partnerName: string;
+  resellerCode: string;
+  amount: number;
+  orderCount: number;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  status: WithdrawalStatus;
+  paidAmount: number | null;
+  paidAt: string | null;
+  adminNote: string;
+  createdAt: string;
+}
+
+interface ApiResponse<T> { data: T }
+
+export async function listWithdrawals(status: WithdrawalStatus) {
+  return (await apiFetch<ApiResponse<{ items: AdminWithdrawal[]; counts: { requested: number } }>>(
+    `/api/admin/withdrawals?status=${status}`,
+  )).data;
+}
+export async function markWithdrawalPaid(id: string) {
+  return (await apiFetch<ApiResponse<AdminWithdrawal>>(`/api/admin/withdrawals/${id}/pay`, { method: "PATCH", body: "{}" })).data;
+}
+export async function rejectWithdrawal(id: string, note: string) {
+  return (await apiFetch<ApiResponse<AdminWithdrawal>>(`/api/admin/withdrawals/${id}/reject`, { method: "PATCH", body: JSON.stringify({ note }) })).data;
+}

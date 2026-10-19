@@ -24,6 +24,7 @@ interface AlternativePayload {
   name: string;
   badge?: string;
   description?: string;
+  costPrice?: number;
   images: Array<{ url: string; alt?: string }>;
 }
 
@@ -39,6 +40,8 @@ export interface ComboPayload {
   name: string;
   tagline?: string;
   totalPrice: number;
+  /** combo-level cost */
+  costPrice?: number;
   originalPrice: number;
   badge?: string;
   stockLeft: number;
@@ -50,6 +53,7 @@ export interface ComboPayload {
     name: string;
     badge?: string;
     individualPrice: number;
+    costPrice?: number;
     images: Array<{ url: string; alt?: string }>;
     description?: string;
     alternatives?: AlternativePayload[];

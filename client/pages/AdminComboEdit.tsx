@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -38,6 +38,7 @@ interface AlternativeForm {
   name: string;
   badge: string;
   description: string;
+  costPrice: number;
   images: Array<{ url: string; alt?: string }>;
 }
 
@@ -53,6 +54,7 @@ interface ItemForm {
   name: string;
   badge: string;
   individualPrice: number;
+  costPrice: number;
   description: string;
   images: Array<{ url: string; alt?: string }>;
   alternatives: AlternativeForm[];
@@ -67,6 +69,7 @@ interface FormState {
   originalPrice: number;
   badge: string;
   stockLeft: number;
+  costPrice: number;
   isFeatured: boolean;
   isActive: boolean;
   customComboEligible: boolean;
@@ -75,16 +78,16 @@ interface FormState {
   items: ItemForm[];
 }
 
-const EMPTY_ALT: AlternativeForm = { name: '', badge: '', description: '', images: [] };
+const EMPTY_ALT: AlternativeForm = { name: '', badge: '', description: '', costPrice: 0, images: [] };
 const EMPTY_COLOR: ColorForm = { name: '', hexCode: '', imageUrl: '' };
 const EMPTY_ITEM: ItemForm = {
-  name: '', badge: '', individualPrice: 0, description: '', images: [],
+  name: '', badge: '', individualPrice: 0, costPrice: 0, description: '', images: [],
   alternatives: [], colors: [],
 };
 
 const EMPTY_FORM: FormState = {
   slug: '', name: '', tagline: '', totalPrice: 0, originalPrice: 0, badge: '',
-  stockLeft: 0, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
+  stockLeft: 0, costPrice: 0, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
   categorySlugs: [], items: [],
 };
 
@@ -101,6 +104,7 @@ function fromCombo(combo: Combo): FormState {
     originalPrice: combo.originalPrice,
     badge: combo.badge ?? '',
     stockLeft: combo.stockLeft,
+    costPrice: (combo as any).costPrice ?? 0,
     isFeatured: combo.isFeatured,
     isActive: combo.isActive,
     customComboEligible: combo.customComboEligible ?? false,
@@ -111,6 +115,7 @@ function fromCombo(combo: Combo): FormState {
       name: item.name,
       badge: item.badge ?? '',
       individualPrice: item.individualPrice,
+      costPrice: (item as any).costPrice ?? 0,
       description: item.description ?? '',
       images: item.images ?? [],
       alternatives: (item.alternatives ?? []).map((alt) => ({
@@ -118,6 +123,7 @@ function fromCombo(combo: Combo): FormState {
         name: alt.name,
         badge: alt.badge ?? '',
         description: alt.description ?? '',
+        costPrice: (alt as any).costPrice ?? 0,
         images: alt.images ?? [],
       })),
       colors: (item.colors ?? []).map((c) => ({
@@ -138,6 +144,13 @@ export default function AdminComboEdit() {
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [slugTouched, setSlugTouched] = useState(false);
+  const [searchParams] = useSearchParams();
+  // Single product or combo. New items start from the button used; existing ones from how many items they hold.
+  const [kindChoice, setKindChoice] = useState<'single' | 'combo' | null>(null);
+  const kind: 'single' | 'combo' =
+    kindChoice ?? (isEdit ? (form.items.length > 1 ? 'combo' : 'single') : searchParams.get('type') === 'combo' ? 'combo' : 'single');
+  const isSingle = kind === 'single';
+  const noun = isSingle ? 'product' : 'combo';
   const [expandedAlts, setExpandedAlts] = useState<Set<number>>(new Set());
   const [expandedColors, setExpandedColors] = useState<Set<number>>(new Set());
 
@@ -158,6 +171,11 @@ export default function AdminComboEdit() {
     queryKey: ['categories'],
     queryFn: fetchCategories,
   });
+
+  // A single product always has exactly one item behind the scenes.
+  useEffect(() => {
+    if (isSingle && form.items.length === 0) setForm((f) => ({ ...f, items: [{ ...EMPTY_ITEM }] }));
+  }, [isSingle, form.items.length]);
 
   const handleNameChange = (name: string) => {
     setForm((f) => ({ ...f, name, slug: slugTouched ? f.slug : slugify(name) }));
@@ -311,7 +329,7 @@ export default function AdminComboEdit() {
     if (form.originalPrice < 0) return 'Original price cannot be negative';
     if (form.items.length === 0) return 'Add at least one item';
     for (const [i, item] of form.items.entries()) {
-      if (!item.name.trim()) return `Item ${i + 1}: name is required`;
+      if (!isSingle && !item.name.trim()) return `Item ${i + 1}: name is required`;
       for (const [j, alt] of item.alternatives.entries()) {
         if (!alt.name.trim()) return `Item ${i + 1} alternative ${j + 1}: name is required`;
       }
@@ -330,6 +348,7 @@ export default function AdminComboEdit() {
     originalPrice: form.originalPrice,
     badge: form.badge.trim(),
     stockLeft: form.stockLeft,
+    costPrice: form.costPrice || 0,
     isFeatured: form.isFeatured,
     isActive: form.isActive,
     customComboEligible: form.customComboEligible,
@@ -337,9 +356,10 @@ export default function AdminComboEdit() {
     categorySlugs: form.categorySlugs,
     items: form.items.map((it) => ({
       id: it.id,
-      name: it.name.trim(),
+      name: it.name.trim() || (isSingle ? form.name.trim() : ''),
       badge: it.badge.trim(),
-      individualPrice: it.individualPrice,
+      individualPrice: isSingle ? form.totalPrice : it.individualPrice,
+      costPrice: it.costPrice || 0,
       description: it.description.trim(),
       images: it.images,
       alternatives: it.alternatives.map((a) => ({
@@ -347,6 +367,7 @@ export default function AdminComboEdit() {
         name: a.name.trim(),
         badge: a.badge.trim(),
         description: a.description.trim(),
+        costPrice: a.costPrice || 0,
         images: a.images,
       })),
       colors: it.colors.map((c) => ({
@@ -408,25 +429,39 @@ export default function AdminComboEdit() {
 
       <Link to="/admin/combos" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
         <ArrowLeft className="w-3 h-3" />
-        Back to combos
+        Back to products &amp; combos
       </Link>
 
       <div className="flex items-end justify-between mb-8">
         <div>
-          <h1 className="text-2xl md:text-3xl font-black text-white">{isEdit ? 'Edit combo' : 'New combo'}</h1>
+          <h1 className="text-2xl md:text-3xl font-black text-white">{isEdit ? `Edit ${noun}` : `New ${noun}`}</h1>
           {isEdit && <p className="text-white/50 text-sm mt-1">/{form.slug}</p>}
         </div>
         <button type="button" onClick={handleSave} disabled={saving}
           className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm font-bold disabled:opacity-50">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          {isEdit ? 'Save changes' : 'Create combo'}
+          {isEdit ? 'Save changes' : `Create ${noun}`}
         </button>
       </div>
 
       <div className="space-y-6 max-w-4xl">
         <Section title="Basic info">
+          <div className="mb-4 inline-flex rounded-xl border border-white/10 p-1" role="group" aria-label="Type">
+            {([['single', 'Single product'], ['combo', 'Combo (2 or more items)']] as const).map(([k, label]) => {
+              const blocked = k === 'single' && form.items.length > 1;
+              return (
+                <button key={k} type="button" disabled={blocked}
+                  title={blocked ? 'Remove the extra items first' : undefined}
+                  onClick={() => setKindChoice(k)}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 ${
+                    kind === k ? 'bg-primary text-black' : 'text-white/60 hover:text-white'}`}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Combo name" required>
+            <Field label={isSingle ? 'Product name' : 'Combo name'} required>
               <input type="text" value={form.name} onChange={(e) => handleNameChange(e.target.value)}
                 className={inputCls} placeholder="Smart Combo Pack" />
             </Field>
@@ -446,8 +481,8 @@ export default function AdminComboEdit() {
         </Section>
 
         <Section title="Pricing & stock">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Combo price (₦)" required>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <Field label={isSingle ? 'Selling price (₦)' : 'Combo selling price (₦)'} required>
               <input type="number" value={form.totalPrice}
                 onChange={(e) => update('totalPrice', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
             </Field>
@@ -459,7 +494,12 @@ export default function AdminComboEdit() {
               <input type="number" value={form.stockLeft}
                 onChange={(e) => update('stockLeft', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
             </Field>
+            <Field label="Your cost price (₦)" hint={isSingle ? 'What you paid for one. Only you can see this.' : 'What you paid for the whole combo. Or fill each item below and it adds up.'}>
+              <input type="number" value={form.costPrice}
+                onChange={(e) => update('costPrice', parseInt(e.target.value) || 0)} className={inputCls} min={0} />
+            </Field>
           </div>
+          <CostSummary form={form} />
         </Section>
 
         <Section title="Visibility">
@@ -500,9 +540,9 @@ export default function AdminComboEdit() {
           )}
         </Section>
 
-        <Section title={`Items (${form.items.length})`}>
+        <Section title={isSingle ? 'Photos & variants' : `Items (${form.items.length})`}>
           <p className="text-xs text-white/40 mb-3">
-            Each item is one slot. Add alternatives (variants) and colors per item.
+            {isSingle ? 'Add photos, and variants or colors if customers can choose.' : 'Each item is one slot. Add alternatives (variants) and colors per item.'}
           </p>
 
           <div className="space-y-4">
@@ -512,6 +552,7 @@ export default function AdminComboEdit() {
               return (
                 <div key={idx} className="rounded-xl border border-white/10 p-4"
                   style={{ background: 'rgba(255,255,255,0.015)' }}>
+                  {!isSingle && (<>
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs uppercase tracking-widest text-primary/70 font-bold">
                       Item {idx + 1} (Default)
@@ -535,11 +576,19 @@ export default function AdminComboEdit() {
                     </Field>
                   </div>
 
-                  <Field label="Individual price (₦)">
-                    <input type="number" value={item.individualPrice}
-                      onChange={(e) => updateItem(idx, { individualPrice: parseInt(e.target.value) || 0 })}
-                      className={inputCls} min={0} />
-                  </Field>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Field label="Individual price (₦)">
+                      <input type="number" value={item.individualPrice}
+                        onChange={(e) => updateItem(idx, { individualPrice: parseInt(e.target.value) || 0 })}
+                        className={inputCls} min={0} />
+                    </Field>
+                    <Field label="Your cost price (₦)" hint="What you paid for one. Only you can see this.">
+                      <input type="number" value={item.costPrice}
+                        onChange={(e) => updateItem(idx, { costPrice: parseInt(e.target.value) || 0 })}
+                        className={inputCls} min={0} />
+                    </Field>
+                  </div>
+                  </>)}
 
                   <Field label="Description (optional)">
                     <textarea rows={2} value={item.description}
@@ -606,6 +655,11 @@ export default function AdminComboEdit() {
                                 <input type="text" value={alt.badge}
                                   onChange={(e) => updateAlternative(idx, altIdx, { badge: e.target.value })}
                                   className={inputCls} placeholder="CLASSIC" />
+                              </Field>
+                              <Field label="Cost price (₦)" hint="Only if different from the item above. 0 = same.">
+                                <input type="number" value={alt.costPrice}
+                                  onChange={(e) => updateAlternative(idx, altIdx, { costPrice: parseInt(e.target.value) || 0 })}
+                                  className={inputCls} min={0} />
                               </Field>
                             </div>
 
@@ -718,11 +772,11 @@ export default function AdminComboEdit() {
             })}
           </div>
 
-          <button type="button" onClick={addItem}
+          {!isSingle && <button type="button" onClick={addItem}
             className="mt-4 w-full py-3 rounded-xl border-2 border-dashed border-white/15 hover:border-primary/40 text-xs font-bold text-white/60 hover:text-primary flex items-center justify-center gap-2 transition-colors">
             <Plus className="w-4 h-4" />
             Add item
-          </button>
+          </button>}
         </Section>
 
         <div className="flex justify-end gap-3 pt-4">
@@ -733,11 +787,37 @@ export default function AdminComboEdit() {
           <button type="button" onClick={handleSave} disabled={saving}
             className="btn-primary flex items-center gap-2 px-5 py-2 text-sm font-bold disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isEdit ? 'Save changes' : 'Create combo'}
+            {isEdit ? 'Save changes' : `Create ${noun}`}
           </button>
         </div>
       </div>
     </AdminFrame>
+  );
+}
+
+/** Shows cost and profit for the combo, using the cost prices entered on its items (worst case when variants differ). */
+function CostSummary({ form }: { form: FormState }) {
+  if (!form.totalPrice) return null;
+  const itemsCost = form.items.reduce((sum, it) => {
+    const alts = it.alternatives.map((a) => a.costPrice || it.costPrice || 0);
+    return sum + Math.max(it.costPrice || 0, ...alts);
+  }, 0);
+  const cost = form.costPrice > 0 ? form.costPrice : itemsCost;
+  if (!cost) {
+    return (
+      <p className="mt-3 text-[11px] text-white/40">
+        Enter your cost price (what you paid) to see your profit on each sale.
+      </p>
+    );
+  }
+  const profit = form.totalPrice - cost;
+  const pct = Math.round((profit / form.totalPrice) * 100);
+  const loss = profit < 0;
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${loss ? 'border-red-500/40 bg-red-500/10 text-red-200' : 'border-emerald-500/25 bg-emerald-500/5 text-emerald-200'}`}>
+      Cost ₦{cost.toLocaleString('en-NG')} · Profit per sale ₦{profit.toLocaleString('en-NG')} ({pct}%)
+      {loss && ' — selling below cost!'}
+    </div>
   );
 }
 

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getOrder, updateOrder, updateOrderStatus } from '@/api/adminOrders';
+import { getOrderCost } from '@/api/adminProfit';
 import {
   COMMISSION_STATUS_LABEL,
   COMMISSION_STATUS_STYLE,
@@ -252,6 +253,8 @@ export default function AdminOrderDetail() {
             </p>
           </Card>
 
+          <OrderProfitCard orderId={order._id} subtotal={order.subtotal} />
+
           <Card title="Payment">
             <div className="space-y-1.5 text-xs">
               <Row label="Method" value={paymentLabel(order.paymentMethod)} />
@@ -355,6 +358,27 @@ function paymentLabel(method: string): string {
     whatsapp: 'WhatsApp',
   };
   return labels[method] ?? method;
+}
+
+/** Cost of goods and profit on the items for this order. Admin only. */
+function OrderProfitCard({ orderId, subtotal }: { orderId: string; subtotal: number }) {
+  const { data } = useQuery({ queryKey: ['admin-order-cost', orderId], queryFn: () => getOrderCost(orderId) });
+  if (!data) return null;
+  const profit = subtotal - data.totalCost;
+  return (
+    <Card title="Profit">
+      <div className="space-y-1.5 text-xs">
+        <Row label="Items sold for" value={formatNaira(subtotal)} />
+        <Row label="Cost of goods" value={formatNaira(data.totalCost)} />
+        <Row label="Profit on items" value={formatNaira(profit)} />
+      </div>
+      {!data.complete && (
+        <p className="text-[10px] text-amber-300/80 mt-2">
+          Some items had no cost price when this order was placed, so this profit may be too high.
+        </p>
+      )}
+    </Card>
+  );
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {

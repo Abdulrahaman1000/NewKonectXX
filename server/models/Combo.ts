@@ -21,6 +21,8 @@ export interface ComboItemAlternative {
   badge?: string;
   images: ProductImage[];
   description?: string;
+  /** What you paid for this variant, if different from the slot cost. Admin only. */
+  costPrice?: number;
 }
 
 export interface ComboItemColor {
@@ -37,6 +39,8 @@ export interface ComboItem {
   individualPrice: number;
   images: ProductImage[];
   description?: string;
+  /** What you paid for one unit. Admin only: hidden from every normal query. */
+  costPrice?: number;
   alternatives?: ComboItemAlternative[];
   colors?: ComboItemColor[];
 }
@@ -46,6 +50,8 @@ export interface ComboDocument extends Document {
   name: string;
   tagline: string;
   totalPrice: number;
+  /** combo-level cost: what you paid for one unit of this product/combo. Admin only. */
+  costPrice?: number;
   originalPrice: number;
   badge: string;
   stockLeft: number;
@@ -77,6 +83,7 @@ const ComboItemAlternativeSchema = new Schema<ComboItemAlternative>(
     badge: { type: String, default: "" },
     images: { type: [ProductImageSchema], default: [] },
     description: { type: String, default: "" },
+    costPrice: { type: Number, default: 0, min: 0, select: false },
   },
   { _id: false },
 );
@@ -97,6 +104,8 @@ const ComboItemSchema = new Schema<ComboItem>(
     name: { type: String, required: true },
     badge: { type: String, default: "" },
     individualPrice: { type: Number, required: true, min: 0 },
+    // select:false keeps cost prices out of every public query. Admin code asks for them explicitly.
+    costPrice: { type: Number, default: 0, min: 0, select: false },
     images: { type: [ProductImageSchema], default: [] },
     description: { type: String, default: "" },
     alternatives: { type: [ComboItemAlternativeSchema], default: [] },
@@ -118,6 +127,8 @@ const ComboSchema = new Schema<ComboDocument>(
     name: { type: String, required: true, trim: true },
     tagline: { type: String, default: "", trim: true },
     totalPrice: { type: Number, required: true, min: 0 },
+    // combo-level cost (hidden from every normal query, like the item costs)
+    costPrice: { type: Number, default: 0, min: 0, select: false },
     originalPrice: { type: Number, required: true, min: 0 },
     badge: { type: String, default: "" },
     stockLeft: { type: Number, default: 0, min: 0 },

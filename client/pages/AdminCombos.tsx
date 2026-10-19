@@ -80,18 +80,27 @@ export default function AdminCombosPage() {
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div>
-              <h1 className="text-base font-bold text-white">Manage Combos</h1>
-              <p className="text-xs text-white/50">{combos.length} total combos available</p>
+              <h1 className="text-base font-bold text-white">Products &amp; Combos</h1>
+              <p className="text-xs text-white/50">{combos.length} items in your store</p>
             </div>
           </div>
 
-          <Link
-            to="/admin/combos/new"
-            className="px-3.5 py-2 rounded-xl bg-primary text-black font-bold hover:bg-primary/90 transition-colors text-xs flex items-center gap-1.5 shadow-[0_0_20px_rgba(255,215,0,0.2)]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create New Combo</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/admin/combos/new?type=single"
+              className="px-3.5 py-2 rounded-xl bg-primary text-black font-bold hover:bg-primary/90 transition-colors text-xs flex items-center gap-1.5 shadow-[0_0_20px_rgba(255,215,0,0.2)]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add product</span>
+            </Link>
+            <Link
+              to="/admin/combos/new?type=combo"
+              className="px-3.5 py-2 rounded-xl border border-primary/40 text-primary font-bold hover:bg-primary/10 transition-colors text-xs flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add combo</span>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -104,7 +113,7 @@ export default function AdminCombosPage() {
               <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search combos..."
+                placeholder="Search products & combos..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-white/40 focus:outline-none focus:border-primary/50 transition-colors"
@@ -118,7 +127,7 @@ export default function AdminCombosPage() {
               <table className="w-full text-sm">
                 <thead className="bg-white/5">
                   <tr className="text-left text-xs uppercase text-white/50 tracking-wide border-b border-white/10">
-                    <th className="px-5 py-3.5">Combo Name</th>
+                    <th className="px-5 py-3.5">Name</th>
                     <th className="px-5 py-3.5">Price</th>
                     <th className="px-5 py-3.5">Stock</th>
                     <th className="px-5 py-3.5">Status</th>
@@ -142,7 +151,12 @@ export default function AdminCombosPage() {
                     filteredCombos.map((combo: any) => (
                       <tr key={combo.id} className="hover:bg-white/[0.02] transition-colors">
                         <td className="px-5 py-4">
-                          <p className="text-white font-medium">{combo.name}</p>
+                          <p className="text-white font-medium">
+                            {combo.name}
+                            <span className="ml-2 align-middle text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border border-white/15 text-white/50">
+                              {(combo.items?.length ?? 0) > 1 ? 'Combo' : 'Single'}
+                            </span>
+                          </p>
                           <p className="text-white/40 text-xs truncate max-w-xs">{combo.tagline}</p>
                         </td>
                         <td className="px-5 py-4 text-white/80 font-mono text-xs tabular-nums">

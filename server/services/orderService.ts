@@ -17,6 +17,7 @@ import { Gift } from "../models/Gift";
 import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
 import { SiteSettings } from "../models/SiteSettings";
 import { nextSeq } from "../models/Counter";
+import { recordOrderCost } from "./costService";
 import { config } from "../config";
 import { verifyTransaction, PaystackError } from "./paystackService";
 import {
@@ -326,6 +327,9 @@ export async function createOrder(input: CreateOrderInput) {
     }
     throw err;
   }
+
+  // Remember what these goods cost you right now, so profit stays correct if prices change later.
+  await recordOrderCost(order);
 
   const ctx = buildEmailContext(order);
   sendOrderPlaced(ctx).catch(() => {});

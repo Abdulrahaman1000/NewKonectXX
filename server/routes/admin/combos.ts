@@ -5,6 +5,7 @@
 
 import { Router, Request, Response } from "express";
 import { Combo } from "../../models/Combo";
+import { COST_SELECT } from "../../services/costService";
 
 const router = Router();
 
@@ -25,6 +26,7 @@ function ensureAlternatives(alts: any[]): any[] {
     badge: alt.badge || "",
     images: Array.isArray(alt.images) ? alt.images : [],
     description: alt.description || "",
+    costPrice: Math.max(0, Number(alt.costPrice) || 0),
   }));
 }
 
@@ -45,6 +47,7 @@ function ensureItemIds(items: any[]): any[] {
     id: item.id || slugify(item.name || `item-${i + 1}`),
     images: Array.isArray(item.images) ? item.images : [],
     individualPrice: Number(item.individualPrice) || 0,
+    costPrice: Math.max(0, Number(item.costPrice) || 0),
     alternatives: ensureAlternatives(item.alternatives),
     colors: ensureColors(item.colors),
   }));
@@ -52,7 +55,7 @@ function ensureItemIds(items: any[]): any[] {
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const combos = await Combo.find({}).sort({ createdAt: -1 }).lean();
+    const combos = await Combo.find({}).select(COST_SELECT).sort({ createdAt: -1 }).lean();
     res.json({ data: combos });
   } catch (err) {
     console.error("GET /api/admin/combos failed:", err);
@@ -62,7 +65,7 @@ router.get("/", async (_req: Request, res: Response) => {
 
 router.get("/:id", async (req: Request, res: Response) => {
   try {
-    const combo = await Combo.findById(req.params.id).lean();
+    const combo = await Combo.findById(req.params.id).select(COST_SELECT).lean();
     if (!combo) {
       return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
     }
@@ -97,6 +100,7 @@ router.post("/", async (req: Request, res: Response) => {
       name: String(body.name).trim(),
       tagline: body.tagline ?? "",
       totalPrice: Number(body.totalPrice) || 0,
+      costPrice: Math.max(0, Number(body.costPrice) || 0),
       originalPrice: Number(body.originalPrice) || 0,
       badge: body.badge ?? "",
       stockLeft: Number(body.stockLeft) || 0,
@@ -125,6 +129,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (body.name !== undefined) update.name = String(body.name).trim();
     if (body.tagline !== undefined) update.tagline = body.tagline;
     if (body.totalPrice !== undefined) update.totalPrice = Number(body.totalPrice) || 0;
+    if (body.costPrice !== undefined) update.costPrice = Math.max(0, Number(body.costPrice) || 0);
     if (body.originalPrice !== undefined) update.originalPrice = Number(body.originalPrice) || 0;
     if (body.badge !== undefined) update.badge = body.badge;
     if (body.stockLeft !== undefined) update.stockLeft = Number(body.stockLeft) || 0;
@@ -158,7 +163,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     const combo = await Combo.findByIdAndUpdate(req.params.id, update, {
       new: true,
       runValidators: true,
-    }).lean();
+    }).select(COST_SELECT).lean();
 
     if (!combo) {
       return res.status(404).json({ error: { code: "NOT_FOUND", message: "Combo not found" } });
