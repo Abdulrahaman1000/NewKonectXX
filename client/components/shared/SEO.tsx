@@ -10,7 +10,7 @@ interface Props {
 
 const DEFAULT_TITLE = 'Smart Combo — Premium Lifestyle Gadgets in Nigeria';
 const DEFAULT_DESC =
-  'Smart Watch, Audio Glasses, and Premium Bracelet — three premium pieces, one unbeatable price. Nationwide delivery via Jumia in Nigeria.';
+  'Smart Watch, Audio Glasses, and Premium Bracelet — three premium pieces, one unbeatable price. Nationwide delivery in Nigeria.';
 
 export function SEO({ title, description, image, url, type = 'website' }: Props) {
   const fullTitle = title ? `${title} | Smart Combo` : DEFAULT_TITLE;

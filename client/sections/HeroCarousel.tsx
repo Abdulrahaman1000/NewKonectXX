@@ -69,7 +69,7 @@ const HERO_BG_LIGHT = '/hero-bg-light.jpg';
 const FALLBACK_HEADLINE = 'Wear the Culture. Own the Tech.';
 const FALLBACK_SUBTEXT =
   'Bold streetwear meets smart gadgets — combos handpicked to save you money and made to stand out, wherever you go.';
-const MOBILE_SUBTEXT = 'Streetwear and gadgets in combos. Delivery nationwide via Jumia.';
+const MOBILE_SUBTEXT = 'Streetwear and gadgets in combos. Delivery nationwide.';
 const DEFAULT_CATEGORIES: HeroCategory[] = [
   { id: 'all', label: 'All', icon: '🔥' },
   { id: 'tech-gadgets', label: 'Tech', icon: '⌚' },
@@ -488,7 +488,7 @@ export function HeroCarousel({
               <Star className="w-3 h-3 fill-primary text-primary" />
               {rating}/5 · {reviewCount.toLocaleString()}+ buyers
             </span>
-            <span>Jumia delivery</span>
+            <span>Nationwide delivery</span>
             <span>14-day returns</span>
           </p>
         </div>

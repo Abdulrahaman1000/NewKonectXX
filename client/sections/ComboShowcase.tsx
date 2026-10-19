@@ -199,7 +199,7 @@ function ComboCard({ combo, whatsappLink }: { combo: Combo; whatsappLink: string
 
         <p className="text-[11px] text-white/30 text-center mt-4 flex items-center justify-center gap-2">
           <Check className="w-3 h-3 text-primary/60" />
-          Nationwide delivery via Jumia · 14-day returns · 1-year warranty
+          Nationwide delivery · 14-day returns · 1-year warranty
         </p>
       </div>
     </div>

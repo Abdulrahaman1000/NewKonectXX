@@ -206,7 +206,7 @@ export function MobileComboDetail({
         {/* Delivery & returns */}
         <div className="rounded-xl bg-white/[0.04] py-3.5 grid grid-cols-3 text-center text-xs text-white/75">
           {[
-            { Icon: Truck, label: 'Jumia delivery', sub: 'Nationwide' },
+            { Icon: Truck, label: 'Nationwide delivery', sub: 'Nationwide' },
             { Icon: RotateCcw, label: '14-day returns', sub: 'Easy & free' },
             { Icon: ShieldCheck, label: '1-year warranty', sub: 'Included' },
           ].map(({ Icon, label, sub }) => (

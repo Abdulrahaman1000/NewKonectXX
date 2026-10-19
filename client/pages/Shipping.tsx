@@ -7,33 +7,27 @@ export default function Shipping() {
   return (
     <InfoPageLayout
       title="Shipping Information"
-      description="How Smart Combo orders are delivered through Jumia, and what delivery costs."
+      description="How delivery works in Ilorin and across Nigeria, and what it costs."
       icon="📦"
     >
-      <h2>Delivered by Jumia</h2>
+      <h2>Delivery in Ilorin</h2>
       <p>
-        All Smart Combo orders are delivered through <strong>Jumia</strong>. After your order is confirmed,
-        we pack it and drop it off at a Jumia office, and Jumia delivers it to you. We deliver to all 36 states
-        of Nigeria plus the FCT.
+        Orders in Ilorin (Kwara State) are delivered by us directly. Delivery costs a flat <strong>₦1,000</strong>,
+        added to your order total at checkout, and usually arrives within 2–3 business days. Cash on Delivery is
+        available in Ilorin.
       </p>
 
-      <h2>Delivery Fees</h2>
+      <h2>Delivery outside Ilorin</h2>
+      <p>
+        We deliver to all 36 states and the FCT. Outside Ilorin, your order is sent through <strong>Jumia</strong>:
+        we pack it and drop it at a Jumia office, and Jumia delivers it to you.
+      </p>
       <ul>
-        <li><strong>Ilorin (Kwara State):</strong> a flat <strong>₦1,000</strong> delivery fee, added to your order total at checkout.</li>
-        <li><strong>Everywhere else:</strong> no delivery fee is charged by us. Jumia sets the delivery fee for your location, and you pay it <strong>directly to Jumia</strong> for their delivery service.</li>
+        <li>We do <strong>not</strong> add a delivery fee to your order on our site.</li>
+        <li>Jumia sets the delivery fee for your location, and you pay it <strong>directly to Jumia</strong>.</li>
+        <li>Delivery usually takes about 4–7 business days after we hand your order to Jumia, depending on your location.</li>
+        <li>Orders outside Ilorin must be paid online before dispatch (Cash on Delivery is Ilorin only).</li>
       </ul>
-
-      <h2>Delivery Times</h2>
-      <p>
-        Delivery times depend on Jumia and your location. Orders in Ilorin usually arrive within 2–3 business days.
-        For other cities and states, expect roughly 4–7 business days after we hand your order to Jumia.
-      </p>
-
-      <h2>Cash on Delivery</h2>
-      <p>
-        Cash on Delivery (COD) is currently available <strong>only for customers in Ilorin, Kwara State</strong>.
-        For all other locations, your order must be paid online before dispatch. Jumia's delivery fee is separate.
-      </p>
 
       <h2>Order Processing</h2>
       <p>

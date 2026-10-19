@@ -331,7 +331,7 @@ function DesktopFeatured({ combo, rotateMs = 2800 }: Props) {
 
             <p className="text-[10px] text-white/30 mt-4 flex items-center gap-1.5">
               <Check className="w-3 h-3 text-primary/60" />
-              Nationwide delivery via Jumia · 14-day returns
+              Nationwide delivery · 14-day returns
             </p>
           </div>
         </div>

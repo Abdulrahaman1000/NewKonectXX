@@ -277,7 +277,7 @@ export default function OrderConfirmation() {
 
                 <div className="border-t border-white/10 pt-4 space-y-1.5 text-xs">
                   <Row label="Subtotal" value={formatNaira(order.subtotal)} />
-                  <Row label="Delivery (Jumia)" value={order.shippingFee === 0 ? 'Paid by you to Jumia' : formatNaira(order.shippingFee)} />
+                  <Row label={order.shippingFee === 0 ? 'Delivery (Jumia)' : 'Delivery'} value={order.shippingFee === 0 ? 'Paid by you to Jumia' : formatNaira(order.shippingFee)} />
                 </div>
                 <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
                   <span className="text-sm text-white/70 font-bold">Total</span>

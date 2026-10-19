@@ -334,7 +334,7 @@ export default function Checkout() {
                         Great news — you qualify for Pay on Delivery!
                       </p>
                       <p className="text-[12px] md:text-[13px] text-emerald-100/70 leading-relaxed">
-                        Delivery in {form.city || 'your area'} is {formatNaira(LOCAL_DELIVERY_FEE)}, sent with Jumia. No upfront payment needed — pay cash when your order arrives.
+                        Delivery in {form.city || 'your area'} is {formatNaira(LOCAL_DELIVERY_FEE)}, handled by us directly. No upfront payment needed — pay cash when your order arrives.
                       </p>
                     </div>
                   </div>
@@ -453,7 +453,7 @@ export default function Checkout() {
               <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
                 <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
                 <Row
-                  label="Delivery (Jumia)"
+                  label={isCodEligible ? 'Delivery' : 'Delivery (Jumia)'}
                   value={isCodEligible ? formatNaira(estimatedShipping) : deliveredByJumiaElsewhere ? 'Paid to Jumia' : 'Enter your city'}
                 />
                 {deliveredByJumiaElsewhere && (
@@ -485,7 +485,7 @@ export default function Checkout() {
               <p className="mt-3 text-[10px] text-white/30 text-center">
                 {paymentMethod === 'paystack'
                   ? 'You will be redirected to Paystack to complete payment.'
-                  : "Delivery is handled by Jumia. Outside Ilorin you pay Jumia's delivery fee directly to Jumia."}
+                  : 'Pay cash when your order arrives.'}
               </p>
             </aside>
           </form>
