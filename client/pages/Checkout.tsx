@@ -33,6 +33,9 @@ const NIGERIAN_STATES = [
   'Taraba', 'Yobe', 'Zamfara',
 ];
 
+// Delivery in Ilorin is a flat fee. Everywhere else Jumia delivers and the customer pays Jumia directly.
+const LOCAL_DELIVERY_FEE = 1000;
+
 export default function Checkout() {
   const navigate = useNavigate();
   const {
@@ -113,9 +116,8 @@ export default function Checkout() {
     form.city.trim() !== '' &&
     codCities.some((c) => form.city.toLowerCase().trim() === c);
 
-  const standardFee = settings?.shipping?.standardFee ?? 3500;
-  const estimatedShipping =
-    paymentMethod === 'cod' && isCodEligible ? 0 : standardFee;
+  const estimatedShipping = isCodEligible ? LOCAL_DELIVERY_FEE : 0;
+  const deliveredByJumiaElsewhere = form.city.trim() !== '' && !isCodEligible;
 
   const computedSubtotal = subtotal();
   const total = computedSubtotal + estimatedShipping;
@@ -332,7 +334,7 @@ export default function Checkout() {
                         Great news — you qualify for Pay on Delivery!
                       </p>
                       <p className="text-[12px] md:text-[13px] text-emerald-100/70 leading-relaxed">
-                        FREE delivery in {form.city || 'your area'}. No upfront payment needed — pay cash to our delivery person when your combo arrives.
+                        Delivery in {form.city || 'your area'} is {formatNaira(LOCAL_DELIVERY_FEE)}, sent with Jumia. No upfront payment needed — pay cash when your order arrives.
                       </p>
                     </div>
                   </div>
@@ -363,7 +365,7 @@ export default function Checkout() {
                     title="Cash on delivery"
                     description={
                       isCodEligible
-                        ? 'Pay when delivered. Free shipping in your area.'
+                        ? `Pay when delivered. Delivery in your area is ${formatNaira(LOCAL_DELIVERY_FEE)}.`
                         : `Only available in: ${codCities.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`
                     }
                     disabled={!isCodEligible}
@@ -450,7 +452,15 @@ export default function Checkout() {
 
               <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
                 <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
-                <Row label="Shipping (estimate)" value={estimatedShipping === 0 ? 'Free' : formatNaira(estimatedShipping)} />
+                <Row
+                  label="Delivery (Jumia)"
+                  value={isCodEligible ? formatNaira(estimatedShipping) : deliveredByJumiaElsewhere ? 'Paid to Jumia' : 'Enter your city'}
+                />
+                {deliveredByJumiaElsewhere && (
+                  <p className="text-[11px] leading-relaxed text-white/45">
+                    Your order is delivered by Jumia. Jumia sets the delivery fee and you pay it directly to Jumia, not to us.
+                  </p>
+                )}
                 {savings() > 0 && <Row label="You save" value={formatNaira(savings())} accent="emerald" />}
               </div>
               <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
@@ -475,7 +485,7 @@ export default function Checkout() {
               <p className="mt-3 text-[10px] text-white/30 text-center">
                 {paymentMethod === 'paystack'
                   ? 'You will be redirected to Paystack to complete payment.'
-                  : 'Final shipping fee confirmed by us based on your delivery zone.'}
+                  : "Delivery is handled by Jumia. Outside Ilorin you pay Jumia's delivery fee directly to Jumia."}
               </p>
             </aside>
           </form>

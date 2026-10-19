@@ -57,23 +57,17 @@ async function generateOrderNumber(): Promise<string> {
   return `SC-${year}-${String(seq).padStart(6, "0")}`;
 }
 
+/** Flat delivery fee for customers in Ilorin. Everywhere else Jumia sets the price and the customer pays Jumia directly. */
+export const LOCAL_DELIVERY_FEE = 1000;
+
 async function calculateShippingFee(
-  paymentMethod: PaymentMethod,
+  _paymentMethod: PaymentMethod,
   city: string,
 ): Promise<number> {
   const settings = await SiteSettings.findOne().lean();
-  if (!settings) return 0;
-
+  const localCities = (settings?.shipping?.codCities ?? ["ilorin"]).map((c: string) => c.toLowerCase());
   const cityLower = city.trim().toLowerCase();
-  const codCities = (settings.shipping?.codCities ?? []).map((c) =>
-    c.toLowerCase(),
-  );
-
-  if (paymentMethod === "cod" && codCities.includes(cityLower)) {
-    return 0;
-  }
-
-  return settings.shipping?.standardFee ?? 0;
+  return localCities.includes(cityLower) ? LOCAL_DELIVERY_FEE : 0;
 }
 
 /**

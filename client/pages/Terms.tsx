@@ -24,8 +24,8 @@ export default function Terms() {
       <p>
         We try to show products, pictures and prices accurately, but mistakes can happen. We may correct errors and
         change prices at any time. The price that applies to your order is the price shown when you place it.
-        Prices are in Nigerian Naira (₦). Delivery fees, where they apply, are added to your order total at
-        checkout.
+        Prices are in Nigerian Naira (₦). A delivery fee of ₦1,000 applies to orders delivered in Ilorin and is added to your order total at
+        checkout. For other locations, Jumia's delivery fee is paid directly to Jumia (see Delivery below).
       </p>
 
       <h2>3. Combos</h2>
@@ -64,7 +64,8 @@ export default function Terms() {
 
       <h2>7. Delivery</h2>
       <p>
-        Delivery times are estimates, not guarantees. We are not responsible for delays caused by couriers,
+        All orders are delivered by Jumia. We hand your order to a Jumia office and Jumia delivers it to you. Outside Ilorin,
+        Jumia sets the delivery fee and you pay it directly to Jumia. Delivery times are estimates, not guarantees. We are not responsible for delays caused by Jumia, other couriers,
         weather, public holidays or events outside our control. See our <a href="/shipping">Shipping page</a> for
         details.
       </p>

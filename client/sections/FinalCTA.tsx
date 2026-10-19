@@ -54,7 +54,7 @@ export function FinalCTA({ featuredCombo, whatsappLink }: Props) {
             </a>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-white/30">
-            {['Free nationwide delivery', '14-day returns', '1-year warranty', '30-day money-back guarantee'].map(
+            {['Nationwide delivery via Jumia', '14-day returns', '1-year warranty', '30-day money-back guarantee'].map(
               (t) => (
                 <span key={t} className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-primary/50" /> {t}

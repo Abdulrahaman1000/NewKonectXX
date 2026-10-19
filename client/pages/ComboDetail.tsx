@@ -383,7 +383,7 @@ if (isMobile && combo) {
 
                 <p className="text-[11px] text-white/30 text-center mt-4 flex items-center justify-center gap-2">
                   <Check className="w-3 h-3 text-primary/60" />
-                  Free nationwide delivery � 14-day returns
+                  Nationwide delivery via Jumia � 14-day returns
                 </p>
               </div>
               )}
@@ -516,7 +516,7 @@ function SingleProductLayout({
 
           <p className="text-[11px] text-white/30 flex items-center justify-center md:justify-start gap-2 mt-4">
             <Check className="w-3 h-3 text-primary/60" />
-            Free nationwide delivery � 14-day returns
+            Nationwide delivery via Jumia � 14-day returns
           </p>
         </div>
       </div>

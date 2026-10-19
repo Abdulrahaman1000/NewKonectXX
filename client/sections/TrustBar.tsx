@@ -1,7 +1,7 @@
 import { Check, Headphones, Shield, Truck } from 'lucide-react';
 
 const ITEMS = [
-  { Icon: Truck, text: 'Free Nationwide Delivery' },
+  { Icon: Truck, text: 'Nationwide Jumia Delivery' },
   { Icon: Shield, text: '1-Year Warranty' },
   { Icon: Check, text: '14-Day Returns' },
   { Icon: Headphones, text: '24/7 WhatsApp Support' },

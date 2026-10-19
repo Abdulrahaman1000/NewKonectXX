@@ -59,7 +59,7 @@ export default function Privacy() {
       <p>We do <strong>not</strong> sell your personal data. We share it only with the services we need to run the store:</p>
       <ul>
         <li>Paystack, to take payment</li>
-        <li>Delivery companies, so your parcel reaches you (they receive your name, phone number and address)</li>
+        <li>Jumia, our delivery partner, so your parcel reaches you (they receive your name, phone number and address)</li>
         <li>Resend, which sends our order and account emails</li>
         <li>Our hosting and database providers, and Cloudinary, which stores product images</li>
         <li>Google, whose Gemini service powers our AI assistant (see section 5)</li>

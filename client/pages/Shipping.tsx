@@ -7,29 +7,32 @@ export default function Shipping() {
   return (
     <InfoPageLayout
       title="Shipping Information"
-      description="Delivery areas, times, and costs across Nigeria."
+      description="How Smart Combo orders are delivered through Jumia, and what delivery costs."
       icon="📦"
     >
-      <h2>Delivery Areas</h2>
-      <p>We deliver to all 36 states of Nigeria plus the FCT.</p>
+      <h2>Delivered by Jumia</h2>
+      <p>
+        All Smart Combo orders are delivered through <strong>Jumia</strong>. After your order is confirmed,
+        we pack it and drop it off at a Jumia office, and Jumia delivers it to you. We deliver to all 36 states
+        of Nigeria plus the FCT.
+      </p>
 
-      <h2>Delivery Times</h2>
+      <h2>Delivery Fees</h2>
       <ul>
-        <li><strong>Ilorin (Kwara State):</strong> 2–3 business days</li>
-        <li><strong>Major cities (Lagos, Abuja, Port Harcourt, Kano, Ibadan):</strong> 4–5 business days</li>
-        <li><strong>Other states:</strong> 5–7 business days</li>
+        <li><strong>Ilorin (Kwara State):</strong> a flat <strong>₦1,000</strong> delivery fee, added to your order total at checkout.</li>
+        <li><strong>Everywhere else:</strong> no delivery fee is charged by us. Jumia sets the delivery fee for your location, and you pay it <strong>directly to Jumia</strong> for their delivery service.</li>
       </ul>
 
-      <h2>Shipping Costs</h2>
+      <h2>Delivery Times</h2>
       <p>
-        We offer <strong>free nationwide delivery</strong> on all combo orders during our launch promo period.
-        After the promo, standard delivery rates will apply based on your state.
+        Delivery times depend on Jumia and your location. Orders in Ilorin usually arrive within 2–3 business days.
+        For other cities and states, expect roughly 4–7 business days after we hand your order to Jumia.
       </p>
 
       <h2>Cash on Delivery</h2>
       <p>
         Cash on Delivery (COD) is currently available <strong>only for customers in Ilorin, Kwara State</strong>.
-        For all other locations, payment must be completed online before dispatch.
+        For all other locations, your order must be paid online before dispatch. Jumia's delivery fee is separate.
       </p>
 
       <h2>Order Processing</h2>
