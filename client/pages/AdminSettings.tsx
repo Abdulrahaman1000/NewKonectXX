@@ -303,7 +303,7 @@ export default function AdminSettings() {
               />
             </Field>
           </div>
-          <Field label="COD cities" hint="Comma-separated. Cities where the flat Ilorin delivery fee (?1,000) applies and cash on delivery is allowed. Everywhere else, customers pay Jumia directly.">
+          <Field label="COD cities" hint="Comma-separated. Cities where the flat Ilorin delivery fee (₦1,000) applies and cash on delivery is allowed. Everywhere else, customers pay Jumia directly.">
             <input
               type="text"
               value={codCitiesInput}
