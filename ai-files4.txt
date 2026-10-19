@@ -1,0 +1,4135 @@
+﻿
+===== C:\Users\Systems Technologies\NewKonectXX\client\api\adminSettings.ts =====
+/**
+ * Admin site settings API — frontend client.
+ */
+
+import { apiFetch } from "./client";
+
+interface ApiResponse<T> { data: T; }
+
+export interface AdminSiteSettings {
+  storeName: string;
+  tagline: string;
+  defaultHeroImage: string;
+  /** Picture for the "All" category tile. */
+  allCategoryImage?: string;
+  hero?: {
+    headline: string;
+    subtext: string;
+  };
+  /** Pictures for the welcome popup tabs (Cloudinary URLs, max 5 each). */
+  welcomePopup?: {
+    giftImages: string[];
+    comboImages: string[];
+  };
+  promo: {
+    endsAt: string;     // ISO date string
+    enabled: boolean;
+    headline: string;
+    subline: string;
+  };
+  contact: {
+    whatsappNumber: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
+  video: {
+    url: string;
+    thumbnail: string;
+    title: string;
+    duration: string;
+  };
+  trustStats: {
+    rating: number;
+    reviewCount: number;
+  };
+  bankAccount: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  };
+  shipping: {
+    standardFee: number;
+    codCities: string[];
+    freeShippingThreshold: number;
+  };
+}
+
+export async function getAdminSettings(): Promise<AdminSiteSettings> {
+  const res = await apiFetch<ApiResponse<AdminSiteSettings>>("/api/admin/settings");
+  return res.data;
+}
+
+export async function updateAdminSettings(
+  payload: Partial<AdminSiteSettings>,
+): Promise<AdminSiteSettings> {
+  const res = await apiFetch<ApiResponse<AdminSiteSettings>>("/api/admin/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\pages\AdminOrderDetail.tsx =====
+/**
+ * Admin Order Detail page.
+ *
+ * Shows everything about an order:
+ *  - Customer + shipping address
+ *  - Items snapshot with prices
+ *  - Totals
+ *  - Status updater (dropdown — pending/paid/processing/shipped/delivered/cancelled)
+ *  - Tracking URL field (saved on update)
+ *  - Admin notes (private — never shown to customer)
+ *  - Payment method, paymentReference, paidAt
+ *  - Partner commission (when the order came through a partner's link)
+ */
+
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  Loader2,
+  LogOut,
+  Mail,
+  MapPin,
+  Phone,
+  Save,
+} from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { getOrder, updateOrder, updateOrderStatus } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
+import { formatNaira } from '@/lib/format';
+import type { OrderStatus } from '@/types/order';
+import { SEO } from '@/components/shared/SEO';
+import { toast } from 'sonner';
+
+const STATUS_OPTIONS: OrderStatus[] = [
+  'pending',
+  'paid',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled',
+  'refunded',
+];
+
+const STATUS_STYLES: Record<OrderStatus, string> = {
+  pending:    'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  paid:       'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  processing: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  shipped:    'bg-purple-500/15 text-purple-300 border-purple-500/25',
+  delivered:  'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
+  cancelled:  'bg-red-500/15 text-red-300 border-red-500/25',
+  refunded:   'bg-gray-500/15 text-gray-300 border-gray-500/25',
+};
+
+export default function AdminOrderDetail() {
+  const { id } = useParams<{ id: string }>();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const { data: order, isLoading, error } = useQuery({
+    queryKey: ['admin-order', id],
+    queryFn: () => getOrder(id!),
+    enabled: !!id,
+  });
+
+  // Present only when the order came through a partner's link
+  const { data: commissions } = useQuery({
+    queryKey: ['admin-commissions-by-orders', id, order?.status],
+    queryFn: () => getCommissionsByOrders([id!]),
+    enabled: !!id && !!order,
+  });
+  const commission = id ? commissions?.[id] : undefined;
+
+  const [trackingUrl, setTrackingUrl] = useState('');
+  const [adminNotes, setAdminNotes] = useState('');
+
+  // Sync local form state when order loads/changes
+  useEffect(() => {
+    if (order) {
+      setTrackingUrl(order.trackingUrl ?? '');
+      setAdminNotes(order.adminNotes ?? '');
+    }
+  }, [order]);
+
+  const statusMutation = useMutation({
+    mutationFn: (status: OrderStatus) => updateOrderStatus(id!, status),
+    onSuccess: (updated) => {
+      toast.success(`Status changed to ${updated.status}`);
+      queryClient.invalidateQueries({ queryKey: ['admin-order', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-commissions-by-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+    onError: () => toast.error('Failed to update status'),
+  });
+
+  const fieldsMutation = useMutation({
+    mutationFn: () => updateOrder(id!, { trackingUrl, adminNotes }),
+    onSuccess: () => {
+      toast.success('Order updated');
+      queryClient.invalidateQueries({ queryKey: ['admin-order', id] });
+    },
+    onError: () => toast.error('Failed to save'),
+  });
+
+  if (isLoading) {
+    return (
+      <FrameWrapper user={user} onLogout={logout}>
+        <div className="py-20 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+        </div>
+      </FrameWrapper>
+    );
+  }
+
+  if (error || !order) {
+    return (
+      <FrameWrapper user={user} onLogout={logout}>
+        <div className="py-20 text-center">
+          <p className="text-red-400 mb-4">Order not found</p>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/orders')}
+            className="text-xs text-primary hover:underline"
+          >
+            ← Back to orders
+          </button>
+        </div>
+      </FrameWrapper>
+    );
+  }
+
+  return (
+    <FrameWrapper user={user} onLogout={logout}>
+      <SEO title={`Order ${order.orderNumber} — Admin`} />
+
+      <Link to="/admin/orders" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+        <ArrowLeft className="w-3 h-3" />
+        Back to orders
+      </Link>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-white/40 mb-1">Order</p>
+          <h1 className="text-2xl md:text-3xl font-black text-white font-mono">
+            {order.orderNumber}
+          </h1>
+          <p className="text-sm text-white/50 mt-1">
+            Placed {new Date(order.createdAt).toLocaleString('en-NG', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit',
+            })}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${STATUS_STYLES[order.status]}`}>
+            {order.status.toUpperCase()}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        {/* Left: Items + customer */}
+        <div className="space-y-6">
+          <Card title="Items">
+            <div className="space-y-3">
+              {order.items.map((item, idx) => (
+                <div key={idx} className="flex items-start gap-3 pb-3 border-b border-white/5 last:border-0 last:pb-0">
+                  {item.thumbnailUrl && (
+                    <img
+                      src={item.thumbnailUrl}
+                      alt={item.name}
+                      className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0"
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white">{item.name}</p>
+                    {item.tagline && <p className="text-[11px] text-white/40">{item.tagline}</p>}
+                    <p className="text-[11px] text-white/50 mt-1">
+                      Qty {item.quantity} × {formatNaira(item.unitPrice)}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-primary tabular-nums whitespace-nowrap">
+                    {formatNaira(item.subtotal)}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-white/10 mt-5 pt-4 space-y-1.5 text-xs">
+              <Row label="Subtotal" value={formatNaira(order.subtotal)} />
+              <Row label="Shipping" value={order.shippingFee === 0 ? 'Free' : formatNaira(order.shippingFee)} />
+            </div>
+            <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+              <span className="text-sm text-white/70 font-bold">Total</span>
+              <span className="text-xl text-primary font-black tabular-nums">
+                {formatNaira(order.total)}
+              </span>
+            </div>
+          </Card>
+
+          <Card title="Customer">
+            <p className="text-sm text-white font-bold mb-2">{order.shipping.fullName}</p>
+            <div className="space-y-1.5 text-xs">
+              <p className="flex items-center gap-2 text-white/70">
+                <Phone className="w-3 h-3 text-white/40" />
+                {order.shipping.phone}
+              </p>
+              <p className="flex items-center gap-2 text-white/70">
+                <Mail className="w-3 h-3 text-white/40" />
+                {order.shipping.email}
+              </p>
+              <p className="flex items-start gap-2 text-white/70">
+                <MapPin className="w-3 h-3 text-white/40 mt-0.5 flex-shrink-0" />
+                <span>
+                  {order.shipping.street}<br />
+                  {order.shipping.landmark && <>{order.shipping.landmark}<br /></>}
+                  {order.shipping.city}, {order.shipping.state}
+                </span>
+              </p>
+            </div>
+            {order.notes && (
+              <div className="mt-3 pt-3 border-t border-white/10">
+                <p className="text-[10px] uppercase tracking-widest text-white/30 mb-1">Customer note</p>
+                <p className="text-xs text-white/60 italic">"{order.notes}"</p>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Right: Status + admin fields */}
+        <div className="space-y-6">
+          <Card title="Status">
+            <select
+              value={order.status}
+              onChange={(e) => statusMutation.mutate(e.target.value as OrderStatus)}
+              disabled={statusMutation.isPending}
+              className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-white/30 mt-2">
+              Changes save immediately.
+            </p>
+          </Card>
+
+          <Card title="Payment">
+            <div className="space-y-1.5 text-xs">
+              <Row label="Method" value={paymentLabel(order.paymentMethod)} />
+              {order.paymentReference && (
+                <Row label="Reference" value={order.paymentReference} />
+              )}
+              {order.paidAt && (
+                <Row label="Paid at" value={new Date(order.paidAt).toLocaleString('en-NG')} />
+              )}
+            </div>
+          </Card>
+
+          {commission && (
+            <Card title="Partner commission">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{commission.partnerName}</p>
+                  <p className="font-mono text-[11px] text-primary">{commission.resellerCode}</p>
+                </div>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                >
+                  {COMMISSION_STATUS_LABEL[commission.status].toUpperCase()}
+                </span>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                {commission.comboBase > 0 && (
+                  <Row
+                    label={`Combos at ${commission.comboRate}%`}
+                    value={`${formatNaira(commission.comboBase)} → ${formatNaira(Math.round((commission.comboBase * commission.comboRate) / 100))}`}
+                  />
+                )}
+                {commission.singleBase > 0 && (
+                  <Row
+                    label={`Single products at ${commission.singleRate}%`}
+                    value={`${formatNaira(commission.singleBase)} → ${formatNaira(Math.round((commission.singleBase * commission.singleRate) / 100))}`}
+                  />
+                )}
+                <div className="border-t border-white/10 pt-2 mt-2 flex items-center justify-between">
+                  <span className="text-white/70 font-bold">Commission</span>
+                  <span className="text-primary font-black tabular-nums">{formatNaira(commission.amount)}</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-white/30 mt-3">
+                Delivery is not counted. It becomes Approved {commission.holdDays} days after delivery,
+                and is cancelled automatically if the order is cancelled or refunded.
+              </p>
+            </Card>
+          )}
+
+          <Card title="Tracking URL">
+            <input
+              type="url"
+              value={trackingUrl}
+              onChange={(e) => setTrackingUrl(e.target.value)}
+              placeholder="https://courier.com/track/..."
+              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30"
+            />
+            <p className="text-[10px] text-white/30 mt-2">
+              Shown to the customer when they track this order.
+            </p>
+          </Card>
+
+          <Card title="Admin notes">
+            <textarea
+              rows={4}
+              value={adminNotes}
+              onChange={(e) => setAdminNotes(e.target.value)}
+              placeholder="Internal note (not visible to customer)..."
+              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30"
+            />
+            <button
+              type="button"
+              onClick={() => fieldsMutation.mutate()}
+              disabled={fieldsMutation.isPending}
+              className="btn-primary w-full mt-3 py-2 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {fieldsMutation.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" /> Save tracking & notes
+                </>
+              )}
+            </button>
+          </Card>
+        </div>
+      </div>
+    </FrameWrapper>
+  );
+}
+
+function paymentLabel(method: string): string {
+  const labels: Record<string, string> = {
+    bank_transfer: 'Bank transfer',
+    cod: 'Cash on delivery',
+    paystack: 'Paystack',
+    flutterwave: 'Flutterwave',
+    whatsapp: 'WhatsApp',
+  };
+  return labels[method] ?? method;
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-white/40">{label}</span>
+      <span className="text-white/80 text-right">{value}</span>
+    </div>
+  );
+}
+
+function FrameWrapper({
+  children,
+  user,
+  onLogout,
+}: {
+  children: React.ReactNode;
+  user: any;
+  onLogout: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80">View store</Link>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-6xl">
+          {children}
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\pages\AdminSettings.tsx =====
+/**
+ * Admin Site Settings — /admin/settings
+ * Hero Section block (headline + subtext) — editable platform hero copy.
+ * NEW: Welcome popup pictures (Free Gift tab + Build a Combo tab).
+ */
+
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Loader2, Save, X } from 'lucide-react';
+import { AdminFrame } from '@/components/admin/AdminFrame';
+import { ImageUploader } from '@/components/admin/ImageUploader';
+import { SEO } from '@/components/shared/SEO';
+import { cldUrl } from '@/lib/cloudinary';
+import {
+  AdminSiteSettings,
+  getAdminSettings,
+  updateAdminSettings,
+} from '@/api/adminSettings';
+import { toast } from 'sonner';
+
+export default function AdminSettings() {
+  const queryClient = useQueryClient();
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: getAdminSettings,
+  });
+
+  const [form, setForm] = useState<AdminSiteSettings | null>(null);
+  const [codCitiesInput, setCodCitiesInput] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setForm(settings);
+      setCodCitiesInput((settings.shipping?.codCities ?? []).join(', '));
+    }
+  }, [settings]);
+
+  const saveMut = useMutation({
+    mutationFn: (payload: Partial<AdminSiteSettings>) => updateAdminSettings(payload),
+    onSuccess: () => {
+      toast.success('Settings saved');
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Failed to save'),
+  });
+
+  if (isLoading || !form) {
+    return (
+      <AdminFrame>
+        <div className="py-20 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+        </div>
+      </AdminFrame>
+    );
+  }
+
+  const set = (path: string, value: any) => {
+    setForm((f) => {
+      if (!f) return f;
+      const next: any = JSON.parse(JSON.stringify(f));
+      const keys = path.split('.');
+      let target = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (target[keys[i]] === undefined || target[keys[i]] === null) target[keys[i]] = {};
+        target = target[keys[i]];
+      }
+      target[keys[keys.length - 1]] = value;
+      return next;
+    });
+  };
+
+  const handleSave = () => {
+    if (!form) return;
+
+    const codCities = codCitiesInput
+      .split(',')
+      .map((c) => c.trim().toLowerCase())
+      .filter(Boolean);
+
+    const payload: Partial<AdminSiteSettings> = {
+      storeName: form.storeName,
+      tagline: form.tagline,
+      allCategoryImage: form.allCategoryImage ?? '',
+      hero: form.hero,
+      welcomePopup: {
+        giftImages: form.welcomePopup?.giftImages ?? [],
+        comboImages: form.welcomePopup?.comboImages ?? [],
+      },
+      promo: form.promo,
+      contact: form.contact,
+      video: form.video,
+      trustStats: form.trustStats,
+      bankAccount: form.bankAccount,
+      shipping: { ...form.shipping, codCities },
+    };
+
+    saveMut.mutate(payload);
+  };
+
+  const promoEndsAtLocal = form.promo.endsAt
+    ? new Date(form.promo.endsAt).toISOString().slice(0, 16)
+    : '';
+
+  const saving = saveMut.isPending;
+
+  // Defensive defaults if hero / popup missing on older docs
+  const heroHeadline = form.hero?.headline ?? '';
+  const heroSubtext = form.hero?.subtext ?? '';
+  const popupGiftImages = form.welcomePopup?.giftImages ?? [];
+  const popupComboImages = form.welcomePopup?.comboImages ?? [];
+
+  return (
+    <AdminFrame>
+      <SEO title="Site Settings — Admin" />
+
+      <Link to="/admin" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+        <ArrowLeft className="w-3 h-3" />
+        Back to dashboard
+      </Link>
+
+      <div className="flex items-end justify-between mb-8">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-black text-white">Site Settings</h1>
+          <p className="text-white/50 text-sm mt-1">Hero, popup, contact info, bank, shipping, promo, and more</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          Save settings
+        </button>
+      </div>
+
+      <div className="space-y-6 max-w-4xl">
+        {/* Hero Section */}
+        <Section title="Homepage hero" subtitle="The big headline and text at the top of your homepage">
+          <Field label="Headline" hint="Keep it short and punchy — this is the biggest text on your site">
+            <input
+              type="text"
+              value={heroHeadline}
+              onChange={(e) => set('hero.headline', e.target.value)}
+              className={inputCls}
+              placeholder="Premium Combos. One Smart Price."
+            />
+          </Field>
+          <Field label="Subtext" hint="One or two sentences explaining what you offer">
+            <textarea
+              rows={3}
+              value={heroSubtext}
+              onChange={(e) => set('hero.subtext', e.target.value)}
+              className={inputCls}
+              placeholder="Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands."
+            />
+          </Field>
+        </Section>
+
+        {/* Welcome popup pictures */}
+        <Section
+          title="Welcome popup pictures"
+          subtitle="The pictures shown at the top of the welcome popup. After adding or removing pictures, click Save settings."
+        >
+          <ImageGalleryField
+            label="Free Gift tab"
+            hint="Leave empty to use the pictures from your Gift Bank instead."
+            images={popupGiftImages}
+            onChange={(imgs) => set('welcomePopup.giftImages', imgs)}
+          />
+          <ImageGalleryField
+            label="Build a Combo tab"
+            hint="Leave empty to use your combos' pictures instead."
+            images={popupComboImages}
+            onChange={(imgs) => set('welcomePopup.comboImages', imgs)}
+          />
+        </Section>
+
+        {/* Category tiles */}
+        <Section
+          title="Category tiles"
+          subtitle="The picture for every other category is set on the Categories page."
+        >
+          <div>
+            <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+              "All" tile picture
+            </span>
+            <div className="flex items-start gap-4">
+              <div className="w-28 shrink-0">
+                <ImageUploader
+                  value={form.allCategoryImage ?? ''}
+                  onChange={(url) => set('allCategoryImage', url)}
+                  aspect="square"
+                  maxSizeMB={5}
+                />
+              </div>
+              <p className="text-xs text-white/45 leading-relaxed">
+                Shown on the "All" tile on the home page and the Shop page. Use a square picture. If you
+                leave it empty, the 🔥 icon is used. Click Save settings after changing it.
+              </p>
+            </div>
+          </div>
+        </Section>
+
+        {/* Contact */}
+        <Section title="Contact info" subtitle="Shown in footer, contact page, and order receipts">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Phone (display)">
+              <input
+                type="tel"
+                value={form.contact.phone}
+                onChange={(e) => set('contact.phone', e.target.value)}
+                className={inputCls}
+                placeholder="+234 814 274 6379"
+              />
+            </Field>
+            <Field label="Email">
+              <input
+                type="email"
+                value={form.contact.email}
+                onChange={(e) => set('contact.email', e.target.value)}
+                className={inputCls}
+                placeholder="hello@smartcombo.com"
+              />
+            </Field>
+          </div>
+          <Field label="WhatsApp number" hint="Just the number, no formatting (e.g. 2348142746379)">
+            <input
+              type="text"
+              value={form.contact.whatsappNumber}
+              onChange={(e) => set('contact.whatsappNumber', e.target.value)}
+              className={inputCls}
+              placeholder="2348142746379"
+            />
+          </Field>
+          <Field label="Address">
+            <input
+              type="text"
+              value={form.contact.address}
+              onChange={(e) => set('contact.address', e.target.value)}
+              className={inputCls}
+              placeholder="Ilorin, Kwara State, Nigeria"
+            />
+          </Field>
+        </Section>
+
+        {/* Bank account */}
+        <Section title="Bank account" subtitle="Shown to customers who pick bank transfer at checkout">
+          <Field label="Bank name">
+            <input
+              type="text"
+              value={form.bankAccount.bankName}
+              onChange={(e) => set('bankAccount.bankName', e.target.value)}
+              className={inputCls}
+              placeholder="GTBank"
+            />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_220px] gap-3">
+            <Field label="Account name">
+              <input
+                type="text"
+                value={form.bankAccount.accountName}
+                onChange={(e) => set('bankAccount.accountName', e.target.value)}
+                className={inputCls}
+                placeholder="Smart Combo Ltd"
+              />
+            </Field>
+            <Field label="Account number">
+              <input
+                type="text"
+                value={form.bankAccount.accountNumber}
+                onChange={(e) => set('bankAccount.accountNumber', e.target.value)}
+                className={inputCls}
+                placeholder="0123456789"
+                inputMode="numeric"
+              />
+            </Field>
+          </div>
+        </Section>
+
+        {/* Shipping */}
+        <Section title="Shipping" subtitle="Shipping fee and free-shipping rules">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Standard shipping fee (₦)">
+              <input
+                type="number"
+                value={form.shipping.standardFee}
+                onChange={(e) => set('shipping.standardFee', Number(e.target.value) || 0)}
+                className={inputCls}
+                min={0}
+              />
+            </Field>
+            <Field label="Free shipping above (₦)" hint="0 = disabled">
+              <input
+                type="number"
+                value={form.shipping.freeShippingThreshold}
+                onChange={(e) => set('shipping.freeShippingThreshold', Number(e.target.value) || 0)}
+                className={inputCls}
+                min={0}
+              />
+            </Field>
+          </div>
+          <Field label="COD cities" hint="Comma-separated. Cities where the flat Ilorin delivery fee (₦1,000) applies and cash on delivery is allowed. Everywhere else, customers pay Jumia directly.">
+            <input
+              type="text"
+              value={codCitiesInput}
+              onChange={(e) => setCodCitiesInput(e.target.value)}
+              className={inputCls}
+              placeholder="ilorin, lagos, abuja"
+            />
+          </Field>
+        </Section>
+
+        {/* Promo */}
+        <Section title="Promo countdown" subtitle="The countdown timer shown on the homepage">
+          <label className="flex items-center gap-2 cursor-pointer mb-1">
+            <input
+              type="checkbox"
+              checked={form.promo.enabled}
+              onChange={(e) => set('promo.enabled', e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm text-white">Show promo on homepage</span>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Headline">
+              <input
+                type="text"
+                value={form.promo.headline}
+                onChange={(e) => set('promo.headline', e.target.value)}
+                className={inputCls}
+                placeholder="Special offer ending soon"
+              />
+            </Field>
+            <Field label="Subline">
+              <input
+                type="text"
+                value={form.promo.subline}
+                onChange={(e) => set('promo.subline', e.target.value)}
+                className={inputCls}
+                placeholder="Save 48% on the Smart Combo Pack"
+              />
+            </Field>
+          </div>
+          <Field label="Ends at">
+            <input
+              type="datetime-local"
+              value={promoEndsAtLocal}
+              onChange={(e) => {
+                const date = new Date(e.target.value);
+                if (!isNaN(date.getTime())) set('promo.endsAt', date.toISOString());
+              }}
+              className={inputCls}
+            />
+          </Field>
+        </Section>
+
+        {/* Trust stats */}
+        <Section title="Trust stats" subtitle="The rating + review count shown on the homepage and trust bar">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Rating (0-5)">
+              <input
+                type="number"
+                step="0.1"
+                min={0}
+                max={5}
+                value={form.trustStats.rating}
+                onChange={(e) => set('trustStats.rating', Number(e.target.value) || 0)}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Review count">
+              <input
+                type="number"
+                min={0}
+                value={form.trustStats.reviewCount}
+                onChange={(e) => set('trustStats.reviewCount', Number(e.target.value) || 0)}
+                className={inputCls}
+              />
+            </Field>
+          </div>
+        </Section>
+
+        {/* Video */}
+        <Section title="Demo video" subtitle="The video block shown on the homepage">
+          <Field label="Video URL" hint="YouTube embed URL or direct MP4">
+            <input
+              type="text"
+              value={form.video.url}
+              onChange={(e) => set('video.url', e.target.value)}
+              className={inputCls}
+              placeholder="https://www.youtube.com/embed/..."
+            />
+          </Field>
+          <Field label="Thumbnail URL">
+            <input
+              type="text"
+              value={form.video.thumbnail}
+              onChange={(e) => set('video.thumbnail', e.target.value)}
+              className={inputCls}
+              placeholder="https://..."
+            />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-3">
+            <Field label="Title">
+              <input
+                type="text"
+                value={form.video.title}
+                onChange={(e) => set('video.title', e.target.value)}
+                className={inputCls}
+                placeholder="See the combo in action"
+              />
+            </Field>
+            <Field label="Duration">
+              <input
+                type="text"
+                value={form.video.duration}
+                onChange={(e) => set('video.duration', e.target.value)}
+                className={inputCls}
+                placeholder="2:34"
+              />
+            </Field>
+          </div>
+        </Section>
+
+        {/* Store identity */}
+        <Section title="Store identity">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Store name">
+              <input
+                type="text"
+                value={form.storeName}
+                onChange={(e) => set('storeName', e.target.value)}
+                className={inputCls}
+                placeholder="Smart Combo"
+              />
+            </Field>
+            <Field label="Tagline" hint="Used in footer. The big hero headline is set in 'Homepage hero' above.">
+              <input
+                type="text"
+                value={form.tagline}
+                onChange={(e) => set('tagline', e.target.value)}
+                className={inputCls}
+                placeholder="Style · Tech · Luxury"
+              />
+            </Field>
+          </div>
+        </Section>
+
+        <div className="flex justify-end pt-4">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save settings
+          </button>
+        </div>
+      </div>
+    </AdminFrame>
+  );
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <h2 className="text-sm font-black text-white mb-1">{title}</h2>
+      {subtitle && <p className="text-[11px] text-white/40 mb-4">{subtitle}</p>}
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label}
+      </span>
+      {children}
+      {hint && <p className="text-[10px] text-white/40 mt-1">{hint}</p>}
+    </label>
+  );
+}
+
+/** Up to `max` pictures: thumbnails with a remove button, plus an upload box. */
+function ImageGalleryField({
+  label,
+  hint,
+  images,
+  onChange,
+  max = 5,
+}: {
+  label: string;
+  hint?: string;
+  images: string[];
+  onChange: (images: string[]) => void;
+  max?: number;
+}) {
+  return (
+    <div>
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} ({images.length}/{max})
+      </span>
+      <div className="flex flex-wrap gap-3 items-start">
+        {images.map((url, i) => (
+          <div
+            key={`${url}-${i}`}
+            className="relative w-28 aspect-square rounded-xl overflow-hidden border border-white/10 bg-black/30"
+          >
+            <img
+              src={cldUrl(url, 'w_300,h_300,c_fill,q_auto,f_auto')}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+            {i === 0 && (
+              <span className="absolute bottom-0 inset-x-0 bg-primary text-black text-[9px] font-black text-center py-0.5 uppercase">
+                Shown first
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => onChange(images.filter((_, j) => j !== i))}
+              aria-label="Remove picture"
+              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-red-500/80"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+        {images.length < max && (
+          <div className="w-28">
+            <ImageUploader
+              value=""
+              onChange={(url) => url && onChange([...images, url])}
+              aspect="square"
+              maxSizeMB={5}
+            />
+          </div>
+        )}
+      </div>
+      {hint && <p className="text-[10px] text-white/40 mt-1.5">{hint}</p>}
+    </div>
+  );
+}
+
+const inputCls =
+  'w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\pages\Checkout.tsx =====
+/**
+ * Checkout — now includes Paystack online payment option.
+ *
+ * Flow:
+ *  1. Customer fills shipping + picks payment method
+ *  2. Submit calls POST /api/orders → creates order
+ *  3. If method is "paystack": redirect to Paystack checkout
+ *     Otherwise: navigate straight to /order-confirmation/:orderNumber
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, CreditCard, Gift, Loader2 } from 'lucide-react';
+import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
+import { CartDrawer } from '@/components/shared/CartDrawer';
+import { GiftPicker } from '@/components/shared/GiftPicker';
+import { GIFT_THRESHOLD, useCart } from '@/stores/cart';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatNaira } from '@/lib/format';
+import { createOrder } from '@/api/orders';
+import { initializePaystack } from '@/api/payments';
+import { ApiError } from '@/api/client';
+import { fetchAvailableGifts, fetchGiftProgress, type BankGift } from '@/api/giftProgress';
+import type { PaymentMethod } from '@/types/order';
+import { toast } from 'sonner';
+
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT - Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
+
+// Delivery in Ilorin is a flat fee. Everywhere else Jumia delivers and the customer pays Jumia directly.
+const LOCAL_DELIVERY_FEE = 1000;
+
+export default function Checkout() {
+  const navigate = useNavigate();
+  const {
+    items,
+    subtotal,
+    savings,
+    clear,
+    giftCredit,
+    setGiftCredit,
+    selectFreeGift,
+    selectedFreeGift,
+    qualifiesForFreeGift,
+  } = useCart();
+  const { settings } = useSettings();
+
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paystack');
+  const [form, setForm] = useState({
+    fullName: '',
+    phone: '',
+    email: '',
+    state: '',
+    city: '',
+    street: '',
+    landmark: '',
+    notes: '',
+  });
+
+  const update = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  // ── Free gift: spending from the last 30 days (same phone number) counts too.
+  // These hooks stay above the early return for an empty cart.
+  const [gifts, setGifts] = useState<BankGift[] | null>(null);
+
+  useEffect(() => {
+    const digits = form.phone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      setGiftCredit(0);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const p = await fetchGiftProgress(form.phone);
+      if (!cancelled) setGiftCredit(p?.spent ?? 0);
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [form.phone, setGiftCredit]);
+
+  // Leaving checkout forgets the credit
+  useEffect(() => () => setGiftCredit(0), [setGiftCredit]);
+
+  const giftUnlocked = qualifiesForFreeGift();
+  const pickedGift = selectedFreeGift();
+
+  // When the gift unlocks, load the Gift Bank and pick one at random (only gifts in stock)
+  useEffect(() => {
+    if (!giftUnlocked || gifts !== null) return;
+    fetchAvailableGifts().then(setGifts);
+  }, [giftUnlocked, gifts]);
+
+  const giftRef = useRef<HTMLDivElement>(null);
+
+  // The customer picks the gift themselves (one only). Picking another replaces it.
+  const pickGift = (g: BankGift) => {
+    selectFreeGift({
+      id: g._id,
+      name: g.name,
+      image: g.images?.[0] || g.image || '',
+      price: g.price,
+    });
+  };
+
+  const codCities = (settings?.shipping?.codCities ?? ['ilorin']).map((c) => c.toLowerCase());
+  const isCodEligible =
+    form.city.trim() !== '' &&
+    codCities.some((c) => form.city.toLowerCase().trim() === c);
+
+  const estimatedShipping = isCodEligible ? LOCAL_DELIVERY_FEE : 0;
+  const deliveredByJumiaElsewhere = form.city.trim() !== '' && !isCodEligible;
+
+  const computedSubtotal = subtotal();
+  const total = computedSubtotal + estimatedShipping;
+
+  const handlePaymentChange = (method: PaymentMethod) => {
+    if (method === 'cod' && !isCodEligible) {
+      toast.error(
+        `Cash on delivery is only available in: ${codCities
+          .map((c) => c.charAt(0).toUpperCase() + c.slice(1))
+          .join(', ')}`,
+      );
+      return;
+    }
+    setPaymentMethod(method);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (items.length === 0) {
+      toast.error('Your cart is empty');
+      return;
+    }
+
+    const requiredFields: (keyof typeof form)[] = [
+      'fullName', 'phone', 'email', 'state', 'city', 'street',
+    ];
+    for (const f of requiredFields) {
+      if (!form[f]?.trim()) {
+        toast.error(`Please fill in: ${f.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+        return;
+      }
+    }
+
+    if (giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
+      toast.error('Please choose your free gift first');
+      giftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // 1. Create the order in our DB
+      const order = await createOrder({
+        items,
+        shipping: {
+          fullName: form.fullName.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim(),
+          state: form.state,
+          city: form.city.trim(),
+          street: form.street.trim(),
+          landmark: form.landmark?.trim() || undefined,
+        },
+        paymentMethod,
+        notes: form.notes?.trim() || undefined,
+      });
+
+      // 2. If Paystack, get checkout URL and redirect
+      if (paymentMethod === 'paystack') {
+        try {
+          const init = await initializePaystack(order.orderNumber);
+          // Save phone so the confirmation page can fall back to tracking
+          sessionStorage.setItem(
+            `order:${order.orderNumber}:phone`,
+            form.phone.trim(),
+          );
+          // Clear cart before leaving (order is created either way)
+          clear();
+          // Redirect to Paystack — they'll come back via callback URL
+          window.location.href = init.authorizationUrl;
+          return;
+        } catch (err) {
+          // If Paystack init fails, fall through to confirmation page —
+          // customer can still see their order and try paying again from there.
+          if (err instanceof ApiError) {
+            toast.error(`Payment setup failed: ${err.message}`);
+          } else {
+            toast.error('Could not start payment. Try again from the order page.');
+          }
+          clear();
+          navigate(`/order-confirmation/${order.orderNumber}`, {
+            state: { order, phone: form.phone.trim() },
+          });
+          return;
+        }
+      }
+
+      // 3. Other payment methods — straight to confirmation
+      clear();
+      toast.success(`Order ${order.orderNumber} placed!`);
+      navigate(`/order-confirmation/${order.orderNumber}`, {
+        state: { order, phone: form.phone.trim() },
+      });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error('Something went wrong. Please try again.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex flex-col">
+        <Header />
+        <CartDrawer />
+        <main className="flex-1 section-padding py-20">
+          <div className="container-premium text-center">
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-2">
+              Your cart is empty
+            </h1>
+            <p className="text-white/50 mb-6">Add a combo to your cart to continue.</p>
+            <Link
+              to="/products"
+              className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold"
+            >
+              View products
+            </Link>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header />
+      <CartDrawer />
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-5xl">
+          <Link
+            to="/products"
+            className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-6"
+          >
+            <ArrowLeft className="w-3 h-3" />
+            Back to products
+          </Link>
+
+          <h1 className="text-2xl md:text-3xl font-black text-white mb-2">Checkout</h1>
+          <p className="text-white/50 text-sm mb-8">
+            Confirm your details and place your order. We'll contact you shortly.
+          </p>
+
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
+            <div className="space-y-6">
+              <Section title="Contact information">
+                <Field label="Full name" required>
+                  <input type="text" value={form.fullName} onChange={(e) => update('fullName', e.target.value)} className={inputCls} placeholder="Aisha Mohammed" />
+                </Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Phone" required>
+                    <input type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value)} className={inputCls} placeholder="+234 800 000 0000" />
+                  </Field>
+                  <Field label="Email" required>
+                    <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} className={inputCls} placeholder="you@example.com" />
+                  </Field>
+                </div>
+              </Section>
+
+              {giftUnlocked && (
+                <div ref={giftRef}>
+                  <GiftPicker
+                    gifts={gifts}
+                    selectedId={pickedGift?.comboId}
+                    onPick={pickGift}
+                    credit={giftCredit}
+                  />
+                </div>
+              )}
+
+              <Section title="Delivery address">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="State" required>
+                    <select value={form.state} onChange={(e) => update('state', e.target.value)} className={inputCls}>
+                      <option value="">Select state</option>
+                      {NIGERIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="City" required>
+                    <input type="text" value={form.city} onChange={(e) => update('city', e.target.value)} className={inputCls} placeholder="Ilorin" />
+                  </Field>
+                </div>
+                <Field label="Street address" required>
+                  <input type="text" value={form.street} onChange={(e) => update('street', e.target.value)} className={inputCls} placeholder="No 12, Tanke road" />
+                </Field>
+                <Field label="Landmark (optional)">
+                  <input type="text" value={form.landmark} onChange={(e) => update('landmark', e.target.value)} className={inputCls} placeholder="Near Diamond Bank" />
+                </Field>
+                <Field label="Order notes (optional)">
+                  <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} rows={2} className={inputCls} placeholder="Anything we should know?" />
+                </Field>
+              </Section>
+
+              {/* COD_BANNER_INSERTED */}
+              {isCodEligible && (
+                <div
+                  className="rounded-2xl border border-emerald-500/40 p-4 md:p-5"
+                  style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04))' }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-5 h-5 text-emerald-300">
+                        <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm md:text-base font-black text-emerald-300 mb-0.5">
+                        Great news — you qualify for Pay on Delivery!
+                      </p>
+                      <p className="text-[12px] md:text-[13px] text-emerald-100/70 leading-relaxed">
+                        Delivery in {form.city || 'your area'} is {formatNaira(LOCAL_DELIVERY_FEE)}, handled by us directly. No upfront payment needed — pay cash when your order arrives.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <Section title="Payment method">
+                <div className="space-y-2">
+                  <PaymentOption
+                    value="paystack"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Pay online (card, transfer, USSD)"
+                    description="Secure payment via Paystack. Fastest confirmation."
+                    badge="RECOMMENDED"
+                  />
+                  <PaymentOption
+                    value="bank_transfer"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Direct bank transfer"
+                    description="Pay to our account, we confirm and ship."
+                  />
+                  <PaymentOption
+                    value="cod"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Cash on delivery"
+                    description={
+                      isCodEligible
+                        ? `Pay when delivered. Delivery in your area is ${formatNaira(LOCAL_DELIVERY_FEE)}.`
+                        : `Only available in: ${codCities.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`
+                    }
+                    disabled={!isCodEligible}
+                  />
+                  <PaymentOption
+                    value="whatsapp"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Pay via WhatsApp"
+                    description="We'll DM you with payment options."
+                  />
+                </div>
+              </Section>
+            </div>
+
+            <aside
+              className="rounded-2xl border border-primary/20 p-5 h-fit lg:sticky lg:top-24"
+              style={{ background: 'rgba(255,255,255,0.02)' }}
+            >
+              <h2 className="text-sm font-black text-white mb-4">Order summary</h2>
+
+              <div className="space-y-3 mb-4 max-h-72 overflow-y-auto">
+                {items.map((item) => (
+                  <div key={item.comboId} className="flex gap-3">
+                    {item.image && (
+                      <img src={item.image} alt={item.comboName} className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
+                      <p className="text-[10px] text-white/40">Qty {item.quantity}</p>
+                      <p className="text-xs text-primary font-bold">
+                        {item.isFreeGift ? 'FREE' : formatNaira(item.unitPrice * item.quantity)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Free gift progress */}
+              <div
+                className={`mb-4 rounded-xl border p-3 text-xs leading-relaxed ${
+                  giftUnlocked
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-primary/25 bg-primary/5 text-white/70'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <Gift className={`w-4 h-4 shrink-0 mt-0.5 ${giftUnlocked ? 'text-emerald-300' : 'text-primary'}`} />
+                  <div className="flex-1 min-w-0">
+                    {giftUnlocked ? (
+                      <>
+                        <p className="font-bold text-emerald-300">Free gift unlocked!</p>
+                        {pickedGift ? (
+                          <p className="mt-0.5">
+                            Your gift: <span className="font-semibold text-white">{pickedGift.comboName}</span>
+                            <span className="text-emerald-100/70"> (change it in the gift list)</span>
+                          </p>
+                        ) : gifts !== null && gifts.length === 0 ? (
+                          <p className="mt-0.5">No gifts are in stock right now.</p>
+                        ) : (
+                          <p className="mt-0.5">Choose one gift from the list. You can only pick one.</p>
+                        )}
+                        {giftCredit > 0 && (
+                          <p className="mt-0.5 text-emerald-100/70">
+                            Counts your {formatNaira(giftCredit)} spent in the last 30 days.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-bold text-white">
+                          Spend {formatNaira(Math.max(0, GIFT_THRESHOLD - computedSubtotal - giftCredit))} more to unlock a free gift
+                        </p>
+                        <p className="mt-0.5 text-white/55">
+                          {giftCredit > 0
+                            ? `You spent ${formatNaira(giftCredit)} with us in the last 30 days, and it counts.`
+                            : 'Purchases from the last 30 days on the same phone number add up, so you can also come back later.'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
+                <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
+                <Row
+                  label={isCodEligible ? 'Delivery' : 'Delivery (Jumia)'}
+                  value={isCodEligible ? formatNaira(estimatedShipping) : deliveredByJumiaElsewhere ? 'Paid to Jumia' : 'Enter your city'}
+                />
+                {deliveredByJumiaElsewhere && (
+                  <p className="text-[11px] leading-relaxed text-white/45">
+                    Your order is delivered by Jumia. Jumia sets the delivery fee and you pay it directly to Jumia, not to us.
+                  </p>
+                )}
+                {savings() > 0 && <Row label="You save" value={formatNaira(savings())} accent="emerald" />}
+              </div>
+              <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+                <span className="text-sm text-white/70 font-bold">Total</span>
+                <span className="text-lg text-primary font-black tabular-nums">{formatNaira(total)}</span>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn-primary w-full mt-5 py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Placing order...</>
+                ) : paymentMethod === 'paystack' ? (
+                  <><CreditCard className="w-4 h-4" />Pay {formatNaira(total)} now</>
+                ) : (
+                  <>Place order — {formatNaira(total)}</>
+                )}
+              </button>
+
+              <p className="mt-3 text-[10px] text-white/30 text-center">
+                {paymentMethod === 'paystack'
+                  ? 'You will be redirected to Paystack to complete payment.'
+                  : 'Pay cash when your order arrives.'}
+              </p>
+            </aside>
+          </form>
+        </div>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <h2 className="text-sm font-black text-white mb-4">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} {required && <span className="text-primary/70">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+const inputCls = 'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+
+function Row({ label, value, accent }: { label: string; value: string; accent?: 'emerald' }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-white/50">{label}</span>
+      <span className={`tabular-nums font-medium ${accent === 'emerald' ? 'text-emerald-400' : 'text-white/80'}`}>{value}</span>
+    </div>
+  );
+}
+
+function PaymentOption({
+  value, selected, onSelect, title, description, disabled, badge,
+}: {
+  value: PaymentMethod;
+  selected: PaymentMethod;
+  onSelect: (m: PaymentMethod) => void;
+  title: string;
+  description: string;
+  disabled?: boolean;
+  badge?: string;
+}) {
+  const isSelected = selected === value;
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onSelect(value)}
+      disabled={disabled}
+      className={`w-full text-left p-3 rounded-lg border transition-colors ${
+        isSelected
+          ? 'border-primary/50 bg-primary/5'
+          : disabled
+          ? 'border-white/5 bg-white/[0.01] opacity-50 cursor-not-allowed'
+          : 'border-white/10 hover:border-white/30'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`w-4 h-4 rounded-full border flex-shrink-0 mt-0.5 ${isSelected ? 'border-primary bg-primary' : 'border-white/30'}`}>
+          {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-white">{title}</p>
+            {badge && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-white/50">{description}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\pages\OrderConfirmation.tsx =====
+/**
+ * Order Confirmation page.
+ *
+ * Reached three ways:
+ *  1. From Checkout via state navigation (we have the order data already)
+ *  2. From Paystack callback (URL has ?ref=... query — we verify, then show)
+ *  3. Direct URL with :orderNumber (we ask for phone to look up)
+ *
+ * For Paystack, the URL looks like:
+ *   /order-confirmation/SC-2026-000010?ref=SC-2026-000010-1715175263000
+ *
+ * On detecting `ref`, we:
+ *  - Call /api/payments/verify/:reference
+ *  - If paid → load the now-paid order
+ *  - If not → show "payment incomplete" with retry option
+ */
+
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  CreditCard,
+  Loader2,
+  MessageCircle,
+  Package,
+} from 'lucide-react';
+import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
+import { CartDrawer } from '@/components/shared/CartDrawer';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatNaira } from '@/lib/format';
+import { trackOrder } from '@/api/orders';
+import { initializePaystack, verifyPaystackPayment } from '@/api/payments';
+import type { Order } from '@/types/order';
+import { toast } from 'sonner';
+
+export default function OrderConfirmation() {
+  const { orderNumber } = useParams<{ orderNumber: string }>();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { settings } = useSettings();
+
+  const stateOrder = (location.state as { order?: Order; phone?: string } | null)?.order;
+  const statePhone = (location.state as { order?: Order; phone?: string } | null)?.phone;
+  const paystackRef = searchParams.get('ref');
+
+  const [order, setOrder] = useState<Order | null>(stateOrder ?? null);
+  const [loading, setLoading] = useState(!stateOrder || !!paystackRef);
+  const [copied, setCopied] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<
+    'idle' | 'verifying' | 'paid' | 'failed' | 'abandoned'
+  >('idle');
+  const [retryingPayment, setRetryingPayment] = useState(false);
+
+  const [phoneInput, setPhoneInput] = useState(
+    statePhone ?? (orderNumber ? sessionStorage.getItem(`order:${orderNumber}:phone`) ?? '' : ''),
+  );
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+
+  const fetchOrder = async (phone: string) => {
+    if (!orderNumber || !phone) return;
+    try {
+      const fetched = await trackOrder(orderNumber, phone.trim());
+      if (fetched) setOrder(fetched);
+      else setRecoveryError("We couldn't find an order with those details.");
+    } catch {
+      setRecoveryError('Something went wrong. Try again.');
+    }
+  };
+
+  // Step 1: handle Paystack return
+  useEffect(() => {
+    let cancelled = false;
+    async function handle() {
+      if (!paystackRef) {
+        if (!order && statePhone) await fetchOrder(statePhone);
+        if (!cancelled) setLoading(false);
+        return;
+      }
+      setPaymentStatus('verifying');
+      try {
+        const result = await verifyPaystackPayment(paystackRef);
+        if (cancelled) return;
+        if (result.paid) {
+          setPaymentStatus('paid');
+          // Load the now-paid order
+          const phone = statePhone || sessionStorage.getItem(`order:${orderNumber}:phone`) || '';
+          if (phone) await fetchOrder(phone);
+          toast.success('Payment confirmed! 🎉');
+        } else {
+          setPaymentStatus(
+            result.status === 'abandoned' ? 'abandoned' : 'failed',
+          );
+          // Try to load order anyway (status will still be 'pending')
+          const phone = statePhone || sessionStorage.getItem(`order:${orderNumber}:phone`) || '';
+          if (phone) await fetchOrder(phone);
+        }
+      } catch {
+        if (!cancelled) {
+          setPaymentStatus('failed');
+          toast.error('Payment verification failed. Please try again.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    handle();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line
+
+  const handleRecoveryFetch = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setRecoveryError(null);
+    setLoading(true);
+    await fetchOrder(phoneInput.trim());
+    setLoading(false);
+  };
+
+  const copyOrderNumber = () => {
+    if (!order) return;
+    navigator.clipboard.writeText(order.orderNumber).then(() => {
+      setCopied(true);
+      toast.success('Order number copied');
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const retryPaystack = async () => {
+    if (!order) return;
+    setRetryingPayment(true);
+    try {
+      const init = await initializePaystack(order.orderNumber);
+      window.location.href = init.authorizationUrl;
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not start payment');
+    } finally {
+      setRetryingPayment(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header />
+      <CartDrawer />
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-3xl">
+          {/* Need phone — direct URL access without state */}
+          {!order && !loading && (
+            <div className="rounded-2xl border border-white/10 p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <h1 className="text-xl font-black text-white mb-2">
+                Confirm your order details
+              </h1>
+              <p className="text-sm text-white/50 mb-4">
+                Enter the phone number used for order <span className="font-bold text-white/80">{orderNumber}</span>.
+              </p>
+              <form onSubmit={handleRecoveryFetch} className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="+234 800 000 0000"
+                  className="flex-1 px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white"
+                />
+                <button type="submit" className="btn-primary px-5 py-2.5 text-sm font-bold">
+                  Continue
+                </button>
+              </form>
+              {recoveryError && <p className="mt-3 text-xs text-red-400">{recoveryError}</p>}
+            </div>
+          )}
+
+          {loading && (
+            <div className="text-center py-16">
+              <Loader2 className="w-10 h-10 animate-spin text-primary mx-auto" />
+              <p className="text-white/50 text-sm mt-4">
+                {paymentStatus === 'verifying'
+                  ? 'Verifying your payment...'
+                  : 'Loading your order...'}
+              </p>
+            </div>
+          )}
+
+          {order && (
+            <>
+              {/* Hero — varies by payment status */}
+              {paymentStatus === 'failed' || paymentStatus === 'abandoned' ? (
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle className="w-8 h-8 text-amber-400" />
+                  </div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-amber-400 font-bold mb-2">
+                    Payment {paymentStatus === 'abandoned' ? 'cancelled' : 'incomplete'}
+                  </p>
+                  <h1 className="text-2xl md:text-3xl font-black text-white mb-3">
+                    Your order is held for {order.shipping.fullName.split(' ')[0]}
+                  </h1>
+                  <p className="text-white/50 text-sm max-w-md mx-auto mb-6">
+                    Your order is created and stock is reserved. Complete payment below to ship it out.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={retryPaystack}
+                    disabled={retryingPayment}
+                    className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold disabled:opacity-50"
+                  >
+                    {retryingPayment ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />Loading...</>
+                    ) : (
+                      <><CreditCard className="w-4 h-4" />Pay {formatNaira(order.total)} now</>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center mb-8">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
+                    <Check className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-emerald-400 font-bold mb-2">
+                    {paymentStatus === 'paid' ? 'Payment confirmed' : 'Order received'}
+                  </p>
+                  <h1 className="text-2xl md:text-3xl font-black text-white mb-3">
+                    Thank you, {order.shipping.fullName.split(' ')[0]} 🎉
+                  </h1>
+                  <p className="text-white/50 text-sm max-w-md mx-auto">
+                    {paymentStatus === 'paid'
+                      ? "We've received your payment. Your combo is being prepared for shipment."
+                      : "We've received your order and will be in touch shortly."}
+                  </p>
+                </div>
+              )}
+
+              {/* Order number */}
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-primary/30 bg-primary/5">
+                  <span className="text-xs text-white/50">Order #</span>
+                  <span className="font-mono font-bold text-primary">{order.orderNumber}</span>
+                  <button
+                    type="button"
+                    onClick={copyOrderNumber}
+                    className="ml-1 text-white/40 hover:text-primary transition-colors"
+                    aria-label="Copy"
+                  >
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Payment instructions (only for non-Paystack methods OR if Paystack failed) */}
+              {paymentStatus !== 'paid' && order.status !== 'paid' && order.status !== 'processing' && order.status !== 'shipped' && order.status !== 'delivered' && (
+                <PaymentInstructions order={order} settings={settings} />
+              )}
+
+              {/* Order details */}
+              <div className="rounded-2xl border border-white/10 p-5 mb-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <h2 className="text-sm font-black text-white mb-4 flex items-center gap-2">
+                  <Package className="w-4 h-4 text-primary" />
+                  Order details
+                </h2>
+
+                <div className="space-y-3 mb-4">
+                  {order.items.map((item, idx) => (
+                    <div key={idx} className="flex gap-3 items-start">
+                      {item.thumbnailUrl && (
+                        <img src={item.thumbnailUrl} alt={item.name} className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                      )}
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-white">{item.name}</p>
+                        <p className="text-[11px] text-white/40">Qty {item.quantity}</p>
+                      </div>
+                      <p className="text-sm font-bold text-primary tabular-nums">{formatNaira(item.subtotal)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t border-white/10 pt-4 space-y-1.5 text-xs">
+                  <Row label="Subtotal" value={formatNaira(order.subtotal)} />
+                  <Row label={order.shippingFee === 0 ? 'Delivery (Jumia)' : 'Delivery'} value={order.shippingFee === 0 ? 'Paid by you to Jumia' : formatNaira(order.shippingFee)} />
+                </div>
+                <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+                  <span className="text-sm text-white/70 font-bold">Total</span>
+                  <span className="text-xl text-primary font-black tabular-nums">{formatNaira(order.total)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 p-5 mb-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <h2 className="text-sm font-black text-white mb-3">Deliver to</h2>
+                <div className="text-sm text-white/70 space-y-0.5">
+                  <p className="text-white font-medium">{order.shipping.fullName}</p>
+                  <p>{order.shipping.street}</p>
+                  {order.shipping.landmark && <p className="text-white/50">{order.shipping.landmark}</p>}
+                  <p>{order.shipping.city}, {order.shipping.state}</p>
+                  <p className="pt-1">{order.shipping.phone} · {order.shipping.email}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Link
+                  to={`/order-tracking?order=${encodeURIComponent(order.orderNumber)}`}
+                  className="btn-secondary flex-1 py-3 text-sm font-bold text-center"
+                >
+                  Track this order
+                </Link>
+                {settings?.contact?.whatsappLink && (
+                  <a
+                    href={settings.contact.whatsappLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-primary flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Chat with us
+                  </a>
+                )}
+              </div>
+
+              <p className="mt-6 text-center text-[11px] text-white/30">
+                A confirmation will be sent to {order.shipping.email}
+              </p>
+            </>
+          )}
+        </div>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+function PaymentInstructions({ order, settings }: { order: Order; settings: any }) {
+  if (order.paymentMethod === 'cod') {
+    return (
+      <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-5 mb-5">
+        <p className="text-xs uppercase tracking-widest text-emerald-300 font-bold mb-2">Cash on delivery</p>
+        <p className="text-sm text-white/80 mb-1">
+          You'll pay <span className="font-black text-emerald-300">{formatNaira(order.total)}</span> when our courier delivers your combo.
+        </p>
+        <p className="text-xs text-white/50">Estimated delivery: 1-2 business days.</p>
+      </div>
+    );
+  }
+
+  if (order.paymentMethod === 'bank_transfer') {
+    const bank = settings?.bankAccount;
+    return (
+      <div className="rounded-2xl border border-primary/25 bg-primary/5 p-5 mb-5">
+        <p className="text-xs uppercase tracking-widest text-primary font-bold mb-3">Bank transfer</p>
+        <p className="text-sm text-white/80 mb-4">
+          Transfer <span className="font-black text-primary">{formatNaira(order.total)}</span> to the account below.
+        </p>
+        {bank?.accountNumber ? (
+          <div className="rounded-lg bg-black/30 border border-white/10 p-4 space-y-2">
+            <BankRow label="Bank" value={bank.bankName} />
+            <BankRow label="Account name" value={bank.accountName} />
+            <BankRow label="Account number" value={bank.accountNumber} copyable />
+            <div className="border-t border-white/10 pt-2 mt-3">
+              <p className="text-[11px] text-white/40">
+                Use your order number <span className="font-mono text-primary">{order.orderNumber}</span> as the reference.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-amber-300">Bank details not configured. We'll send them to you shortly.</p>
+        )}
+      </div>
+    );
+  }
+
+  if (order.paymentMethod === 'whatsapp') {
+    return (
+      <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-5 mb-5">
+        <p className="text-xs uppercase tracking-widest text-emerald-300 font-bold mb-2">WhatsApp payment</p>
+        <p className="text-sm text-white/80 mb-3">
+          We'll message you on WhatsApp at <span className="font-bold text-white">{order.shipping.phone}</span>.
+        </p>
+      </div>
+    );
+  }
+
+  if (order.paymentMethod === 'paystack') {
+    return null; // Handled in main hero
+  }
+
+  return null;
+}
+
+function BankRow({ label, value, copyable }: { label: string; value: string; copyable?: boolean }) {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  };
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[11px] uppercase tracking-wider text-white/40">{label}</span>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-mono font-bold text-white">{value}</span>
+        {copyable && (
+          <button type="button" onClick={handleCopy} className="text-white/40 hover:text-primary" aria-label={`Copy ${label}`}>
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-white/50">{label}</span>
+      <span className="text-white/80 tabular-nums font-medium">{value}</span>
+    </div>
+  );
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\pages\OrderTracking.tsx =====
+/**
+ * Order tracking page — /track
+ *
+ * Customers enter their order number + phone to look up status.
+ * Works for guest checkouts (no login required).
+ *
+ * Read query params on mount so links like /track?order=SC-2026-000001 prefill.
+ */
+
+import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Check,
+  Loader2,
+  Package,
+  Phone,
+  Search,
+  Truck,
+  Clock,
+  CreditCard,
+  Gift,
+  XCircle,
+  AlertCircle,
+} from 'lucide-react';
+import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
+import { CartDrawer } from '@/components/shared/CartDrawer';
+import { SEO } from '@/components/shared/SEO';
+import { trackOrder } from '@/api/orders';
+import { formatNaira } from '@/lib/format';
+import type { Order, OrderStatus } from '@/types/order';
+import { toast } from 'sonner';
+
+interface StatusInfo {
+  Icon: typeof Package;
+  label: string;
+  message: string;
+  color: string;        // tailwind text color
+  ringColor: string;    // tailwind ring/border color
+  bgColor: string;      // background tint
+}
+
+const STATUS_MAP: Record<OrderStatus, StatusInfo> = {
+  pending: {
+    Icon: Clock,
+    label: 'Pending Payment',
+    message: 'Waiting for your payment to be confirmed.',
+    color: 'text-amber-300',
+    ringColor: 'border-amber-500/30',
+    bgColor: 'bg-amber-500/10',
+  },
+  paid: {
+    Icon: CreditCard,
+    label: 'Payment Received',
+    message: 'Thanks! We will start preparing your combo shortly.',
+    color: 'text-blue-300',
+    ringColor: 'border-blue-500/30',
+    bgColor: 'bg-blue-500/10',
+  },
+  processing: {
+    Icon: Gift,
+    label: 'Processing',
+    message: 'Your order is being packed.',
+    color: 'text-yellow-300',
+    ringColor: 'border-yellow-500/30',
+    bgColor: 'bg-yellow-500/10',
+  },
+  shipped: {
+    Icon: Truck,
+    label: 'On The Way',
+    message: 'Your order has been shipped and is on its way to you.',
+    color: 'text-emerald-300',
+    ringColor: 'border-emerald-500/30',
+    bgColor: 'bg-emerald-500/10',
+  },
+  delivered: {
+    Icon: Check,
+    label: 'Delivered',
+    message: 'Your order has been delivered. Enjoy!',
+    color: 'text-emerald-300',
+    ringColor: 'border-emerald-500/40',
+    bgColor: 'bg-emerald-500/15',
+  },
+  cancelled: {
+    Icon: XCircle,
+    label: 'Cancelled',
+    message: 'This order was cancelled.',
+    color: 'text-red-300',
+    ringColor: 'border-red-500/30',
+    bgColor: 'bg-red-500/10',
+  },
+  refunded: {
+    Icon: AlertCircle,
+    label: 'Refunded',
+    message: 'This order has been refunded.',
+    color: 'text-white/60',
+    ringColor: 'border-white/20',
+    bgColor: 'bg-white/5',
+  },
+};
+
+function formatDate(dateString?: string) {
+  if (!dateString) return '';
+  try {
+    return new Date(dateString).toLocaleDateString('en-NG', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+export default function OrderTracking() {
+  const [searchParams] = useSearchParams();
+  const [orderNumber, setOrderNumber] = useState(searchParams.get('order') ?? '');
+  const [phone, setPhone] = useState(searchParams.get('phone') ?? '');
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+
+  // Auto-lookup if both query params provided
+  useEffect(() => {
+    if (orderNumber && phone) {
+      handleLookup(orderNumber, phone);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLookup = async (orderNo: string, ph: string) => {
+    setLoading(true);
+    setNotFound(false);
+    setOrder(null);
+    try {
+      const result = await trackOrder(orderNo.trim(), ph.trim());
+      if (result) {
+        setOrder(result);
+      } else {
+        setNotFound(true);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to look up order');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderNumber.trim() || !phone.trim()) {
+      toast.error('Enter both order number and phone');
+      return;
+    }
+    handleLookup(orderNumber, phone);
+  };
+
+  const reset = () => {
+    setOrder(null);
+    setNotFound(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Track your order" description="Check the status of your Smart Combo order." />
+      <Header />
+      <CartDrawer />
+
+      <main className="flex-1 section-padding py-10 md:py-14">
+        <div className="container-premium max-w-3xl">
+          <Link to="/" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-6">
+            <ArrowLeft className="w-3 h-3" />
+            Back to home
+          </Link>
+
+          <div className="text-center mb-8">
+            <p className="text-xs uppercase tracking-[0.28em] text-primary/70 font-bold mb-2">Order status</p>
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-2">Track Your Order</h1>
+            <p className="text-sm text-white/50 max-w-md mx-auto">
+              Enter your order number and phone number to check the status.
+            </p>
+          </div>
+
+          {/* Form (always visible) */}
+          <form
+            onSubmit={handleSubmit}
+            className="rounded-2xl border border-white/10 p-5 md:p-6 mb-6"
+            style={{ background: 'rgba(255,255,255,0.02)' }}
+          >
+            <div className="space-y-3">
+              <label className="block">
+                <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+                  Order Number
+                </span>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                  <input
+                    type="text"
+                    value={orderNumber}
+                    onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors"
+                    placeholder="SC-2026-000001"
+                    autoComplete="off"
+                  />
+                </div>
+              </label>
+              <label className="block">
+                <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+                  Phone Number
+                </span>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors"
+                    placeholder="+234 814 274 6379"
+                    autoComplete="tel"
+                  />
+                </div>
+                <p className="text-[10px] text-white/35 mt-1">
+                  Same phone you used at checkout
+                </p>
+              </label>
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-bold disabled:opacity-50"
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                {loading ? 'Searching...' : 'Track Order'}
+              </button>
+            </div>
+          </form>
+
+          {/* Not found message */}
+          {notFound && (
+            <div className="rounded-2xl border border-red-500/20 p-5 text-center" style={{ background: 'rgba(239,68,68,0.05)' }}>
+              <XCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+              <p className="text-sm font-bold text-white mb-1">Order not found</p>
+              <p className="text-xs text-white/50">
+                Double-check the order number and phone number. They must match what you used at checkout.
+              </p>
+              <button
+                type="button"
+                onClick={reset}
+                className="mt-3 text-xs font-bold text-primary hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* Order details */}
+          {order && <OrderDetails order={order} />}
+        </div>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+function OrderDetails({ order }: { order: Order }) {
+  const info = STATUS_MAP[order.status];
+  const { Icon } = info;
+
+  return (
+    <div className="space-y-5">
+      {/* Status banner */}
+      <div
+        className={`rounded-2xl border ${info.ringColor} ${info.bgColor} p-6 md:p-8 text-center`}
+      >
+        <div className={`inline-flex w-14 h-14 rounded-full ${info.bgColor} ${info.ringColor} border-2 items-center justify-center mb-3`}>
+          <Icon className={`w-7 h-7 ${info.color}`} />
+        </div>
+        <p className={`text-lg md:text-xl font-black ${info.color} mb-1`}>
+          {info.label}
+        </p>
+        <p className="text-sm text-white/65 max-w-md mx-auto">{info.message}</p>
+      </div>
+
+      {/* Header */}
+      <div className="rounded-2xl border border-white/10 p-5 md:p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Order</p>
+            <p className="text-base md:text-lg font-black text-white">{order.orderNumber}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Placed</p>
+            <p className="text-xs md:text-sm text-white/70">{formatDate(order.createdAt)}</p>
+          </div>
+        </div>
+
+        {/* Timeline */}
+        {(order.paidAt || order.shippedAt || order.deliveredAt) && (
+          <div className="border-t border-white/5 pt-3 mt-3 space-y-1">
+            {order.paidAt && (
+              <p className="text-xs text-white/55">
+                <span className="text-white/40">💳 Paid:</span> {formatDate(order.paidAt)}
+              </p>
+            )}
+            {order.shippedAt && (
+              <p className="text-xs text-white/55">
+                <span className="text-white/40">📦 Shipped:</span> {formatDate(order.shippedAt)}
+              </p>
+            )}
+            {order.deliveredAt && (
+              <p className="text-xs text-white/55">
+                <span className="text-white/40">✅ Delivered:</span> {formatDate(order.deliveredAt)}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Items */}
+      <div className="rounded-2xl border border-white/10 p-5 md:p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-3">
+          Items ({order.items.length})
+        </p>
+        <div className="space-y-3">
+          {order.items.map((item, i) => (
+            <div key={i} className="flex items-start gap-3 pb-3 border-b border-white/5 last:border-0 last:pb-0">
+              {item.thumbnailUrl ? (
+                <img
+                  src={item.thumbnailUrl}
+                  alt={item.name}
+                  className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center flex-shrink-0">
+                  <Package className="w-5 h-5 text-white/30" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-white truncate">{item.name}</p>
+                {item.variantSummary && (
+                  <p className="text-[11px] text-white/55 leading-relaxed">{item.variantSummary}</p>
+                )}
+                <p className="text-[11px] text-white/40 mt-0.5">
+                  ×{item.quantity} · {formatNaira(item.subtotal)}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Totals */}
+      <div className="rounded-2xl border border-white/10 p-5 md:p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between text-white/55">
+            <span>Subtotal</span>
+            <span>{formatNaira(order.subtotal)}</span>
+          </div>
+          <div className="flex justify-between text-white/55">
+            <span>Shipping</span>
+            <span>{order.shippingFee === 0 ? 'Free' : formatNaira(order.shippingFee)}</span>
+          </div>
+          <div className="border-t border-white/10 pt-2 mt-2 flex justify-between items-baseline">
+            <span className="font-bold text-white">Total</span>
+            <span className="text-xl font-black text-primary">{formatNaira(order.total)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Shipping address */}
+      <div className="rounded-2xl border border-white/10 p-5 md:p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-3">Delivery to</p>
+        <p className="text-sm font-bold text-white">{order.shipping.fullName}</p>
+        <p className="text-xs text-white/60 leading-relaxed">
+          {order.shipping.street}
+          <br />
+          {order.shipping.city}, {order.shipping.state}
+          <br />
+          {order.shipping.phone}
+        </p>
+        {order.shipping.landmark && (
+          <p className="text-[11px] text-white/40 mt-2 italic">Landmark: {order.shipping.landmark}</p>
+        )}
+      </div>
+
+      {/* Tracking info */}
+      {(order.trackingNumber || order.trackingProviderUrl) && (
+        <div className="rounded-2xl border border-emerald-500/20 p-5 md:p-6" style={{ background: 'rgba(16,185,129,0.05)' }}>
+          <p className="text-[10px] uppercase tracking-widest text-emerald-300/80 font-bold mb-2">
+            Shipment tracking
+          </p>
+          {order.trackingNumber && (
+            <p className="text-sm font-bold text-white mb-2">
+              Tracking #: <span className="font-mono">{order.trackingNumber}</span>
+            </p>
+          )}
+          {order.trackingProviderUrl && (
+            <a
+              href={order.trackingProviderUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-bold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1.5"
+            >
+              View on courier website →
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\types\order.ts =====
+/**
+ * Frontend order/cart types.
+ *
+ * NOTE: this file previously contained a stray copy of the BACKEND
+ * Mongoose Order model (server/models/Order.ts) — it didn't even export
+ * CartItem or Order (as a plain frontend type), which several files
+ * actually need. That's fixed here: frontend-only, no mongoose import.
+ */
+
+/** One line item in the cart — one product/combo, with quantity and any selected variants. */
+export interface CartItem {
+  comboId: string;
+  comboName: string;
+  comboSlug: string;
+  unitPrice: number;
+  originalPrice: number;
+  quantity: number;
+  image: string;
+  selectedVariants?: Record<string, string>;
+  /**
+   * Set when this item was added as part of a "Build Your Own Combo"
+   * selection. Items sharing the same comboGroupId are shown grouped
+   * together in the cart, with the discount applied once per group
+   * (see customComboGroups in the cart store), not per item.
+   */
+  comboGroupId?: string;
+  /** Set when this item is selected from the Free Gift Bank (price set to 0). */
+  isFreeGift?: boolean;
+}
+
+export type OrderStatus =
+  | 'pending'
+  | 'paid'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled'
+  | 'refunded';
+
+export type PaymentMethod =
+  | 'paystack'
+  | 'flutterwave'
+  | 'bank_transfer'
+  | 'cod'
+  | 'whatsapp';
+
+export interface ShippingAddress {
+  fullName: string;
+  phone: string;
+  email: string;
+  state: string;
+  city: string;
+  street: string;
+  landmark?: string;
+}
+
+/** One item as stored/returned on a placed order (a snapshot, not live cart data). */
+export interface OrderItemSnapshot {
+  comboId: string;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;
+  variantSummary?: string;
+  isFreeGift?: boolean;
+}
+
+/** A placed order, as returned by the API on the frontend (id instead of _id, dates as strings). */
+export interface Order {
+  id: string;
+  /** Some places in the codebase still check the raw Mongo _id as a fallback — kept optional for that. */
+  _id?: string;
+  orderNumber: string;
+  items: OrderItemSnapshot[];
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  shipping: ShippingAddress;
+  notes?: string;
+  trackingNumber?: string;
+  trackingUrl?: string;
+  trackingProviderUrl?: string;
+  adminNotes?: string;
+  paidAt?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\client\types\settings.ts =====
+/**
+ * Site-wide settings — frontend types.
+ * NEW: hero { headline, subtext }.
+ * NEW: welcomePopup { giftImages, comboImages }.
+ */
+
+export interface HeroSlide {
+  id: string;
+  image: string;
+  accent: string;
+  tag: string;
+}
+
+export interface HeroContent {
+  headline: string;
+  subtext: string;
+}
+
+export interface WelcomePopupContent {
+  giftImages: string[];
+  comboImages: string[];
+}
+
+export interface PromoSettings {
+  endsAt: string;
+  enabled: boolean;
+  headline: string;
+  subline: string;
+}
+
+export interface ContactSettings {
+  whatsappNumber: string;
+  whatsappLink: string;
+  email: string;
+  phone: string;
+  address: string;
+}
+
+export interface VideoSettings {
+  url: string;
+  thumbnail: string;
+  title: string;
+  duration: string;
+}
+
+export interface BankAccount {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+}
+
+export interface ShippingConfig {
+  standardFee: number;
+  codCities: string[];
+  freeShippingThreshold: number;
+}
+
+export interface SiteSettings {
+  storeName: string;
+  tagline: string;
+  defaultHeroImage: string;
+  allCategoryImage?: string;
+  hero?: HeroContent;
+  welcomePopup?: WelcomePopupContent;
+  heroSlides?: HeroSlide[];
+  promo: PromoSettings;
+  contact: ContactSettings;
+  video: VideoSettings;
+  trustStats: {
+    rating: number;
+    reviewCount: number;
+  };
+  bankAccount?: BankAccount;
+  shipping?: ShippingConfig;
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\ai\knowledge.ts =====
+/**
+ * Builds the assistant's knowledge from the live database: active combos,
+ * gifts in stock, published FAQs, and the shop's real rules. Cached for 60s.
+ *
+ * Nothing here is invented: every price, stock count and rule comes from your
+ * database or from code that checkout itself uses.
+ */
+
+import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { FAQ } from "../models/FAQ";
+import { SiteSettings } from "../models/SiteSettings";
+import { Category } from "../models/Category";
+import { getProgramSettings } from "../models/Commission";
+import siteContent from "./siteContent.json";
+import { GIFT_THRESHOLD, GIFT_WINDOW_DAYS } from "../services/giftProgress";
+import type { KDoc } from "./retrieve";
+
+const TTL_MS = 60_000;
+let cache: { at: number; docs: KDoc[] } | null = null;
+
+const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
+const cut = (s: unknown, max = 500) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+/** Splits long page text into pieces at line breaks so each piece can be found on its own. */
+function chunk(text: string, max: number): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const line of String(text).split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+    if (cur && cur.length + line.length > max) {
+      out.push(cur);
+      cur = "";
+    }
+    cur += (cur ? " " : "") + line;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+export async function getKnowledge(): Promise<KDoc[]> {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.docs;
+
+  const [combos, gifts, faqs, settings, categories, program] = await Promise.all([
+    Combo.find({ isActive: true }).sort({ isFeatured: -1, createdAt: -1 }).limit(60).lean(),
+    Gift.find({ isActive: { $ne: false }, stock: { $gt: 0 } }).limit(30).lean(),
+    FAQ.find({ isPublished: true }).sort({ order: 1 }).limit(40).lean(),
+    SiteSettings.findOne().lean(),
+    Category.find({ isActive: true }).sort({ displayOrder: 1 }).limit(30).lean(),
+    getProgramSettings().catch(() => null),
+  ]);
+
+  const docs: KDoc[] = [];
+
+  for (const c of combos as any[]) {
+    const inStock = (c.stockLeft ?? 0) > 0;
+    const save = Math.max(0, (c.originalPrice ?? 0) - (c.totalPrice ?? 0));
+    const items = (c.items ?? [])
+      .map((it: any) => {
+        const alts = (it.alternatives ?? []).map((a: any) => a.name).filter(Boolean);
+        const colors = (it.colors ?? []).map((k: any) => k.name).filter(Boolean);
+        return (
+          cut(it.name, 80) +
+          (it.individualPrice ? ` (${naira(it.individualPrice)} on its own)` : "") +
+          (alts.length ? ` — alternatives: ${alts.slice(0, 5).join(", ")}` : "") +
+          (colors.length ? ` — colours: ${colors.slice(0, 8).join(", ")}` : "")
+        );
+      })
+      .join("; ");
+    docs.push({
+      id: `combo:${c.slug}`,
+      type: "combo",
+      title: cut(c.name, 80),
+      price: c.totalPrice,
+      inStock,
+      link: `/combos/${c.slug}`,
+      text: cut(
+        `${c.tagline ? c.tagline + ". " : ""}Combo price ${naira(c.totalPrice)}` +
+          (save > 0 ? ` (normally ${naira(c.originalPrice)}, you save ${naira(save)})` : "") +
+          `. ${inStock ? `In stock, ${c.stockLeft} left` : "Out of stock"}.` +
+          (items ? ` Includes: ${items}.` : ""),
+        900,
+      ),
+    });
+  }
+
+  for (const f of faqs as any[]) {
+    docs.push({
+      id: `faq:${f._id}`,
+      type: "faq",
+      title: cut(f.question, 120),
+      text: cut(f.answer, 700),
+      link: "/faq",
+    });
+  }
+
+  // ---- Rules that checkout really applies ----
+  const ship = (settings as any)?.shipping;
+  const contact = (settings as any)?.contact;
+  const cities: string[] = (ship?.codCities ?? []).filter(Boolean);
+
+  if (ship) {
+    docs.push({
+      id: "policy:delivery",
+      type: "policy",
+      title: "Delivery fee and cash on delivery",
+      link: "/shipping",
+      text:
+        `The standard delivery fee is ${naira(ship.standardFee ?? 0)}. ` +
+        (cities.length
+          ? `If the customer pays cash on delivery in ${cities.join(", ")}, the delivery fee is ${naira(0)}. `
+          : "") +
+        "The exact fee is always shown at checkout before paying.",
+    });
+  }
+
+  docs.push({
+    id: "policy:gift",
+    type: "policy",
+    title: "How to qualify for a free gift",
+    text:
+      `A customer unlocks the free gift when what they spent in the last ${GIFT_WINDOW_DAYS} days plus the current order reaches ${naira(GIFT_THRESHOLD)}. ` +
+      "Spending is added up by phone number. An order counts once it is paid; cash-on-delivery orders count once delivered. Cancelled and refunded orders never count. " +
+      "After a gift is given, the total starts again from zero." +
+      (gifts.length ? ` Gifts available now: ${(gifts as any[]).map((g) => cut(g.name, 60)).join(", ")}.` : " No gifts are in stock right now."),
+  });
+
+  docs.push({
+    id: "policy:combo",
+    type: "policy",
+    title: "How combos work",
+    link: "/products",
+    text:
+      "A combo bundles several items at one combo price, which is lower than buying the items separately; each combo page shows how much you save. " +
+      "Some items let you choose an alternative product or a colour at the same combo price. " +
+      "Customers can also build their own combo at /products?mode=combo-builder.",
+  });
+
+  docs.push({
+    id: "policy:payment",
+    type: "policy",
+    title: "Payment",
+    text:
+      "Payment options are shown at checkout; they include online payment through Paystack, bank transfer, and cash on delivery in selected cities. " +
+      "Bank transfer details are shown at checkout.",
+  });
+
+  if (contact) {
+    docs.push({
+      id: "policy:contact",
+      type: "policy",
+      title: "Contact us",
+      link: "/contact",
+      text:
+        [
+          contact.phone ? `Phone: ${contact.phone}` : "",
+          contact.whatsappNumber ? `WhatsApp: ${contact.whatsappNumber}` : "",
+          contact.email ? `Email: ${contact.email}` : "",
+          contact.address ? `Address: ${contact.address}` : "",
+        ]
+          .filter(Boolean)
+          .join(". ") || "Use the chat to reach the team.",
+    });
+  }
+
+  // ---- Categories, with the combos inside each ----
+  for (const cat of categories as any[]) {
+    const inside = (combos as any[]).filter((c) => (c.categorySlugs ?? []).includes(cat.slug));
+    docs.push({
+      id: `category:${cat.slug}`,
+      type: "policy",
+      title: cut(cat.name, 60),
+      link: `/categories/${cat.slug}`,
+      text: cut(
+        `${cat.description ? cat.description + ". " : ""}Category "${cat.name}". ` +
+          (inside.length
+            ? `Combos in it: ${inside
+                .slice(0, 12)
+                .map((c) => `${cut(c.name, 50)} ${naira(c.totalPrice)} (${(c.stockLeft ?? 0) > 0 ? "in stock" : "out of stock"})`)
+                .join("; ")}.`
+            : "No combos in this category right now."),
+        900,
+      ),
+    });
+  }
+
+  // ---- Store overview (so "what do you sell?" gets a real answer) ----
+  {
+    const list = combos as any[];
+    const available = list.filter((c) => (c.stockLeft ?? 0) > 0);
+    const prices = available.map((c) => c.totalPrice).filter((n) => typeof n === "number");
+    docs.push({
+      id: "policy:overview",
+      type: "policy",
+      title: "About Smart Combo and what we sell",
+      link: "/products",
+      text:
+        "Smart Combo is an online store in Nigeria that sells combos: handpicked bundles of products at one lower price. " +
+        `Right now there are ${list.length} combos listed, ${available.length} in stock` +
+        (prices.length ? `, from ${naira(Math.min(...prices))} to ${naira(Math.max(...prices))}` : "") +
+        "." +
+        ((categories as any[]).length
+          ? ` Categories: ${(categories as any[]).map((c) => cut(c.name, 40)).join(", ")}.`
+          : "") +
+        " Customers can also build their own combo, win a free gift as they spend, and become partners to earn commission.",
+    });
+  }
+
+  // ---- Ordering and tracking (from how checkout and orders really work) ----
+  docs.push({
+    id: "order:how",
+    type: "policy",
+    title: "How to place an order",
+    link: "/products",
+    text:
+      "Add a combo to your cart (or build your own combo), open the cart and go to checkout. " +
+      "Enter your full name, phone number, email, state, city and street address (landmark is optional), choose a payment method and place the order. " +
+      "You get an email when your order is received. The AI assistant can't place orders or take payments; use the website checkout.",
+  });
+  docs.push({
+    id: "order:tracking",
+    type: "policy",
+    title: "How to track an order",
+    link: "/order-tracking",
+    text:
+      "Open Track Order on the website and enter your order number (it looks like SC-2026-000123) and the phone number you used at checkout. " +
+      "Customers are also emailed when the order is received, payment is confirmed, it ships (with a tracking number when available) and when it is delivered.",
+  });
+  docs.push({
+    id: "order:status",
+    type: "policy",
+    title: "What the order statuses mean",
+    link: "/order-tracking",
+    text:
+      "Pending: order received, waiting for payment. Paid: payment confirmed. Processing: being prepared (cash-on-delivery orders start here). " +
+      "Shipped: on its way. Delivered: arrived. Cancelled or refunded: the order was stopped or the money returned.",
+  });
+
+  // ---- Partner program: rates come live from the admin settings ----
+  {
+    const combo = program?.comboPercent ?? 5;
+    const single = program?.singlePercent ?? 10;
+    const hold = program?.holdDays ?? 7;
+    const min = program?.minWithdrawal ?? 2000;
+    docs.push({
+      id: "partner:overview",
+      type: "policy",
+      title: "Smart Combo partner program",
+      link: "/#reseller",
+      text:
+        "Anyone can apply to become a Smart Combo partner (reseller) and earn commission by sharing their own link. " +
+        "It is free to join and partners don't buy or hold stock. The team reviews and approves each application. " +
+        "Approved partners get a personal partner code (like SC1001) and link, and log in on the Partner page.",
+    });
+    docs.push({
+      id: "partner:signup",
+      type: "policy",
+      title: "How to sign up as a partner",
+      link: "/#reseller",
+      text:
+        "Click Become a partner and fill the form: full name, phone number, WhatsApp number, email, a password (at least 8 characters) and bank details for payouts (bank name, 10-digit account number, account name). " +
+        "You can also say which social channel you will promote on. New applications start as pending and you get a confirmation email, then another email when you are approved. " +
+        "You can't log in or get a link until approved. An email address or phone number can only be used for one partner account.",
+    });
+    docs.push({
+      id: "partner:earnings",
+      type: "policy",
+      title: "How much partners earn",
+      link: "/#reseller",
+      text:
+        `Partners earn ${combo}% commission on every combo sold through their link and ${single}% on every single product. ` +
+        "A combo is a bundle of two or more items; a single product is one item. The percentage is worked out on the product price only, not the delivery fee. " +
+        `Example: someone buys a ${naira(40000)} combo with your link and you earn ${naira(Math.round((40000 * combo) / 100))}. ` +
+        "Free gifts earn nothing, cancelled or refunded orders earn nothing, and partners can't earn from their own purchases.",
+    });
+    docs.push({
+      id: "partner:payout",
+      type: "policy",
+      title: "How and when partners get paid",
+      link: "/partner",
+      text:
+        "Commission counts once the customer's order is delivered. A partner's first delivered sale starts a " +
+        `${hold}-day week; when the week ends, everything delivered so far can be withdrawn together. ` +
+        `The partner then requests a withdrawal from the dashboard. The smallest withdrawal is ${naira(min)}, it is paid to the bank account given at sign-up, ` +
+        "and only one withdrawal request can be open at a time. Payouts are made on Fridays.",
+    });
+    docs.push({
+      id: "partner:dashboard",
+      type: "policy",
+      title: "Partner dashboard and marketing material",
+      link: "/partner",
+      text:
+        "Partners log in on the Partner page with their email and password. The dashboard shows their link, clicks, orders, conversion rate and earnings split into pending, approved, paid and cancelled. " +
+        "Approved partners also get ready-made pictures, videos and captions for WhatsApp, Instagram and TikTok, with their own link filled in. " +
+        "To change bank details, contact support.",
+    });
+  }
+
+  // ---- Page text: shipping, returns, privacy, terms, contact (built by build-site-knowledge.mjs) ----
+  for (const page of siteContent as { id: string; title: string; link?: string; text: string }[]) {
+    chunk(page.text, 800).forEach((part, i, all) => {
+      docs.push({
+        id: `site:${page.id}:${i + 1}`,
+        type: "policy",
+        title: all.length > 1 ? `${page.title} (part ${i + 1})` : page.title,
+        link: page.link,
+        text: part,
+      });
+    });
+  }
+
+  cache = { at: Date.now(), docs };
+  return docs;
+}
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\models\Order.ts =====
+/**
+ * Order model.
+ *
+ * Items now snapshot the customer's variant selections so admin knows
+ * exactly what to ship.
+ *
+ * phoneKey is the customer's phone number cleaned to its last 10 digits. It is
+ * how spending is added up for the free gift (customers do not have accounts).
+ */
+
+import { Schema, model, Document, Types } from "mongoose";
+
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded";
+
+export type PaymentMethod =
+  | "paystack"
+  | "flutterwave"
+  | "bank_transfer"
+  | "cod"
+  | "whatsapp";
+
+export interface OrderItemSnapshot {
+  comboId: Types.ObjectId;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;   // itemId → alternativeId
+  variantSummary?: string;                     // human-readable
+  isFreeGift?: boolean;                        // identifies free gift items
+}
+
+export interface ShippingAddress {
+  fullName: string;
+  phone: string;
+  email: string;
+  state: string;
+  city: string;
+  street: string;
+  landmark?: string;
+}
+
+export interface OrderDocument extends Document {
+  orderNumber: string;
+  items: OrderItemSnapshot[];
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  stockRestored?: boolean;
+  paystackRefs?: string[];
+  shipping: ShippingAddress;
+  phoneKey?: string;
+  notes?: string;
+  trackingNumber?: string;
+  trackingProviderUrl?: string;
+  adminNotes?: string;
+  paidAt?: Date;
+  shippedAt?: Date;
+  deliveredAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
+  {
+    comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
+    slug: { type: String, required: true },
+    name: { type: String, required: true },
+    tagline: { type: String },
+    thumbnailUrl: { type: String },
+    unitPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+    subtotal: { type: Number, required: true, min: 0 },
+    selectedVariants: { type: Schema.Types.Mixed, default: {} },
+    variantSummary: { type: String, default: "" },
+    isFreeGift: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const ShippingAddressSchema = new Schema<ShippingAddress>(
+  {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    email: { type: String, required: true },
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    street: { type: String, required: true },
+    landmark: { type: String },
+  },
+  { _id: false },
+);
+
+const OrderSchema = new Schema<OrderDocument>(
+  {
+    orderNumber: { type: String, required: true, unique: true, index: true },
+    items: { type: [OrderItemSnapshotSchema], required: true },
+    subtotal: { type: Number, required: true, min: 0 },
+    shippingFee: { type: Number, required: true, min: 0 },
+    total: { type: Number, required: true, min: 0 },
+    status: {
+      type: String,
+      enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
+      default: "pending",
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"],
+      required: true,
+    },
+    paymentReference: { type: String, index: true },
+    // true once this order's stock has been given back (cancel / refund / expiry)
+    stockRestored: { type: Boolean, default: false },
+    // every Paystack reference started for this order (a customer can retry), used to re-check unpaid orders
+    paystackRefs: { type: [String], default: [] },
+    shipping: { type: ShippingAddressSchema, required: true },
+    phoneKey: { type: String },
+    notes: { type: String },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    adminNotes: { type: String },
+    paidAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
+OrderSchema.index({ phoneKey: 1, createdAt: -1 });
+
+export const Order = model<OrderDocument>("Order", OrderSchema);
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\models\SiteSettings.ts =====
+/**
+ * SiteSettings model — single document collection.
+ *
+ * NEW: hero { headline, subtext } — editable platform hero copy.
+ * NEW: welcomePopup { giftImages, comboImages } — pictures for the welcome popup tabs.
+ */
+
+import { Schema, model, Document } from "mongoose";
+
+const DEFAULT_HERO_HEADLINE = "Premium Combos. One Smart Price.";
+const DEFAULT_HERO_SUBTEXT =
+  "Curated bundles across tech, fashion & lifestyle — handpicked, quality-checked, and priced to save you thousands.";
+
+export interface SiteSettingsDocument extends Document {
+  storeName: string;
+  tagline: string;
+  defaultHeroImage: string;
+  /** Picture for the "All" category tile (Cloudinary URL). */
+  allCategoryImage: string;
+  hero: {
+    headline: string;
+    subtext: string;
+  };
+  welcomePopup: {
+    giftImages: string[];
+    comboImages: string[];
+  };
+  promo: {
+    endsAt: Date;
+    enabled: boolean;
+    headline: string;
+    subline: string;
+  };
+  contact: {
+    whatsappNumber: string;
+    email: string;
+    phone: string;
+    address: string;
+  };
+  video: {
+    url: string;
+    thumbnail: string;
+    title: string;
+    duration: string;
+  };
+  trustStats: {
+    rating: number;
+    reviewCount: number;
+  };
+  bankAccount: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  };
+  shipping: {
+    standardFee: number;
+    codCities: string[];
+    freeShippingThreshold: number;
+  };
+  updatedAt: Date;
+}
+
+const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
+  {
+    storeName: { type: String, required: true, default: "Smart Combo" },
+    tagline: { type: String, default: "" },
+    defaultHeroImage: { type: String, default: "" },
+    allCategoryImage: { type: String, default: "" },
+
+    hero: {
+      headline: { type: String, default: DEFAULT_HERO_HEADLINE },
+      subtext: { type: String, default: DEFAULT_HERO_SUBTEXT },
+    },
+
+    welcomePopup: {
+      giftImages: { type: [String], default: [] },
+      comboImages: { type: [String], default: [] },
+    },
+
+    promo: {
+      endsAt: { type: Date, default: () => new Date(Date.now() + 5 * 86400000) },
+      enabled: { type: Boolean, default: true },
+      headline: { type: String, default: "" },
+      subline: { type: String, default: "" },
+    },
+
+    contact: {
+      whatsappNumber: { type: String, default: "" },
+      email: { type: String, default: "" },
+      phone: { type: String, default: "" },
+      address: { type: String, default: "" },
+    },
+
+    video: {
+      url: { type: String, default: "" },
+      thumbnail: { type: String, default: "" },
+      title: { type: String, default: "" },
+      duration: { type: String, default: "" },
+    },
+
+    trustStats: {
+      rating: { type: Number, default: 4.9, min: 0, max: 5 },
+      reviewCount: { type: Number, default: 0, min: 0 },
+    },
+
+    bankAccount: {
+      bankName: { type: String, default: "" },
+      accountName: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+    },
+
+    shipping: {
+      standardFee: { type: Number, default: 3500, min: 0 },
+      codCities: { type: [String], default: ["ilorin"] },
+      freeShippingThreshold: { type: Number, default: 0, min: 0 },
+    },
+  },
+  { timestamps: true },
+);
+
+export const SiteSettings = model<SiteSettingsDocument>(
+  "SiteSettings",
+  SiteSettingsSchema,
+);
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\routes\admin\AdminSettingsRoute.ts =====
+/**
+ * Admin site settings routes.
+ * Handles hero { headline, subtext } and welcomePopup { giftImages, comboImages }.
+ */
+
+import { Router, Request, Response } from "express";
+import { SiteSettings } from "../../models/SiteSettings";
+
+const router = Router();
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    let settings = await SiteSettings.findOne({}).lean();
+    if (!settings) {
+      const created = await SiteSettings.create({});
+      settings = created.toObject();
+    }
+    res.json({ data: settings });
+  } catch (err) {
+    console.error("GET /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch settings" },
+    });
+  }
+});
+
+router.patch("/", async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const update: any = {};
+
+    if (typeof body.storeName === "string") update.storeName = body.storeName.trim();
+    if (typeof body.tagline === "string") update.tagline = body.tagline;
+    if (typeof body.defaultHeroImage === "string") update.defaultHeroImage = body.defaultHeroImage;
+
+    // Hero (nested)
+    if (body.hero && typeof body.hero === "object") {
+      if (typeof body.hero.headline === "string") update["hero.headline"] = body.hero.headline;
+      if (typeof body.hero.subtext === "string") update["hero.subtext"] = body.hero.subtext;
+    }
+
+    // Welcome popup pictures (max 5 per tab)
+    if (body.welcomePopup && typeof body.welcomePopup === "object") {
+      const clean = (list: any[]): string[] =>
+        list
+          .filter((u) => typeof u === "string" && u.trim())
+          .map((u) => u.trim())
+          .slice(0, 5);
+      if (Array.isArray(body.welcomePopup.giftImages)) {
+        update["welcomePopup.giftImages"] = clean(body.welcomePopup.giftImages);
+      }
+      if (Array.isArray(body.welcomePopup.comboImages)) {
+        update["welcomePopup.comboImages"] = clean(body.welcomePopup.comboImages);
+      }
+    }
+
+    if (body.promo && typeof body.promo === "object") {
+      if (body.promo.endsAt !== undefined) {
+        const date = new Date(body.promo.endsAt);
+        if (!isNaN(date.getTime())) update["promo.endsAt"] = date;
+      }
+      if (body.promo.enabled !== undefined) update["promo.enabled"] = Boolean(body.promo.enabled);
+      if (typeof body.promo.headline === "string") update["promo.headline"] = body.promo.headline;
+      if (typeof body.promo.subline === "string") update["promo.subline"] = body.promo.subline;
+    }
+
+    if (body.contact && typeof body.contact === "object") {
+      if (typeof body.contact.whatsappNumber === "string") update["contact.whatsappNumber"] = body.contact.whatsappNumber.trim();
+      if (typeof body.contact.email === "string") update["contact.email"] = body.contact.email.trim();
+      if (typeof body.contact.phone === "string") update["contact.phone"] = body.contact.phone.trim();
+      if (typeof body.contact.address === "string") update["contact.address"] = body.contact.address;
+    }
+
+    if (body.video && typeof body.video === "object") {
+      if (typeof body.video.url === "string") update["video.url"] = body.video.url.trim();
+      if (typeof body.video.thumbnail === "string") update["video.thumbnail"] = body.video.thumbnail;
+      if (typeof body.video.title === "string") update["video.title"] = body.video.title;
+      if (typeof body.video.duration === "string") update["video.duration"] = body.video.duration;
+    }
+
+    if (body.trustStats && typeof body.trustStats === "object") {
+      if (body.trustStats.rating !== undefined) {
+        const r = Math.max(0, Math.min(5, Number(body.trustStats.rating) || 0));
+        update["trustStats.rating"] = r;
+      }
+      if (body.trustStats.reviewCount !== undefined) {
+        update["trustStats.reviewCount"] = Math.max(0, Math.floor(Number(body.trustStats.reviewCount) || 0));
+      }
+    }
+
+    if (body.bankAccount && typeof body.bankAccount === "object") {
+      if (typeof body.bankAccount.bankName === "string") update["bankAccount.bankName"] = body.bankAccount.bankName.trim();
+      if (typeof body.bankAccount.accountName === "string") update["bankAccount.accountName"] = body.bankAccount.accountName.trim();
+      if (typeof body.bankAccount.accountNumber === "string") update["bankAccount.accountNumber"] = body.bankAccount.accountNumber.trim();
+    }
+
+    if (body.shipping && typeof body.shipping === "object") {
+      if (body.shipping.standardFee !== undefined) {
+        update["shipping.standardFee"] = Math.max(0, Number(body.shipping.standardFee) || 0);
+      }
+      if (Array.isArray(body.shipping.codCities)) {
+        update["shipping.codCities"] = body.shipping.codCities
+          .map((c: any) => String(c).trim().toLowerCase())
+          .filter(Boolean);
+      }
+      if (body.shipping.freeShippingThreshold !== undefined) {
+        update["shipping.freeShippingThreshold"] = Math.max(0, Number(body.shipping.freeShippingThreshold) || 0);
+      }
+    }
+
+    const settings = await SiteSettings.findOneAndUpdate(
+      {},
+      { $set: update },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+
+    res.json({ data: settings });
+  } catch (err: any) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: err.message },
+      });
+    }
+    console.error("PATCH /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update settings" },
+    });
+  }
+});
+
+export default router;
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\routes\admin\settings.ts =====
+/**
+ * Admin site settings routes.
+ * Handles hero { headline, subtext } and welcomePopup { giftImages, comboImages }.
+ */
+
+import { Router, Request, Response } from "express";
+import { SiteSettings } from "../../models/SiteSettings";
+
+const router = Router();
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    let settings = await SiteSettings.findOne({}).lean();
+    if (!settings) {
+      const created = await SiteSettings.create({});
+      settings = created.toObject();
+    }
+    res.json({ data: settings });
+  } catch (err) {
+    console.error("GET /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch settings" },
+    });
+  }
+});
+
+router.patch("/", async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const update: any = {};
+
+    if (typeof body.storeName === "string") update.storeName = body.storeName.trim();
+    if (typeof body.tagline === "string") update.tagline = body.tagline;
+    if (typeof body.defaultHeroImage === "string") update.defaultHeroImage = body.defaultHeroImage;
+    if (typeof body.allCategoryImage === "string") update.allCategoryImage = body.allCategoryImage.trim();
+
+    // Hero (nested)
+    if (body.hero && typeof body.hero === "object") {
+      if (typeof body.hero.headline === "string") update["hero.headline"] = body.hero.headline;
+      if (typeof body.hero.subtext === "string") update["hero.subtext"] = body.hero.subtext;
+    }
+
+    // Welcome popup pictures (max 5 per tab)
+    if (body.welcomePopup && typeof body.welcomePopup === "object") {
+      const clean = (list: any[]): string[] =>
+        list
+          .filter((u) => typeof u === "string" && u.trim())
+          .map((u) => u.trim())
+          .slice(0, 5);
+      if (Array.isArray(body.welcomePopup.giftImages)) {
+        update["welcomePopup.giftImages"] = clean(body.welcomePopup.giftImages);
+      }
+      if (Array.isArray(body.welcomePopup.comboImages)) {
+        update["welcomePopup.comboImages"] = clean(body.welcomePopup.comboImages);
+      }
+    }
+
+    if (body.promo && typeof body.promo === "object") {
+      if (body.promo.endsAt !== undefined) {
+        const date = new Date(body.promo.endsAt);
+        if (!isNaN(date.getTime())) update["promo.endsAt"] = date;
+      }
+      if (body.promo.enabled !== undefined) update["promo.enabled"] = Boolean(body.promo.enabled);
+      if (typeof body.promo.headline === "string") update["promo.headline"] = body.promo.headline;
+      if (typeof body.promo.subline === "string") update["promo.subline"] = body.promo.subline;
+    }
+
+    if (body.contact && typeof body.contact === "object") {
+      if (typeof body.contact.whatsappNumber === "string") update["contact.whatsappNumber"] = body.contact.whatsappNumber.trim();
+      if (typeof body.contact.email === "string") update["contact.email"] = body.contact.email.trim();
+      if (typeof body.contact.phone === "string") update["contact.phone"] = body.contact.phone.trim();
+      if (typeof body.contact.address === "string") update["contact.address"] = body.contact.address;
+    }
+
+    if (body.video && typeof body.video === "object") {
+      if (typeof body.video.url === "string") update["video.url"] = body.video.url.trim();
+      if (typeof body.video.thumbnail === "string") update["video.thumbnail"] = body.video.thumbnail;
+      if (typeof body.video.title === "string") update["video.title"] = body.video.title;
+      if (typeof body.video.duration === "string") update["video.duration"] = body.video.duration;
+    }
+
+    if (body.trustStats && typeof body.trustStats === "object") {
+      if (body.trustStats.rating !== undefined) {
+        const r = Math.max(0, Math.min(5, Number(body.trustStats.rating) || 0));
+        update["trustStats.rating"] = r;
+      }
+      if (body.trustStats.reviewCount !== undefined) {
+        update["trustStats.reviewCount"] = Math.max(0, Math.floor(Number(body.trustStats.reviewCount) || 0));
+      }
+    }
+
+    if (body.bankAccount && typeof body.bankAccount === "object") {
+      if (typeof body.bankAccount.bankName === "string") update["bankAccount.bankName"] = body.bankAccount.bankName.trim();
+      if (typeof body.bankAccount.accountName === "string") update["bankAccount.accountName"] = body.bankAccount.accountName.trim();
+      if (typeof body.bankAccount.accountNumber === "string") update["bankAccount.accountNumber"] = body.bankAccount.accountNumber.trim();
+    }
+
+    if (body.shipping && typeof body.shipping === "object") {
+      if (body.shipping.standardFee !== undefined) {
+        update["shipping.standardFee"] = Math.max(0, Number(body.shipping.standardFee) || 0);
+      }
+      if (Array.isArray(body.shipping.codCities)) {
+        update["shipping.codCities"] = body.shipping.codCities
+          .map((c: any) => String(c).trim().toLowerCase())
+          .filter(Boolean);
+      }
+      if (body.shipping.freeShippingThreshold !== undefined) {
+        update["shipping.freeShippingThreshold"] = Math.max(0, Number(body.shipping.freeShippingThreshold) || 0);
+      }
+    }
+
+    const settings = await SiteSettings.findOneAndUpdate(
+      {},
+      { $set: update },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+
+    res.json({ data: settings });
+  } catch (err: any) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: err.message },
+      });
+    }
+    console.error("PATCH /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update settings" },
+    });
+  }
+});
+
+export default router;
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\seed\seedBankAndShipping.ts =====
+/**
+ * Updates ONLY the SiteSettings document with bank account + shipping config.
+ *
+ * ⚠️ EDIT THE BANK_ACCOUNT VALUES BELOW BEFORE RUNNING.
+ *
+ * This does NOT wipe other collections. It uses upsert with $set, so existing
+ * fields are preserved and only the new fields are added/updated.
+ *
+ * Run with:
+ *   npx tsx server/seed/seedBankAndShipping.ts
+ */
+
+import mongoose from "mongoose";
+import { config } from "../config";
+import { SiteSettings } from "../models/SiteSettings";
+
+// ⚠️ EDIT THESE — replace with your real bank account
+const BANK_ACCOUNT = {
+  bankName: "Access Bank",
+  accountName: "Adekeye Olawale",
+  accountNumber: "0000000000",
+};
+
+const SHIPPING = {
+  standardFee: 3500,            // ₦3,500 for standard delivery
+  codCities: ["ilorin"],        // case-insensitive — these cities get COD + free shipping
+  freeShippingThreshold: 0,     // 0 = disabled
+};
+
+async function seed() {
+  try {
+    console.log("🌱 Connecting to MongoDB...");
+    await mongoose.connect(config.mongodbUri);
+
+    console.log("⚙️  Updating SiteSettings with bank + shipping fields...");
+    await SiteSettings.findOneAndUpdate(
+      {},
+      {
+        $set: {
+          bankAccount: BANK_ACCOUNT,
+          shipping: SHIPPING,
+        },
+      },
+      { upsert: true, new: true },
+    );
+
+    console.log("\n✅ Done. Bank account + shipping configured.");
+    console.log("\nVerify at:");
+    console.log("  http://localhost:8080/api/settings");
+  } catch (err) {
+    console.error("❌ Seed failed:", err);
+    process.exit(1);
+  } finally {
+    await mongoose.disconnect();
+    process.exit(0);
+  }
+}
+
+seed();
+
+===== C:\Users\Systems Technologies\NewKonectXX\server\services\orderService.ts =====
+/**
+ * Order service — business logic for orders.
+ *
+ * NEW: buildItemSnapshots reads the customer's selectedVariants per cart
+ * item, looks up the alternative names from the combo, and saves a
+ * human-readable summary like "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ * onto the order item. Admin sees exactly what to ship.
+ *
+ * UPDATED: Added Free Gift validation logic (₦40,000 threshold check and 1 gift max).
+ * UPDATED: The threshold counts what the same phone number already spent in the
+ * last 30 days (see giftProgress.ts), and free gifts can come from the Gift Bank.
+ */
+
+import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
+import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
+import { SiteSettings } from "../models/SiteSettings";
+import { nextSeq } from "../models/Counter";
+import { config } from "../config";
+import { verifyTransaction, PaystackError } from "./paystackService";
+import {
+  sendOrderPlaced,
+  sendPaymentConfirmed,
+  sendOrderShipped,
+  sendOrderDelivered,
+  sendNewOrderAdminAlert,
+} from "./emailService";
+
+interface CartItem {
+  comboId: string;
+  quantity: number;
+  selectedVariants?: Record<string, string>;
+  isFreeGift?: boolean;
+}
+
+export interface CreateOrderInput {
+  items: CartItem[];
+  shipping: ShippingAddress;
+  paymentMethod: PaymentMethod;
+  notes?: string;
+}
+
+export class OrderError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function generateOrderNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const seq = await nextSeq(`order:${year}`);
+  return `SC-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/** Flat delivery fee for customers in Ilorin. Everywhere else Jumia sets the price and the customer pays Jumia directly. */
+export const LOCAL_DELIVERY_FEE = 1000;
+
+async function calculateShippingFee(
+  _paymentMethod: PaymentMethod,
+  city: string,
+): Promise<number> {
+  const settings = await SiteSettings.findOne().lean();
+  const localCities = (settings?.shipping?.codCities ?? ["ilorin"]).map((c: string) => c.toLowerCase());
+  const cityLower = city.trim().toLowerCase();
+  return localCities.includes(cityLower) ? LOCAL_DELIVERY_FEE : 0;
+}
+
+/**
+ * Builds a human-readable summary of what the customer picked for each slot.
+ * Example: "Casio Watch · Bluetooth Audio Glasses · Premium Bracelet"
+ */
+function buildVariantSummary(
+  combo: any,
+  selectedVariants: Record<string, string> | undefined,
+): string {
+  return (combo.items ?? [])
+    .map((item: any) => {
+      const chosenId = selectedVariants?.[item.id];
+      if (!chosenId) return item.name; // default
+      const alt = (item.alternatives ?? []).find((a: any) => a.id === chosenId);
+      return alt ? alt.name : item.name;
+    })
+    .join(" · ");
+}
+
+async function buildItemSnapshots(
+  items: CartItem[],
+  priorSpend = 0,
+): Promise<OrderItemSnapshot[]> {
+  if (!items?.length) {
+    throw new OrderError(400, "EMPTY_CART", "Order has no items");
+  }
+
+  // Pass 1: Calculate subtotal from paid items only
+  let paidSubtotal = 0;
+  const freeGiftItems = items.filter((it) => it.isFreeGift);
+
+  if (freeGiftItems.length > 1) {
+    throw new OrderError(400, "INVALID_GIFT", "Only 1 free gift is allowed per order");
+  }
+
+  for (const cartItem of items) {
+    if (!cartItem.isFreeGift) {
+      if (!cartItem.comboId) {
+        throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+      }
+
+      const combo = await Combo.findById(cartItem.comboId);
+      if (combo && combo.isActive) {
+        paidSubtotal += combo.totalPrice * cartItem.quantity;
+      }
+    }
+  }
+
+  // Validate threshold if a free gift is attached
+  // Earlier paid spending by the same phone number counts too.
+  const giftUnlocked = paidSubtotal + priorSpend >= GIFT_THRESHOLD;
+  if (freeGiftItems.length === 1 && !giftUnlocked) {
+    throw new OrderError(
+      400,
+      "GIFT_THRESHOLD_NOT_MET",
+      "Your spending (this order plus the last 30 days) must reach ₦40,000 to qualify for a free gift",
+    );
+  }
+
+  const snapshots: OrderItemSnapshot[] = [];
+
+  // Pass 2: Build snapshot objects
+  for (const cartItem of items) {
+    if (!cartItem.comboId) {
+      throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+    }
+    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > 20) {
+      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number from 1 to 20");
+    }
+
+    // Free gifts normally come from the Gift Bank
+    if (cartItem.isFreeGift) {
+      const gift: any = await Gift.findById(cartItem.comboId).catch(() => null);
+      if (gift) {
+        if (gift.isActive === false || (gift.stock ?? 0) < 1) {
+          throw new OrderError(409, "INSUFFICIENT_STOCK", `${gift.name} is no longer available`);
+        }
+        snapshots.push({
+          comboId: gift._id,
+          slug: `gift-${gift._id}`,
+          name: `[FREE GIFT] ${gift.name}`,
+          tagline: gift.description ?? "",
+          thumbnailUrl: gift.images?.[0] || gift.image || "",
+          unitPrice: 0,
+          quantity: 1,
+          subtotal: 0,
+          selectedVariants: {},
+          variantSummary: "",
+          isFreeGift: true,
+        });
+        continue;
+      }
+    }
+
+    const combo = await Combo.findById(cartItem.comboId);
+    if (!combo) {
+      throw new OrderError(404, "COMBO_NOT_FOUND", `Combo not found: ${cartItem.comboId}`);
+    }
+    if (!combo.isActive) {
+      throw new OrderError(400, "COMBO_INACTIVE", `${combo.name} is no longer available`);
+    }
+    if (combo.stockLeft < cartItem.quantity) {
+      throw new OrderError(
+        409,
+        "INSUFFICIENT_STOCK",
+        `Only ${combo.stockLeft} of ${combo.name} available`,
+      );
+    }
+
+    const isFree = Boolean(cartItem.isFreeGift && giftUnlocked);
+
+    // Ensure the combo itself is eligible to be a free gift candidate
+    if (isFree && !combo.isFreeGiftCandidate && combo.totalPrice > 5000) {
+      throw new OrderError(
+        400,
+        "INELIGIBLE_FREE_GIFT",
+        `${combo.name} is not eligible as a free gift`,
+      );
+    }
+
+    const unitPrice = isFree ? 0 : combo.totalPrice;
+    const subtotal = unitPrice * cartItem.quantity;
+
+    const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
+    const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
+
+    snapshots.push({
+      comboId: combo._id,
+      slug: combo.slug,
+      name: isFree ? `[FREE GIFT] ${combo.name}` : combo.name,
+      tagline: combo.tagline,
+      thumbnailUrl,
+      unitPrice,
+      quantity: isFree ? 1 : cartItem.quantity,
+      subtotal,
+      selectedVariants: cartItem.selectedVariants ?? {},
+      variantSummary,
+      isFreeGift: isFree,
+    });
+  }
+
+  return snapshots;
+}
+
+/** Takes one item's stock. Says where it came from, or throws if sold out. */
+async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "combo"> {
+  // Gift Bank gifts have their own stock
+  if (item.isFreeGift) {
+    const gift = await Gift.findOneAndUpdate(
+      { _id: item.comboId, stock: { $gte: 1 } },
+      { $inc: { stock: -1 } },
+    );
+    if (gift) return "gift";
+  }
+  const updated = await Combo.findOneAndUpdate(
+    { _id: item.comboId, stockLeft: { $gte: item.quantity } },
+    { $inc: { stockLeft: -item.quantity } },
+  );
+  if (!updated) {
+    throw new OrderError(409, "INSUFFICIENT_STOCK", `${item.name} sold out before checkout`);
+  }
+  return "combo";
+}
+
+async function giveStockBackForItem(item: OrderItemSnapshot, kind?: "gift" | "combo"): Promise<void> {
+  if (kind === "combo") {
+    await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+    return;
+  }
+  if (kind === "gift" || item.isFreeGift) {
+    const r = await Gift.updateOne({ _id: item.comboId }, { $inc: { stock: 1 } });
+    if (r.matchedCount > 0) return;
+  }
+  await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+}
+
+/** All-or-nothing: if any item is sold out, everything already taken is put back. */
+async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
+  const taken: Array<{ item: OrderItemSnapshot; kind: "gift" | "combo" }> = [];
+  try {
+    for (const item of items) {
+      const kind = await takeStockForItem(item);
+      taken.push({ item, kind });
+    }
+  } catch (err) {
+    for (const t of taken) {
+      await giveStockBackForItem(t.item, t.kind).catch((e) =>
+        console.error("Stock rollback failed:", e),
+      );
+    }
+    throw err;
+  }
+}
+
+function buildEmailContext(order: any) {
+  return {
+    orderNumber: order.orderNumber,
+    customerName: order.shipping.fullName,
+    customerEmail: order.shipping.email,
+    total: order.total,
+    items: order.items.map((it: any) => ({
+      name: it.variantSummary || it.name,
+      quantity: it.quantity,
+      subtotal: it.subtotal,
+    })),
+    shippingAddress: {
+      fullName: order.shipping.fullName,
+      street: order.shipping.street,
+      city: order.shipping.city,
+      state: order.shipping.state,
+      phone: order.shipping.phone,
+    },
+    paymentMethod: order.paymentMethod,
+    trackingUrl: `${config.siteUrl}/order-tracking?order=${encodeURIComponent(order.orderNumber)}`,
+  };
+}
+
+export async function createOrder(input: CreateOrderInput) {
+  const phoneKey = normalizePhone(input.shipping.phone);
+  const priorSpend = await getPriorSpend(phoneKey);
+  const items = await buildItemSnapshots(input.items, priorSpend);
+
+  const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
+  const shippingFee = await calculateShippingFee(
+    input.paymentMethod,
+    input.shipping.city,
+  );
+  const total = subtotal + shippingFee;
+
+  const orderNumber = await generateOrderNumber();
+
+  await decrementStock(items);
+
+  const initialStatus: OrderStatus =
+    input.paymentMethod === "cod" ? "processing" : "pending";
+
+  let order;
+  try {
+    order = await Order.create({
+      orderNumber,
+      items,
+      subtotal,
+      shippingFee,
+      total,
+      status: initialStatus,
+      paymentMethod: input.paymentMethod,
+      shipping: input.shipping,
+      phoneKey,
+      notes: input.notes,
+    });
+  } catch (err) {
+    // The order could not be saved: put the stock back so nothing is lost.
+    for (const item of items) {
+      await giveStockBackForItem(item).catch((e) => console.error("Stock rollback failed:", e));
+    }
+    throw err;
+  }
+
+  const ctx = buildEmailContext(order);
+  sendOrderPlaced(ctx).catch(() => {});
+  sendNewOrderAdminAlert(ctx).catch(() => {});
+
+  return order;
+}
+
+export async function findByNumberAndPhone(orderNumber: string, phone: string) {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+    "shipping.phone": phone.trim(),
+  }).lean();
+  return order;
+}
+
+export async function findByOrderNumber(orderNumber: string) {
+  return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
+}
+
+/**
+ * A Paystack payment only counts for an order when the reference was started for THAT order,
+ * the payment succeeded, and the amount paid equals the order total (in kobo).
+ * Without this check a customer could pay a small amount and have a big order marked paid.
+ */
+export function paymentMatchesOrder(
+  order: { orderNumber: string; total: number },
+  v: { status: string; amount: number; currency?: string },
+  reference: string,
+): boolean {
+  return (
+    v.status === "success" &&
+    v.amount === Math.round(order.total * 100) &&
+    (!v.currency || v.currency === "NGN") &&
+    reference.startsWith(`${order.orderNumber}-`)
+  );
+}
+
+export async function markOrderPaid(
+  orderNumber: string,
+  paymentReference: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+
+  // Atomic claim: only ONE caller (webhook, return-redirect or admin) can flip
+  // pending -> paid, so emails are never doubled.
+  const claimed = await Order.findOneAndUpdate(
+    { orderNumber: number, status: "pending" },
+    { $set: { status: "paid", paidAt: new Date(), paymentReference } },
+    { new: true },
+  );
+  if (claimed) {
+    sendPaymentConfirmed(buildEmailContext(claimed)).catch(() => {});
+    return claimed;
+  }
+
+  const order = await Order.findOne({ orderNumber: number });
+  if (!order) return null;
+
+  // Customer paid AFTER the order was auto-cancelled: take the stock again if it is still there.
+  if (order.status === "cancelled" && order.stockRestored) {
+    const revived = await Order.findOneAndUpdate(
+      { orderNumber: number, status: "cancelled", stockRestored: true },
+      { $set: { status: "paid", paidAt: new Date(), paymentReference, stockRestored: false } },
+      { new: true },
+    );
+    if (revived) {
+      try {
+        await decrementStock(revived.items as any);
+      } catch {
+        revived.stockRestored = true;
+        revived.adminNotes =
+          `${revived.adminNotes ? revived.adminNotes + "\n" : ""}LATE PAYMENT: customer paid after the order was cancelled and an item is now out of stock. Ship when restocked or refund on Paystack.`;
+        await revived.save();
+      }
+      sendPaymentConfirmed(buildEmailContext(revived)).catch(() => {});
+      return revived;
+    }
+  }
+
+  // Already paid / processing / shipped / delivered / refunded: nothing to redo
+  if (!order.paymentReference && order.status !== "cancelled") {
+    order.paymentReference = paymentReference;
+    await order.save();
+  }
+  return order;
+}
+
+/**
+ * Cancels or refunds an order and gives its stock back, exactly once.
+ *  - cancelled: always puts stock back (if not already).
+ *  - refunded : puts stock back only if the order had not shipped yet
+ *               (shipped/delivered refunds mean goods come back - adjust stock by hand after checking them).
+ */
+export async function cancelOrRefundOrder(
+  orderNumber: string,
+  newStatus: "cancelled" | "refunded",
+  note?: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+  const current = await Order.findOne({ orderNumber: number });
+  if (!current) return null;
+
+  const wasShipped = current.status === "shipped" || current.status === "delivered";
+  const shouldRestock = newStatus === "cancelled" || !wasShipped;
+  const noteLine = note ? `${current.adminNotes ? current.adminNotes + "\n" : ""}${note}` : undefined;
+
+  if (shouldRestock) {
+    const claimed = await Order.findOneAndUpdate(
+      { orderNumber: number, stockRestored: { $ne: true }, status: { $nin: ["cancelled", "refunded"] } },
+      { $set: { status: newStatus, stockRestored: true, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+      { new: true },
+    );
+    if (claimed) {
+      for (const item of claimed.items as any[]) {
+        await giveStockBackForItem(item).catch((e) => console.error("Restock failed:", e));
+      }
+      return claimed;
+    }
+  }
+
+  // Already cancelled/refunded (or no restock wanted): only the label changes
+  return Order.findOneAndUpdate(
+    { orderNumber: number },
+    { $set: { status: newStatus, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+    { new: true },
+  );
+}
+
+/**
+ * Cancels Paystack orders that were never paid so abandoned checkouts do not
+ * lock stock. Before cancelling, it asks Paystack whether the customer actually paid.
+ */
+export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+  const stale = await Order.find({
+    status: "pending",
+    paymentMethod: { $in: ["paystack", "flutterwave"] },
+    createdAt: { $lt: cutoff },
+  })
+    .sort({ createdAt: 1 })
+    .limit(50);
+
+  let cancelled = 0;
+  for (const order of stale) {
+    try {
+      const refs: string[] = (order as any).paystackRefs ?? [];
+      let verdict: "paid" | "unpaid" | "unknown" = "unknown";
+      if (refs.length === 0) {
+        verdict = "unpaid"; // customer never reached the Paystack page
+      } else {
+        let paid = false;
+        let unsure = false;
+        for (const ref of refs) {
+          try {
+            const v = await verifyTransaction(ref);
+            if (paymentMatchesOrder(order, v, ref)) {
+              await markOrderPaid(order.orderNumber, ref);
+              paid = true;
+              break;
+            }
+            if (v.status === "success") {
+              console.error(`[expire] ${order.orderNumber}: paid amount ${v.amount} does not match total, left pending for review`);
+              unsure = true;
+            }
+          } catch (err) {
+            // 404 = Paystack has no such payment (never started); anything else = could not check, so do not cancel
+            if (!(err instanceof PaystackError && err.status === 404)) unsure = true;
+          }
+        }
+        verdict = paid ? "paid" : unsure ? "unknown" : "unpaid";
+      }
+
+      if (verdict === "unpaid") {
+        await cancelOrRefundOrder(
+          order.orderNumber,
+          "cancelled",
+          "Auto-cancelled: payment was not completed in time. Stock returned.",
+        );
+        cancelled++;
+      }
+    } catch (err) {
+      console.error(`[expire] ${order.orderNumber} failed:`, err);
+    }
+  }
+  return cancelled;
+}
+
+export async function markOrderShipped(
+  orderNumber: string,
+  trackingNumber?: string,
+  trackingProviderUrl?: string,
+): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "shipped";
+  order.shippedAt = new Date();
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (trackingProviderUrl) order.trackingProviderUrl = trackingProviderUrl;
+  await order.save();
+
+  const ctx = buildEmailContext(order);
+  sendOrderShipped({ ...ctx, trackingNumber, trackingProviderUrl }).catch(() => {});
+
+  return order;
+}
+
+export async function markOrderDelivered(orderNumber: string): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "delivered";
+  order.deliveredAt = new Date();
+  await order.save();
+
+  sendOrderDelivered(buildEmailContext(order)).catch(() => {});
+
+  return order;
+}

@@ -15,6 +15,7 @@ import { getProgramSettings } from "../models/Commission";
 import siteContent from "./siteContent.json";
 import { GIFT_THRESHOLD, GIFT_WINDOW_DAYS } from "../services/giftProgress";
 import type { KDoc } from "./retrieve";
+import { applyDeliveryPolicy } from "./deliveryPolicy";
 
 const TTL_MS = 60_000;
 let cache: { at: number; docs: KDoc[] } | null = null;
@@ -308,6 +309,7 @@ export async function getKnowledge(): Promise<KDoc[]> {
     });
   }
 
+  applyDeliveryPolicy(docs);
   cache = { at: Date.now(), docs };
   return docs;
 }
