@@ -18,7 +18,10 @@ import {
   markOrderShipped,
   markOrderDelivered,
   cancelOrRefundOrder,
+  createOrder,
+  OrderError,
 } from "../../services/orderService";
+import { attachReferral } from "../../services/referralService";
 
 const router = Router();
 
@@ -77,6 +80,70 @@ router.get("/", async (req: Request, res: Response) => {
     res.status(500).json({
       error: { code: "SERVER_ERROR", message: "Failed to fetch orders" },
     });
+  }
+});
+
+// POST /api/admin/orders/manual
+// Records a sale made outside the website (WhatsApp, walk-in...). Goes through the same createOrder
+// as the checkout, so stock, cost, profit, gift progress and commission all work the same.
+const MANUAL_METHODS = ["bank_transfer", "cash", "pos"];
+const MANUAL_SOURCES = ["whatsapp", "walkin", "social", "other"];
+
+router.post("/manual", async (req: Request, res: Response) => {
+  const bad = (message: string) =>
+    res.status(400).json({ error: { code: "BAD_REQUEST", message } });
+  try {
+    const b = req.body ?? {};
+    const c = b.customer ?? {};
+    const str = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+    const fullName = str(c.fullName, 100);
+    const phone = str(c.phone, 30);
+    const email = str(c.email, 200);
+    if (!fullName) return bad("Enter the customer's name");
+    if (phone.replace(/\D/g, "").length < 10) return bad("Enter a valid phone number");
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad("That email address is not valid");
+    if (!MANUAL_METHODS.includes(b.paymentMethod)) return bad("Choose how the customer is paying");
+    if (!MANUAL_SOURCES.includes(b.source)) return bad("Choose where the order came from");
+
+    const pickup = b.pickup === true;
+    const state = pickup ? "Kwara" : str(c.state, 80);
+    const city = pickup ? "Ilorin" : str(c.city, 80);
+    const street = pickup ? "Pickup / walk-in" : str(c.street, 200);
+    if (!pickup && (!state || !city || !street)) return bad("Enter the delivery state, city and address");
+
+    if (!Array.isArray(b.items) || b.items.length === 0 || b.items.length > 20) {
+      return bad("Add between 1 and 20 products");
+    }
+    const items = b.items.map((it: any) => {
+      const selected: Record<string, string> = {};
+      if (it?.selectedVariants && typeof it.selectedVariants === "object") {
+        for (const [k, v] of Object.entries(it.selectedVariants).slice(0, 30)) {
+          if (typeof v === "string") selected[String(k).slice(0, 80)] = v.slice(0, 80);
+        }
+      }
+      // free gifts are not part of manual sales
+      return { comboId: String(it?.comboId ?? ""), quantity: Number(it?.quantity), selectedVariants: selected, isFreeGift: false };
+    });
+
+    const order = await createOrder(
+      {
+        items,
+        shipping: { fullName, phone, email, state, city, street, landmark: str(c.landmark, 200) },
+        paymentMethod: b.paymentMethod,
+        notes: str(b.notes, 500),
+      },
+      { source: b.source, paid: b.paid === true, pickup },
+    );
+    await attachReferral(order, b.ref);
+
+    res.status(201).json({ data: order });
+  } catch (err: any) {
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    }
+    console.error("POST /api/admin/orders/manual failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to record the sale" } });
   }
 });
 

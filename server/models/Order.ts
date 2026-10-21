@@ -19,12 +19,16 @@ export type OrderStatus =
   | "cancelled"
   | "refunded";
 
+export type OrderSource = "website" | "whatsapp" | "walkin" | "social" | "other";
+
 export type PaymentMethod =
   | "paystack"
   | "flutterwave"
   | "bank_transfer"
   | "cod"
-  | "whatsapp";
+  | "whatsapp"
+  | "cash"
+  | "pos";
 
 export interface OrderItemSnapshot {
   comboId: Types.ObjectId;
@@ -60,6 +64,10 @@ export interface OrderDocument extends Document {
   paymentMethod: PaymentMethod;
   paymentReference?: string;
   stockRestored?: boolean;
+  /** where the order came from; "website" for normal checkout */
+  source?: OrderSource;
+  /** true when the owner recorded it by hand (WhatsApp, walk-in...) */
+  manual?: boolean;
   paystackRefs?: string[];
   shipping: ShippingAddress;
   phoneKey?: string;
@@ -95,7 +103,8 @@ const ShippingAddressSchema = new Schema<ShippingAddress>(
   {
     fullName: { type: String, required: true },
     phone: { type: String, required: true },
-    email: { type: String, required: true },
+    // optional: WhatsApp and walk-in customers often have no email
+    email: { type: String, default: "" },
     state: { type: String, required: true },
     city: { type: String, required: true },
     street: { type: String, required: true },
@@ -119,7 +128,7 @@ const OrderSchema = new Schema<OrderDocument>(
     },
     paymentMethod: {
       type: String,
-      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"],
+      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp", "cash", "pos"],
       required: true,
     },
     paymentReference: { type: String, index: true },
@@ -129,6 +138,8 @@ const OrderSchema = new Schema<OrderDocument>(
     paystackRefs: { type: [String], default: [] },
     shipping: { type: ShippingAddressSchema, required: true },
     phoneKey: { type: String },
+    source: { type: String, enum: ["website", "whatsapp", "walkin", "social", "other"], default: "website", index: true },
+    manual: { type: Boolean, default: false },
     notes: { type: String },
     trackingNumber: { type: String },
     trackingProviderUrl: { type: String },

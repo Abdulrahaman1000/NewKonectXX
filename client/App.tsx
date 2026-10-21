@@ -52,6 +52,7 @@ import AdminAds from './pages/AdminAds';
 import AdminWithdrawals from './pages/AdminWithdrawals';
 import AdminPartnerSales from './pages/AdminPartnerSales';
 import AdminProfit from './pages/AdminProfit';
+import AdminRecordSale from './pages/AdminRecordSale';
 import { captureReferral } from "@/lib/referral";
 
 const queryClient = new QueryClient({
@@ -115,6 +116,7 @@ const App = () => (
 
                   <Route path="/admin/partners/:id" element={<AdminProtectedRoute><AdminPartnerSales /></AdminProtectedRoute>} />
                   <Route path="/admin/payouts" element={<AdminProtectedRoute><AdminWithdrawals /></AdminProtectedRoute>} />
+                  <Route path="/admin/record-sale" element={<AdminProtectedRoute><AdminRecordSale /></AdminProtectedRoute>} />
                   <Route path="/admin/profit" element={<AdminProtectedRoute><AdminProfit /></AdminProtectedRoute>} />
                   <Route path="/admin/ads" element={<AdminProtectedRoute><AdminAds /></AdminProtectedRoute>} />
 

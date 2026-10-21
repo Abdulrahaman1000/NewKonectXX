@@ -196,7 +196,7 @@ export default function AdminOrderDetail() {
 
             <div className="border-t border-white/10 mt-5 pt-4 space-y-1.5 text-xs">
               <Row label="Subtotal" value={formatNaira(order.subtotal)} />
-              <Row label="Shipping" value={order.shippingFee === 0 ? 'Free' : formatNaira(order.shippingFee)} />
+              <Row label="Shipping" value={order.shippingFee === 0 ? (String(order.shipping?.street ?? '').startsWith('Pickup') ? 'Pickup (no delivery)' : 'Paid to Jumia') : formatNaira(order.shippingFee)} />
             </div>
             <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
               <span className="text-sm text-white/70 font-bold">Total</span>
@@ -258,6 +258,9 @@ export default function AdminOrderDetail() {
           <Card title="Payment">
             <div className="space-y-1.5 text-xs">
               <Row label="Method" value={paymentLabel(order.paymentMethod)} />
+              {(order as any).manual && (
+                <Row label="Recorded by hand" value={({ whatsapp: 'WhatsApp', walkin: 'Walk-in', social: 'Social media', other: 'Other' } as Record<string, string>)[(order as any).source] ?? 'Yes'} />
+              )}
               {order.paymentReference && (
                 <Row label="Reference" value={order.paymentReference} />
               )}
@@ -356,6 +359,8 @@ function paymentLabel(method: string): string {
     paystack: 'Paystack',
     flutterwave: 'Flutterwave',
     whatsapp: 'WhatsApp',
+    cash: 'Cash',
+    pos: 'POS',
   };
   return labels[method] ?? method;
 }

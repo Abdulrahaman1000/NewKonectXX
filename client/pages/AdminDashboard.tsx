@@ -22,6 +22,7 @@ import {
   Megaphone,
   Banknote,
   TrendingUp,
+  PlusCircle,
 } from 'lucide-react';
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
@@ -108,6 +109,7 @@ export default function AdminDashboard() {
           <h2 className="text-base font-bold text-white mb-4">Manage Store</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/record-sale" Icon={PlusCircle} label="Record a sale" desc="Add a WhatsApp or walk-in order so stock and profit stay correct" />
             <TileLink to="/admin/profit" Icon={TrendingUp} label="Profit & Expenses" desc="Sales, cost, expenses and profit; record what you spend" />
             <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Products & Combos" desc="Add single products or combos, set price and cost, manage stock" highlight />

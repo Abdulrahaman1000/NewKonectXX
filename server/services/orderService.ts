@@ -82,9 +82,12 @@ function buildVariantSummary(
   return (combo.items ?? [])
     .map((item: any) => {
       const chosenId = selectedVariants?.[item.id];
-      if (!chosenId) return item.name; // default
-      const alt = (item.alternatives ?? []).find((a: any) => a.id === chosenId);
-      return alt ? alt.name : item.name;
+      const alt = chosenId ? (item.alternatives ?? []).find((a: any) => a.id === chosenId) : undefined;
+      const name = alt ? alt.name : item.name; // default when nothing was chosen
+      // include the chosen color so you know exactly what to pack
+      const colorId = selectedVariants?.[`${item.id}__color`];
+      const color = colorId ? (item.colors ?? []).find((c: any) => c.id === colorId) : undefined;
+      return color ? `${name} (${color.name})` : name;
     })
     .join(" · ");
 }
@@ -287,24 +290,40 @@ function buildEmailContext(order: any) {
   };
 }
 
-export async function createOrder(input: CreateOrderInput) {
+/** Extra options when the owner records a sale by hand (WhatsApp, walk-in...). */
+export interface ManualSaleOptions {
+  source: "whatsapp" | "walkin" | "social" | "other";
+  /** payment already received */
+  paid: boolean;
+  /** customer collects the goods: no delivery fee */
+  pickup: boolean;
+}
+
+export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOptions) {
   const phoneKey = normalizePhone(input.shipping.phone);
   const priorSpend = await getPriorSpend(phoneKey);
   const items = await buildItemSnapshots(input.items, priorSpend);
 
   const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
-  const shippingFee = await calculateShippingFee(
-    input.paymentMethod,
-    input.shipping.city,
-  );
+  const shippingFee = manual?.pickup
+    ? 0
+    : await calculateShippingFee(
+        input.paymentMethod,
+        input.shipping.city,
+      );
   const total = subtotal + shippingFee;
 
   const orderNumber = await generateOrderNumber();
 
   await decrementStock(items);
 
-  const initialStatus: OrderStatus =
-    input.paymentMethod === "cod" ? "processing" : "pending";
+  const initialStatus: OrderStatus = manual
+    ? manual.paid
+      ? "paid"
+      : "pending"
+    : input.paymentMethod === "cod"
+      ? "processing"
+      : "pending";
 
   let order;
   try {
@@ -319,6 +338,13 @@ export async function createOrder(input: CreateOrderInput) {
       shipping: input.shipping,
       phoneKey,
       notes: input.notes,
+      ...(manual
+        ? {
+            source: manual.source,
+            manual: true,
+            ...(manual.paid ? { paidAt: new Date(), paymentReference: `manual-${input.paymentMethod}` } : {}),
+          }
+        : {}),
     });
   } catch (err) {
     // The order could not be saved: put the stock back so nothing is lost.
@@ -331,9 +357,12 @@ export async function createOrder(input: CreateOrderInput) {
   // Remember what these goods cost you right now, so profit stays correct if prices change later.
   await recordOrderCost(order);
 
-  const ctx = buildEmailContext(order);
-  sendOrderPlaced(ctx).catch(() => {});
-  sendNewOrderAdminAlert(ctx).catch(() => {});
+  // A sale recorded by hand needs no "order placed" email: you are already talking to the customer.
+  if (!manual) {
+    const ctx = buildEmailContext(order);
+    sendOrderPlaced(ctx).catch(() => {});
+    sendNewOrderAdminAlert(ctx).catch(() => {});
+  }
 
   return order;
 }

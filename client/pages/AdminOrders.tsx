@@ -122,6 +122,12 @@ export default function AdminOrders() {
                 {meta ? `${meta.total} total` : 'Loading...'}
               </p>
             </div>
+            <Link
+              to="/admin/record-sale"
+              className="px-4 py-2.5 rounded-xl bg-primary text-black text-xs font-black hover:bg-primary/90 transition-colors"
+            >
+              + Record a sale
+            </Link>
           </div>
 
           {/* Filters + search */}
@@ -197,6 +203,11 @@ export default function AdminOrders() {
                       >
                         <td className="px-4 py-3 font-mono text-primary text-xs">
                           {order.orderNumber}
+                          {(order as any).source && (order as any).source !== 'website' && (
+                            <span className="ml-2 inline-block rounded-full border border-white/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white/60">
+                              {({ whatsapp: 'WhatsApp', walkin: 'Walk-in', social: 'Social', other: 'Other' } as Record<string, string>)[(order as any).source] ?? (order as any).source}
+                            </span>
+                          )}
                           {order.items.some((i: any) => i.isFreeGift || String(i.name || '').startsWith('[FREE GIFT]')) && (
                             <span className="ml-2 inline-block rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
                               Free gift
