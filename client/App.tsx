@@ -53,6 +53,8 @@ import AdminWithdrawals from './pages/AdminWithdrawals';
 import AdminPartnerSales from './pages/AdminPartnerSales';
 import AdminProfit from './pages/AdminProfit';
 import AdminFulfilment from './pages/AdminFulfilment';
+import AdminStock from './pages/AdminStock';
+import AdminToday from './pages/AdminToday';
 import AdminRecordSale from './pages/AdminRecordSale';
 import { captureReferral } from "@/lib/referral";
 
@@ -119,6 +121,8 @@ const App = () => (
                   <Route path="/admin/payouts" element={<AdminProtectedRoute><AdminWithdrawals /></AdminProtectedRoute>} />
                   <Route path="/admin/record-sale" element={<AdminProtectedRoute><AdminRecordSale /></AdminProtectedRoute>} />
                   <Route path="/admin/profit" element={<AdminProtectedRoute><AdminProfit /></AdminProtectedRoute>} />
+                  <Route path="/admin/today" element={<AdminProtectedRoute><AdminToday /></AdminProtectedRoute>} />
+                  <Route path="/admin/stock" element={<AdminProtectedRoute><AdminStock /></AdminProtectedRoute>} />
                   <Route path="/admin/fulfilment" element={<AdminProtectedRoute><AdminFulfilment /></AdminProtectedRoute>} />
                   <Route path="/admin/ads" element={<AdminProtectedRoute><AdminAds /></AdminProtectedRoute>} />
 

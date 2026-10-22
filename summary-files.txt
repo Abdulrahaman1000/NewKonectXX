@@ -1,0 +1,1132 @@
+
+
+===== server\models\Commission.ts =====
+/**
+ * Commission records + reseller program settings.
+ *
+ * A Commission row is created once, when an order that came through a reseller's
+ * referral link is placed. It stores the numbers that were true at that moment
+ * (base, rate, holdDays) so changing the program settings later never rewrites history.
+ *
+ * Status is worked out from the order and paidAt every time it is needed:
+ *   order cancelled / refunded                      -> cancelled
+ *   paidAt is set                                   -> paid
+ *   order delivered and holdDays have passed        -> approved
+ *   anything else                                   -> pending
+ * (names match the Partner Program plan: Pending, Approved, Paid, Cancelled)
+ * That way cancelling or refunding an order anywhere in the app needs no extra code here.
+ *
+ * Destination: server/models/Commission.ts
+ */
+
+import mongoose, { Schema, Types } from "mongoose";
+
+export interface ICommission {
+  _id: Types.ObjectId;
+  orderId: Types.ObjectId;
+  orderNumber: string;
+  resellerId: Types.ObjectId;
+  resellerCode: string;
+  /** Amount the percentage was applied to (products only, shipping excluded), in naira */
+  base: number;
+  /** Blended percent actually applied (amount / base), for display, e.g. 5 or 7.5 */
+  rate: number;
+  /** How the amount was built: money and percent for combos vs single products */
+  comboBase: number;
+  comboRate: number;
+  singleBase: number;
+  singleRate: number;
+  /** Set when the weekly payout that included this commission is sent */
+  paidAt?: Date;
+  /** Set while the commission is part of a withdrawal request (locks it so it cannot be requested twice) */
+  withdrawalId?: Types.ObjectId | null;
+  /** Days after delivery before the commission can be withdrawn */
+  holdDays: number;
+  /** Commission in naira */
+  amount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const commissionSchema = new Schema<ICommission>(
+  {
+    // unique: one order can only ever produce one commission, even if the code runs twice
+    orderId: { type: Schema.Types.ObjectId, ref: "Order", required: true, unique: true },
+    orderNumber: { type: String, required: true, index: true },
+    resellerId: { type: Schema.Types.ObjectId, ref: "Reseller", required: true, index: true },
+    resellerCode: { type: String, required: true, index: true },
+    base: { type: Number, required: true, min: 0 },
+    rate: { type: Number, required: true, min: 0 },
+    comboBase: { type: Number, default: 0, min: 0 },
+    comboRate: { type: Number, default: 0, min: 0 },
+    singleBase: { type: Number, default: 0, min: 0 },
+    singleRate: { type: Number, default: 0, min: 0 },
+    paidAt: { type: Date },
+    withdrawalId: { type: Schema.Types.ObjectId, ref: "Withdrawal", default: null, index: true },
+    holdDays: { type: Number, required: true, min: 0 },
+    amount: { type: Number, required: true, min: 0 },
+  },
+  { timestamps: true },
+);
+
+export const Commission =
+  (mongoose.models.Commission as mongoose.Model<ICommission>) ??
+  mongoose.model<ICommission>("Commission", commissionSchema);
+
+/** Single settings document (_id "program"). Created on first read with the defaults. */
+export interface IResellerProgram {
+  _id: string;
+  /** Percent on combos (2+ items). Plan: 5 */
+  comboPercent: number;
+  /** Percent on single products (1 item). Plan: up to 10 */
+  singlePercent: number;
+  holdDays: number;
+  /** Smallest balance a partner can withdraw, in naira. Plan: 2000 */
+  minWithdrawal: number;
+}
+
+const programSchema = new Schema<IResellerProgram>(
+  {
+    _id: { type: String },
+    comboPercent: { type: Number, default: 5, min: 0, max: 50 },
+    singlePercent: { type: Number, default: 10, min: 0, max: 50 },
+    holdDays: { type: Number, default: 7, min: 0, max: 90 },
+    minWithdrawal: { type: Number, default: 2000, min: 0 },
+  },
+  { timestamps: true },
+);
+
+export const ResellerProgram =
+  (mongoose.models.ResellerProgram as mongoose.Model<IResellerProgram>) ??
+  mongoose.model<IResellerProgram>("ResellerProgram", programSchema);
+
+export async function getProgramSettings(): Promise<IResellerProgram> {
+  const doc = await ResellerProgram.findOneAndUpdate(
+    { _id: "program" },
+    { $setOnInsert: { comboPercent: 5, singlePercent: 10, holdDays: 7, minWithdrawal: 2000 } },
+    { new: true, upsert: true },
+  ).lean();
+  return doc as IResellerProgram;
+}
+
+===== server\models\Reseller.ts =====
+/**
+ * Reseller — server model (mongoose lives here, never in client code).
+ *
+ * V1 plan: anyone can apply, you approve them, and only approved resellers get a
+ * reseller code / referral link. So a new sign-up starts as "pending" and has no
+ * resellerCode yet; the code is assigned the first time you approve them.
+ */
+
+import mongoose, { Schema } from "mongoose";
+
+const resellerSchema = new Schema(
+  {
+    fullName: { type: String, required: true, trim: true, maxlength: 100 },
+    phone: { type: String, required: true, trim: true, unique: true },
+    whatsapp: { type: String, required: true, trim: true },
+    email: { type: String, required: true, trim: true, lowercase: true, unique: true },
+    // Never the password itself. select:false keeps the hash out of normal queries.
+    passwordHash: { type: String, required: true, select: false },
+    /** Optional: social handle or main promotion channel. */
+    channel: { type: String, trim: true, maxlength: 200, default: "" },
+    /**
+     * Payout details, collected at sign-up (Partner Program plan, section 5).
+     * Defaults to "" so partners who applied before these fields existed still load.
+     * The sign-up route requires all three for new applications.
+     */
+    bankName: { type: String, trim: true, maxlength: 80, default: "" },
+    accountNumber: { type: String, trim: true, maxlength: 10, default: "" },
+    accountName: { type: String, trim: true, maxlength: 100, default: "" },
+    /** Private notes for the admin team. Never sent to the partner. */
+    adminNotes: { type: String, trim: true, maxlength: 1000, default: "" },
+    status: {
+      type: String,
+      enum: ["pending", "approved", "suspended"],
+      default: "pending",
+      index: true,
+    },
+    /** e.g. SC1001. Set the first time the reseller is approved, then never changes. */
+    resellerCode: { type: String, unique: true, sparse: true },
+    approvedAt: { type: Date },
+    suspendedAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+export const Reseller: mongoose.Model<any> =
+  mongoose.models.Reseller ?? mongoose.model("Reseller", resellerSchema);
+
+/**
+ * One document that counts up, so two approvals at the same moment can never get the
+ * same code. It has its own collection ("resellercounters"), so it cannot clash with
+ * any other counter you may already have.
+ */
+const counterSchema = new Schema({
+  _id: { type: String },
+  seq: { type: Number, default: 0 },
+});
+
+export const ResellerCounter: mongoose.Model<any> =
+  mongoose.models.ResellerCounter ?? mongoose.model("ResellerCounter", counterSchema);
+
+===== server\routes\admin\commissions.ts =====
+/**
+ * Admin commission routes. Mount behind requireAuth, like the other admin routes.
+ * Destination: server/routes/admin/commissions.ts
+ *
+ * GET /api/admin/commissions/by-orders?ids=<orderId>,<orderId>...
+ *     -> { data: { [orderId]: { partnerName, resellerCode, amount, base, rate, ..., status } } }
+ *     Only orders that came through a partner's link appear in the result.
+ * GET /api/admin/commissions/partner/:resellerId
+ *     -> everything about one partner's sales, for checking before a payout
+ * GET /api/admin/commissions/settings          -> program settings (rates, hold days, minimum withdrawal)
+ * PUT /api/admin/commissions/settings          -> save them. Applies to FUTURE orders only;
+ *                                                  each commission keeps the rates it was created with.
+ */
+
+import { Router, Request, Response } from "express";
+import mongoose from "mongoose";
+import { Commission, ResellerProgram, getProgramSettings } from "../../models/Commission";
+import { Order } from "../../models/Order";
+import { Reseller } from "../../models/Reseller";
+import { ReferralClick } from "../../models/ReferralClick";
+import { Withdrawal } from "../../models/Withdrawal";
+import { resolveCommissionStatuses } from "../../services/referralService";
+
+const router = Router();
+
+const fail = (res: Response, status: number, code: string, message: string) =>
+  res.status(status).json({ error: { code, message } });
+
+router.get("/by-orders", async (req: Request, res: Response) => {
+  try {
+    const raw = typeof req.query.ids === "string" ? req.query.ids : "";
+    const ids = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => mongoose.isValidObjectId(s))
+      .slice(0, 100);
+    if (ids.length === 0) return res.json({ data: {} });
+
+    const allCommissions = await Commission.find({ orderId: { $in: ids } }).lean();
+    // A commission with no valid partner id (leftover test data) is skipped so it cannot break the list
+    const commissions = allCommissions.filter((c: any) => mongoose.isValidObjectId(c.resellerId));
+    if (commissions.length === 0) return res.json({ data: {} });
+
+    const [{ statusById }, partners] = await Promise.all([
+      resolveCommissionStatuses(commissions.map((c) => c.resellerId)),
+      Reseller.find({ _id: { $in: commissions.map((c) => c.resellerId) } })
+        .select("fullName")
+        .lean(),
+    ]);
+    const partnerById = new Map(partners.map((p: any) => [String(p._id), p]));
+
+    const out: Record<string, unknown> = {};
+    for (const c of commissions) {
+      out[String(c.orderId)] = {
+        partnerName: (partnerById.get(String(c.resellerId)) as any)?.fullName ?? "Unknown partner",
+        resellerCode: c.resellerCode,
+        base: c.base,
+        rate: c.rate,
+        comboBase: c.comboBase,
+        comboRate: c.comboRate,
+        singleBase: c.singleBase,
+        singleRate: c.singleRate,
+        holdDays: c.holdDays,
+        amount: c.amount,
+        paidAt: c.paidAt ?? null,
+        status: statusById.get(String(c._id)) ?? "pending",
+      };
+    }
+    res.json({ data: out });
+  } catch (err) {
+    console.error("GET /api/admin/commissions/by-orders failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to load commissions");
+  }
+});
+
+router.get("/settings", async (_req: Request, res: Response) => {
+  try {
+    res.json({ data: await getProgramSettings() });
+  } catch (err) {
+    console.error("GET /api/admin/commissions/settings failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to load settings");
+  }
+});
+
+router.put("/settings", async (req: Request, res: Response) => {
+  try {
+    const b = req.body ?? {};
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+
+    const comboPercent = num(b.comboPercent);
+    const singlePercent = num(b.singlePercent);
+    const holdDays = num(b.holdDays);
+    const minWithdrawal = num(b.minWithdrawal);
+
+    if (!(comboPercent >= 0 && comboPercent <= 50)) {
+      return fail(res, 400, "BAD_REQUEST", "Combo commission must be between 0 and 50 percent");
+    }
+    if (!(singlePercent >= 0 && singlePercent <= 50)) {
+      return fail(res, 400, "BAD_REQUEST", "Single product commission must be between 0 and 50 percent");
+    }
+    if (!(Number.isInteger(holdDays) && holdDays >= 0 && holdDays <= 90)) {
+      return fail(res, 400, "BAD_REQUEST", "Hold days must be a whole number from 0 to 90");
+    }
+    if (!(Number.isInteger(minWithdrawal) && minWithdrawal >= 0 && minWithdrawal <= 1_000_000)) {
+      return fail(res, 400, "BAD_REQUEST", "Minimum withdrawal must be a whole number of naira");
+    }
+
+    const saved = await ResellerProgram.findOneAndUpdate(
+      { _id: "program" },
+      { $set: { comboPercent, singlePercent, holdDays, minWithdrawal } },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+    res.json({ data: saved });
+  } catch (err) {
+    console.error("PUT /api/admin/commissions/settings failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to save settings");
+  }
+});
+
+/** One partner's sales: totals, every referred order with its status, and withdrawal history. */
+router.get("/partner/:resellerId", async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.resellerId)) return fail(res, 404, "NOT_FOUND", "Partner not found");
+    const partner: any = await Reseller.findById(req.params.resellerId).lean();
+    if (!partner) return fail(res, 404, "NOT_FOUND", "Partner not found");
+
+    const [commissions, withdrawals, clicks, statuses] = await Promise.all([
+      Commission.find({ resellerId: partner._id }).sort({ createdAt: -1 }).lean(),
+      Withdrawal.find({ resellerId: partner._id }).sort({ createdAt: -1 }).limit(100).lean(),
+      partner.resellerCode ? ReferralClick.countDocuments({ resellerCode: partner.resellerCode }) : Promise.resolve(0),
+      resolveCommissionStatuses([partner._id]),
+    ]);
+    const { statusById, cycleByReseller } = statuses;
+    const orders: any[] = await Order.find({ _id: { $in: commissions.map((c: any) => c.orderId) } }).lean();
+    const orderById = new Map(orders.map((o) => [String(o._id), o]));
+
+    const totals = { pending: 0, approved: 0, paid: 0, cancelled: 0 };
+    let requested = 0;
+    const rows = (commissions as any[]).map((c) => {
+      const o: any = orderById.get(String(c.orderId)) ?? {};
+      const status = statusById.get(String(c._id)) ?? "pending";
+      totals[status as keyof typeof totals] += c.amount;
+      if (status === "approved" && c.withdrawalId) requested += c.amount;
+      const ship = o.shipping ?? {};
+      return {
+        orderId: String(c.orderId),
+        orderNumber: c.orderNumber,
+        date: c.createdAt,
+        customer: ship.fullName ?? ship.name ?? o.customerName ?? "",
+        orderStatus: o.status ?? "unknown",
+        deliveredAt: o.deliveredAt ?? null,
+        orderTotal: o.total ?? o.totalAmount ?? null,
+        base: c.base,
+        rate: c.rate,
+        amount: c.amount,
+        status,
+        withdrawalId: c.withdrawalId ? String(c.withdrawalId) : null,
+        paidAt: c.paidAt ?? null,
+      };
+    });
+
+    res.json({
+      data: {
+        partner: {
+          id: String(partner._id),
+          fullName: partner.fullName,
+          resellerCode: partner.resellerCode ?? "",
+          status: partner.status,
+          phone: partner.phone,
+          whatsapp: partner.whatsapp,
+          email: partner.email,
+          bankName: partner.bankName ?? "",
+          accountNumber: partner.accountNumber ?? "",
+          accountName: partner.accountName ?? "",
+        },
+        stats: { clicks, orders: commissions.length },
+        totals,
+        requested,
+        cycle: cycleByReseller.get(String(partner._id)) ?? null,
+        rows,
+        withdrawals: (withdrawals as any[]).map((w) => ({
+          id: String(w._id),
+          date: w.createdAt,
+          amount: w.status === "paid" ? w.paidAmount ?? w.amount : w.amount,
+          orderCount: w.orderCount,
+          status: w.status,
+          paidAt: w.paidAt ?? null,
+          note: w.adminNote ?? "",
+        })),
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/commissions/partner/:id failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to load partner sales");
+  }
+});
+
+export default router;
+
+===== server\routes\admin\resellers.ts =====
+/**
+ * Admin partner (reseller) management routes. Mount behind requireAuth, like the other admin routes.
+ *
+ * GET    /api/admin/resellers?status=pending|approved|suspended&q=   — list (newest first)
+ * GET    /api/admin/resellers/counts                                  — { pending, approved, suspended }
+ * PATCH  /api/admin/resellers/:id/status   { status }                 — "approved" or "suspended"
+ * PATCH  /api/admin/resellers/:id/notes    { adminNotes }             — private admin notes
+ * DELETE /api/admin/resellers/:id                                     — reject a PENDING application
+ *
+ * passwordHash is select:false on the model, so it is never returned from any of these.
+ */
+
+import { sendPartnerApproved } from "../../services/emailService";
+import { Router, Request, Response } from "express";
+import { Reseller, ResellerCounter } from "../../models/Reseller";
+
+const router = Router();
+
+const STATUSES = ["pending", "approved", "suspended"] as const;
+type Status = (typeof STATUSES)[number];
+const isStatus = (v: unknown): v is Status =>
+  typeof v === "string" && (STATUSES as readonly string[]).includes(v);
+
+const fail = (res: Response, status: number, code: string, message: string) =>
+  res.status(status).json({ error: { code, message } });
+
+/** SC1001, SC1002, ... Atomic, so two approvals at once never share a code. */
+async function nextResellerCode(): Promise<string> {
+  const counter = await ResellerCounter.findOneAndUpdate(
+    { _id: "reseller-code" },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true },
+  );
+  return `SC${1000 + counter.seq}`;
+}
+
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const filter: Record<string, unknown> = {};
+    if (isStatus(req.query.status)) filter.status = req.query.status;
+
+    const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 60) : "";
+    if (q) {
+      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$or = [
+        { fullName: rx },
+        { email: rx },
+        { phone: rx },
+        { whatsapp: rx },
+        { resellerCode: rx },
+      ];
+    }
+
+    const resellers = await Reseller.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ data: resellers });
+  } catch (err) {
+    console.error("GET /api/admin/resellers failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to fetch partners");
+  }
+});
+
+router.get("/counts", async (_req: Request, res: Response) => {
+  try {
+    const rows = await Reseller.aggregate([{ $group: { _id: "$status", n: { $sum: 1 } } }]);
+    const counts: Record<Status, number> = { pending: 0, approved: 0, suspended: 0 };
+    for (const row of rows) if (isStatus(row._id)) counts[row._id] = row.n;
+    res.json({ data: counts });
+  } catch (err) {
+    console.error("GET /api/admin/resellers/counts failed:", err);
+    fail(res, 500, "SERVER_ERROR", "Failed to fetch counts");
+  }
+});
+
+router.patch("/:id/status", async (req: Request, res: Response) => {
+  try {
+    const { status } = req.body || {};
+    if (status !== "approved" && status !== "suspended") {
+      return fail(res, 400, "BAD_REQUEST", "Status must be approved or suspended");
+    }
+
+    const reseller = await Reseller.findById(req.params.id).select("status resellerCode");
+    if (!reseller) return fail(res, 404, "NOT_FOUND", "Partner not found");
+
+    if (status === "suspended" && reseller.status !== "approved") {
+      return fail(res, 409, "CONFLICT", "Only approved partners can be suspended");
+    }
+
+    const update: Record<string, unknown> = { status };
+    if (status === "approved" && !reseller.resellerCode) {
+      // First approval: assign the code. Reinstating a suspended reseller keeps theirs.
+      update.resellerCode = await nextResellerCode();
+      update.approvedAt = new Date();
+    }
+    if (status === "suspended") update.suspendedAt = new Date();
+
+    const updated = await Reseller.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+      runValidators: true,
+    }).lean();
+
+    // Tell the partner (non-blocking; email problems never fail the approval)
+    if (status === "approved" && reseller.status !== "approved" && updated?.email && updated?.resellerCode) {
+      void sendPartnerApproved({ fullName: updated.fullName, email: updated.email, code: updated.resellerCode });
+    }
+
+    res.json({ data: updated });
+  } catch (err: any) {
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`PATCH /api/admin/resellers/${req.params.id}/status failed:`, err);
+    fail(res, 500, "SERVER_ERROR", "Failed to update partner");
+  }
+});
+
+router.patch("/:id/notes", async (req: Request, res: Response) => {
+  try {
+    const raw = req.body?.adminNotes;
+    const adminNotes = typeof raw === "string" ? raw.trim().slice(0, 1000) : "";
+    const updated = await Reseller.findByIdAndUpdate(
+      req.params.id,
+      { adminNotes },
+      { new: true },
+    ).lean();
+    if (!updated) return fail(res, 404, "NOT_FOUND", "Partner not found");
+    res.json({ data: updated });
+  } catch (err: any) {
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`PATCH /api/admin/resellers/${req.params.id}/notes failed:`, err);
+    fail(res, 500, "SERVER_ERROR", "Failed to save notes");
+  }
+});
+
+router.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    const reseller = await Reseller.findById(req.params.id).select("status");
+    if (!reseller) return fail(res, 404, "NOT_FOUND", "Partner not found");
+
+    // Once someone has been approved they may have referrals and commission on record,
+    // so they are suspended, never deleted.
+    if (reseller.status !== "pending") {
+      return fail(
+        res,
+        409,
+        "CONFLICT",
+        "Only pending applications can be rejected. Suspend approved partners instead.",
+      );
+    }
+
+    await reseller.deleteOne();
+    res.json({ data: { id: req.params.id, deleted: true } });
+  } catch (err: any) {
+    if (err.name === "CastError") return fail(res, 404, "NOT_FOUND", "Partner not found");
+    console.error(`DELETE /api/admin/resellers/${req.params.id} failed:`, err);
+    fail(res, 500, "SERVER_ERROR", "Failed to reject application");
+  }
+});
+
+export default router;
+
+===== server\routes\resellers.ts =====
+/**
+ * POST /api/resellers/register — save a partner application as "pending".
+ *
+ * Mount it in server/index.ts, AFTER express.json():
+ *   import resellersRouter from './routes/resellers';
+ *   app.use('/api/resellers', resellersRouter);
+ */
+
+import { Router } from 'express';
+import { randomBytes, scrypt as scryptCallback } from 'node:crypto';
+import { promisify } from 'node:util';
+import { Reseller } from '../models/Reseller';
+import { sendPartnerApplicationReceived } from '../services/emailService';
+
+const router = Router();
+const scrypt = promisify(scryptCallback);
+
+/**
+ * Password hashing with Node's built-in scrypt, so no extra package is needed.
+ * Stored as "scrypt$<salt>$<hash>". When you build reseller login, hash the typed
+ * password with the same salt and compare with crypto.timingSafeEqual.
+ */
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = (await scrypt(password, salt, 64)) as Buffer;
+  return `scrypt$${salt.toString('hex')}$${key.toString('hex')}`;
+}
+
+const PHONE_RE = /^\+?\d{10,15}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const ACCOUNT_RE = /^\d{10}$/;
+
+const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const phoneOf = (v: unknown) => text(v, 30).replace(/[\s-]/g, '');
+
+/** Simple per-IP limit: 5 applications per hour, so bots cannot flood the partner list. */
+const attempts = new Map<string, { n: number; reset: number }>();
+function tooMany(ip: string | undefined): boolean {
+  const key = ip ?? 'unknown';
+  const now = Date.now();
+  const cur = attempts.get(key);
+  if (!cur || now > cur.reset) {
+    attempts.set(key, { n: 1, reset: now + 60 * 60 * 1000 });
+    return false;
+  }
+  cur.n += 1;
+  return cur.n > 5;
+}
+
+router.post('/register', async (req, res) => {
+  const body = req.body ?? {};
+
+  if (tooMany(req.ip)) {
+    return res.status(429).json({ error: 'Too many applications from this connection. Please try again later.' });
+  }
+
+  // Honeypot: real people never fill this in. Answer "ok" so bots learn nothing.
+  if (text(body.website, 100)) return res.status(201).json({ ok: true });
+
+  const fullName = text(body.fullName, 100);
+  const phone = phoneOf(body.phone);
+  const whatsapp = phoneOf(body.whatsapp) || phone;
+  const email = text(body.email, 150).toLowerCase();
+  const password = typeof body.password === 'string' ? body.password : '';
+  const channel = text(body.channel, 200);
+  const bankName = text(body.bankName, 80);
+  const accountNumber = text(body.accountNumber, 20).replace(/\D/g, '');
+  const accountName = text(body.accountName, 100);
+
+  if (fullName.length < 2) return res.status(400).json({ error: 'Please enter your full name.' });
+  if (!PHONE_RE.test(phone)) return res.status(400).json({ error: 'Please enter a valid phone number.' });
+  if (!PHONE_RE.test(whatsapp)) return res.status(400).json({ error: 'Please enter a valid WhatsApp number.' });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: 'Your password must be 8 to 128 characters.' });
+  }
+  if (bankName.length < 2) return res.status(400).json({ error: 'Please enter your bank name.' });
+  if (!ACCOUNT_RE.test(accountNumber)) {
+    return res.status(400).json({ error: 'Your account number must be 10 digits.' });
+  }
+  if (accountName.length < 2) return res.status(400).json({ error: 'Please enter your account name.' });
+
+  const duplicate = { error: 'A partner with this email or phone number already exists.' };
+
+  try {
+    if (await Reseller.exists({ $or: [{ email }, { phone }] })) {
+      return res.status(409).json(duplicate);
+    }
+
+    const passwordHash = await hashPassword(password);
+    await Reseller.create({
+      fullName,
+      phone,
+      whatsapp,
+      email,
+      passwordHash,
+      channel,
+      bankName,
+      accountNumber,
+      accountName,
+    });
+
+    void sendPartnerApplicationReceived({ fullName, email });
+
+    return res.status(201).json({ ok: true });
+  } catch (err: any) {
+    // Two sign-ups racing past the check above are still caught by the unique indexes
+    if (err?.code === 11000) return res.status(409).json(duplicate);
+    console.error('[resellers] register failed:', err);
+    return res.status(500).json({ error: 'Could not submit your application. Please try again.' });
+  }
+});
+
+export default router;
+
+===== server\services\emailService.ts =====
+/**
+ * Email service.
+ *
+ * Wraps Resend with safe defaults + typed templates for each lifecycle email:
+ *  - sendOrderPlaced            — to customer, when order is created
+ *  - sendPaymentConfirmed       — to customer, when Paystack payment succeeds
+ *  - sendOrderShipped           — to customer, when admin marks shipped
+ *  - sendOrderDelivered         — to customer, when admin marks delivered
+ *  - sendNewOrderAdminAlert     — to YOU, when any new order comes in
+ *  - sendPartnerApplicationReceived — to a partner applicant, right after they sign up
+ *  - sendPartnerApproved        — to a partner, when you approve them (includes login link)
+ *
+ * All sends are non-throwing: if Resend fails we log and continue. Email
+ * failures should never break order creation or payment flows.
+ *
+ * If RESEND_API_KEY is empty, sends are skipped entirely (logged as no-op).
+ * This way the app works fine in dev without configuring email.
+ */
+
+import { Resend } from "resend";
+import { config } from "../config";
+
+const resend = config.resend.apiKey ? new Resend(config.resend.apiKey) : null;
+
+interface OrderEmailContext {
+  orderNumber: string;
+  customerName: string;
+  customerEmail: string;
+  total: number;
+  items: Array<{ name: string; quantity: number; subtotal: number }>;
+  shippingAddress: {
+    fullName: string;
+    street: string;
+    city: string;
+    state: string;
+    phone: string;
+  };
+  paymentMethod: string;
+  trackingUrl?: string;
+}
+
+const formatNGN = (amount: number) =>
+  new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    maximumFractionDigits: 0,
+  }).format(amount);
+
+// Shared HTML wrapper — keeps each template focused on the unique content
+function wrap(opts: {
+  preheader: string;       // hidden preview text in inbox
+  title: string;
+  body: string;            // raw HTML for body section
+  ctaText?: string;
+  ctaUrl?: string;
+  /** Small print under the email. Defaults to the order wording. */
+  footerNote?: string;
+}) {
+  const cta = opts.ctaText && opts.ctaUrl
+    ? `<div style="text-align:center;margin:32px 0;">
+         <a href="${opts.ctaUrl}" style="display:inline-block;background:#FFD700;color:#000;padding:14px 32px;border-radius:8px;font-weight:bold;text-decoration:none;font-size:14px;">${opts.ctaText}</a>
+       </div>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${opts.title}</title>
+</head>
+<body style="margin:0;padding:0;background:#f7f7f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;">${opts.preheader}</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f7f7;padding:24px 12px;">
+<tr><td align="center">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+
+<!-- Header -->
+<tr><td style="background:linear-gradient(135deg,#1a1a1a 0%,#2a2a2a 100%);padding:24px;text-align:center;">
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+    <tr>
+      <td style="background:linear-gradient(135deg,#FFD700,#FFA500);width:36px;height:36px;border-radius:8px;text-align:center;vertical-align:middle;">
+        <span style="color:#000;font-weight:900;font-size:13px;">SC</span>
+      </td>
+      <td style="padding-left:10px;">
+        <div style="color:#fff;font-weight:900;font-size:14px;line-height:1;">Smart Combo</div>
+        <div style="color:#FFD700;font-size:9px;letter-spacing:2px;text-transform:uppercase;line-height:1.5;">Premium combos</div>
+      </td>
+    </tr>
+  </table>
+</td></tr>
+
+<!-- Body -->
+<tr><td style="padding:32px 28px;color:#1a1a1a;">
+  <h1 style="margin:0 0 16px;font-size:22px;font-weight:900;color:#1a1a1a;line-height:1.3;">${opts.title}</h1>
+  ${opts.body}
+  ${cta}
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="background:#fafafa;padding:20px;text-align:center;border-top:1px solid #eee;">
+  <p style="margin:0 0 4px;font-size:11px;color:#666;">Smart Combo · Ilorin, Kwara · Nigeria</p>
+  <p style="margin:0;font-size:10px;color:#999;">${opts.footerNote ?? "If you didn't place this order, please reply and let us know."}</p>
+</td></tr>
+
+</table>
+</td></tr></table>
+</body>
+</html>`;
+}
+
+function itemRows(items: OrderEmailContext["items"]): string {
+  return items
+    .map(
+      (it) => `
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;">
+            <div style="font-size:14px;color:#1a1a1a;font-weight:600;">${it.name}</div>
+            <div style="font-size:11px;color:#999;">Qty ${it.quantity}</div>
+          </td>
+          <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;text-align:right;font-size:14px;color:#1a1a1a;font-weight:600;">${formatNGN(it.subtotal)}</td>
+        </tr>`,
+    )
+    .join("");
+}
+
+function shippingBlock(addr: OrderEmailContext["shippingAddress"]): string {
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fafafa;border-radius:8px;padding:16px;margin:20px 0;">
+      <tr><td>
+        <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px;font-weight:bold;margin-bottom:6px;">Delivery to</div>
+        <div style="font-size:14px;color:#1a1a1a;font-weight:600;">${addr.fullName}</div>
+        <div style="font-size:13px;color:#666;line-height:1.5;">${addr.street}<br>${addr.city}, ${addr.state}<br>${addr.phone}</div>
+      </td></tr>
+    </table>`;
+}
+
+function orderSummaryBlock(ctx: OrderEmailContext): string {
+  return `
+    <div style="margin:20px 0;">
+      <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px;font-weight:bold;margin-bottom:10px;">Order ${ctx.orderNumber}</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        ${itemRows(ctx.items)}
+        <tr>
+          <td style="padding:14px 0 0;font-size:14px;font-weight:bold;color:#1a1a1a;">Total</td>
+          <td style="padding:14px 0 0;text-align:right;font-size:18px;font-weight:900;color:#1a1a1a;">${formatNGN(ctx.total)}</td>
+        </tr>
+      </table>
+    </div>
+    ${shippingBlock(ctx.shippingAddress)}`;
+}
+
+async function send(args: {
+  to: string;
+  subject: string;
+  html: string;
+}): Promise<void> {
+  if (!resend) {
+    console.log(`📧 Email skipped (no RESEND_API_KEY): "${args.subject}" → ${args.to}`);
+    return;
+  }
+  try {
+    const result = await resend.emails.send({
+      from: config.resend.from,
+      to: args.to,
+      subject: args.subject,
+      html: args.html,
+      replyTo: config.resend.replyTo || undefined,
+    });
+    if (result.error) {
+      console.error(`❌ Email send error: ${result.error.message}`);
+    } else {
+      console.log(`📧 Sent: "${args.subject}" → ${args.to} (id: ${result.data?.id})`);
+    }
+  } catch (err: any) {
+    console.error(`❌ Email send threw:`, err?.message ?? err);
+  }
+}
+
+// === Templates ===
+
+export async function sendOrderPlaced(ctx: OrderEmailContext): Promise<void> {
+  const isPaystack = ctx.paymentMethod === "paystack";
+  const intro = isPaystack
+    ? `<p style="font-size:14px;color:#444;line-height:1.6;">Thanks for your order, ${ctx.customerName.split(" ")[0]}! Once your payment is confirmed we'll start preparing your combo for shipment.</p>`
+    : `<p style="font-size:14px;color:#444;line-height:1.6;">Thanks for your order, ${ctx.customerName.split(" ")[0]}! We've received it and will be in touch shortly with payment details.</p>`;
+
+  const html = wrap({
+    preheader: `Order ${ctx.orderNumber} received — ${formatNGN(ctx.total)}`,
+    title: "Order received",
+    body: intro + orderSummaryBlock(ctx),
+    ctaText: ctx.trackingUrl ? "Track your order" : undefined,
+    ctaUrl: ctx.trackingUrl,
+  });
+
+  await send({
+    to: ctx.customerEmail,
+    subject: `Order ${ctx.orderNumber} received`,
+    html,
+  });
+}
+
+export async function sendPaymentConfirmed(ctx: OrderEmailContext): Promise<void> {
+  const html = wrap({
+    preheader: `Payment received for order ${ctx.orderNumber}`,
+    title: "🎉 Payment confirmed",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Great news, ${ctx.customerName.split(" ")[0]}! We've received your payment of <strong>${formatNGN(ctx.total)}</strong>. Your combo is now being prepared for shipment.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">We'll send another email once your order ships.</p>
+      ${orderSummaryBlock(ctx)}
+    `,
+    ctaText: ctx.trackingUrl ? "Track your order" : undefined,
+    ctaUrl: ctx.trackingUrl,
+  });
+
+  await send({
+    to: ctx.customerEmail,
+    subject: `Payment confirmed for order ${ctx.orderNumber}`,
+    html,
+  });
+}
+
+export async function sendOrderShipped(
+  ctx: OrderEmailContext & { trackingNumber?: string; trackingProviderUrl?: string },
+): Promise<void> {
+  const trackingLine = ctx.trackingNumber
+    ? `<p style="font-size:13px;color:#666;">Tracking number: <strong>${ctx.trackingNumber}</strong></p>`
+    : "";
+
+  const html = wrap({
+    preheader: `Your order ${ctx.orderNumber} is on the way`,
+    title: "📦 Your order is on the way",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${ctx.customerName.split(" ")[0]} — your combo is now in transit. Estimated delivery: 1-3 business days.</p>
+      ${trackingLine}
+      ${orderSummaryBlock(ctx)}
+    `,
+    ctaText: ctx.trackingProviderUrl ? "Track shipment" : ctx.trackingUrl ? "Track order" : undefined,
+    ctaUrl: ctx.trackingProviderUrl || ctx.trackingUrl,
+  });
+
+  await send({
+    to: ctx.customerEmail,
+    subject: `Your order ${ctx.orderNumber} has shipped`,
+    html,
+  });
+}
+
+export async function sendOrderDelivered(ctx: OrderEmailContext): Promise<void> {
+  const html = wrap({
+    preheader: `Order ${ctx.orderNumber} delivered — hope you love it`,
+    title: "Hope you love it 💛",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${ctx.customerName.split(" ")[0]} — your order has been delivered. We'd love to hear what you think.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Reply to this email if anything's off, or share a quick review on WhatsApp. Repeat customers get early access to new combos.</p>
+    `,
+  });
+
+  await send({
+    to: ctx.customerEmail,
+    subject: `Order ${ctx.orderNumber} delivered`,
+    html,
+  });
+}
+
+export async function sendNewOrderAdminAlert(ctx: OrderEmailContext): Promise<void> {
+  if (!config.resend.adminNotify) {
+    return; // No admin email configured, skip silently
+  }
+
+  const html = wrap({
+    preheader: `New order ${ctx.orderNumber} — ${formatNGN(ctx.total)}`,
+    title: `🔔 New order: ${ctx.orderNumber}`,
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">A new order just came in. Customer: <strong>${ctx.customerName}</strong> (${ctx.customerEmail})</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Payment method: <strong>${ctx.paymentMethod}</strong></p>
+      ${orderSummaryBlock(ctx)}
+    `,
+    ctaText: "Open in admin",
+    ctaUrl: `${config.siteUrl}/admin/orders`,
+  });
+
+  await send({
+    to: config.resend.adminNotify,
+    subject: `🔔 New order: ${ctx.orderNumber} — ${formatNGN(ctx.total)}`,
+    html,
+  });
+}
+
+// === Partner program emails ===
+
+export async function sendPartnerApplicationReceived(ctx: { fullName: string; email: string }): Promise<void> {
+  const first = ctx.fullName.split(" ")[0];
+  const html = wrap({
+    preheader: "We received your Smart Combo partner application",
+    title: "Application received",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${first}, thanks for applying to the Smart Combo Partner Program.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">We review every application and will email you as soon as yours is approved. After that you can log in with the email and password you chose to get your personal link and ready-made ads.</p>
+    `,
+    footerNote: "If you didn't apply to be a Smart Combo partner, you can ignore this email.",
+  });
+  await send({ to: ctx.email, subject: "We received your partner application", html });
+}
+
+export async function sendPartnerApproved(ctx: {
+  fullName: string;
+  email: string;
+  code: string;
+}): Promise<void> {
+  const first = ctx.fullName.split(" ")[0];
+  const html = wrap({
+    preheader: `You're approved. Your partner code is ${ctx.code}`,
+    title: "🎉 You're a Smart Combo partner",
+    body: `
+      <p style="font-size:14px;color:#444;line-height:1.6;">Good news, ${first}! Your partner application has been approved.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Your partner code is <strong>${ctx.code}</strong>.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Log in with the email and password you signed up with to get your personal link, download ready-made ads and captions, and track your sales.</p>
+    `,
+    ctaText: "Open partner dashboard",
+    ctaUrl: `${config.siteUrl}/partner`,
+    footerNote: "You are receiving this because you applied to the Smart Combo Partner Program.",
+  });
+  await send({ to: ctx.email, subject: "You're approved: welcome to Smart Combo Partners", html });
+}
+
+===== server\config.ts =====
+/**
+ * Server config — single source of truth for environment variables.
+ *
+ * Fail-fast on missing required vars so we never silently run with bad config.
+ */
+
+const required = (name: string): string => {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`❌ Missing required env var: ${name}`);
+    console.error(`   Add it to your .env file, then restart the server.`);
+    process.exit(1);
+  }
+  return value;
+};
+
+const optional = (name: string, fallback = ""): string => {
+  return process.env[name] ?? fallback;
+};
+
+export const config = {
+  mongodbUri: required("MONGODB_URI"),
+  jwtSecret: required("JWT_SECRET"),
+  jwtExpiresIn: optional("JWT_EXPIRES_IN", "7d"),
+
+  paystack: {
+    secretKey: optional("PAYSTACK_SECRET_KEY"),
+    publicKey: optional("PAYSTACK_PUBLIC_KEY"),
+  },
+
+  resend: {
+    apiKey: optional("RESEND_API_KEY"),
+    from: optional("EMAIL_FROM", "Smart Combo <onboarding@resend.dev>"),
+    replyTo: optional("EMAIL_REPLY_TO", ""),
+    adminNotify: optional("ADMIN_NOTIFY_EMAIL", ""),
+  },
+
+  // Public site URL — used to build redirect callbacks for the gateway.
+  // Defaults to localhost in dev. Set this when deploying.
+  siteUrl: optional("SITE_URL", "http://localhost:8080"),
+};
+
+===== server\index.ts =====
+import express from "express";
+import cors from "cors";
+import { handleDemo } from "./routes/demo";
+import combosRouter from "./routes/combos";
+import categoriesRouter from "./routes/categories";
+import settingsRouter from "./routes/settings";
+import heroSlidesRouter from "./routes/heroSlides";
+import testimonialsRouter from "./routes/testimonials";
+import faqsRouter from "./routes/faqs";
+import authRouter from "./routes/auth";
+import ordersRouter from "./routes/orders";
+import paymentsRouter from "./routes/payments";
+import chatRouter from "./routes/chat";
+import aiRouter from "./routes/ai";
+import resellersRouter from "./routes/resellers";
+import partnerRouter from "./routes/partner";
+import giftRoutes from "./routes/admin/giftRoutes";
+import publicGiftsRouter from "./routes/gifts";
+import adminOrdersRouter from "./routes/admin/orders";
+import adminDashboardRouter from "./routes/admin/dashboard";
+import adminCategoriesRouter from "./routes/admin/categories";
+import adminCombosRouter from "./routes/admin/combos";
+import adminHeroSlidesRouter from "./routes/admin/heroSlides";
+import adminSettingsRouter from "./routes/admin/settings";
+import adminFaqsRouter from "./routes/admin/faqs";
+import adminTestimonialsRouter from "./routes/admin/testimonials";
+import adminChatsRouter from "./routes/admin/chats";
+import adminResellersRouter from "./routes/admin/resellers";
+import adminCommissionsRouter from "./routes/admin/commissions";
+import adminAdsRouter from "./routes/admin/ads";
+import adminWithdrawalsRouter from "./routes/admin/withdrawals";
+import adminProfitRouter from "./routes/admin/profit";
+import adminFulfilmentRouter from "./routes/admin/fulfilment";
+import adminStockRouter from "./routes/admin/stock";
+
+import { requireAuth } from "./middleware/requireAuth";
+import { connectDB } from "./db";
+import { expireStalePendingOrders } from "./services/orderService";
+
+export function createServer() {
+  const app = express();
+  // Behind Render's proxy: lets req.ip be the real visitor (rate limits work per person, not for everyone at once)
+  app.set("trust proxy", 1);
+
+  app.use(cors());
+
+  // 50mb body limit for Base64 image payloads
+  app.use((req, res, next) => {
+    if (req.originalUrl === "/api/payments/webhook/paystack") return next();
+    if (req.originalUrl.startsWith("/api/ai")) return express.json({ limit: "20kb" })(req, res, next);
+    return express.json({ limit: "50mb" })(req, res, next);
+  });
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+  connectDB();
+
+  // Live site only: every 15 minutes, release stock held by Paystack orders nobody paid for.
+  // (Skipped on a laptop so local testing never touches live orders.)
+  const g = globalThis as any;
+  if (process.env.NODE_ENV === "production" && !g.__scExpiryTimer) {
+    g.__scExpiryTimer = setInterval(() => {
+      expireStalePendingOrders().catch((e) => console.error("[expire] job failed:", e));
+    }, 15 * 60 * 1000);
+    g.__scExpiryTimer.unref?.();
+  }
+
+  app.get("/api/ping", (_req, res) => {
+    const ping = process.env.PING_MESSAGE ?? "ping";
+    res.json({ message: ping });
+  });
+  app.get("/api/demo", handleDemo);
+
+  // Public API routes
+  app.use("/api/auth", authRouter);
+  app.use("/api/combos", combosRouter);
+  app.use("/api/categories", categoriesRouter);
+  app.use("/api/settings", settingsRouter);
+  app.use("/api/hero-slides", heroSlidesRouter);
+  app.use("/api/testimonials", testimonialsRouter);
+  app.use("/api/faqs", faqsRouter);
+  app.use("/api/orders", ordersRouter);
+  app.use("/api/payments", paymentsRouter);
+  app.use("/api/chat", chatRouter);
+  app.use("/api/ai", aiRouter);
+  app.use("/api/resellers", resellersRouter);
+  app.use("/api/partner", partnerRouter);
+
+  // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.
+  app.use("/api/gifts", publicGiftsRouter);
+
+  // Admin API routes (Protected by authentication)
+  app.use("/api/admin/gifts", requireAuth, giftRoutes);
+  app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
+  app.use("/api/admin/dashboard", requireAuth, adminDashboardRouter);
+  app.use("/api/admin/categories", requireAuth, adminCategoriesRouter);
+  app.use("/api/admin/combos", requireAuth, adminCombosRouter);
+  app.use("/api/admin/hero-slides", requireAuth, adminHeroSlidesRouter);
+  app.use("/api/admin/settings", requireAuth, adminSettingsRouter);
+  app.use("/api/admin/faqs", requireAuth, adminFaqsRouter);
+  app.use("/api/admin/testimonials", requireAuth, adminTestimonialsRouter);
+  app.use("/api/admin/chats", requireAuth, adminChatsRouter);
+  app.use("/api/admin/resellers", requireAuth, adminResellersRouter);
+  app.use("/api/admin/commissions", requireAuth, adminCommissionsRouter);
+  app.use("/api/admin/ads", requireAuth, adminAdsRouter);
+  app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
+  app.use("/api/admin/profit", requireAuth, adminProfitRouter);
+  app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
+  app.use("/api/admin/stock", requireAuth, adminStockRouter);
+
+  return app;
+}

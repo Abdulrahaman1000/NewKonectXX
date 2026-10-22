@@ -31,10 +31,13 @@ import adminAdsRouter from "./routes/admin/ads";
 import adminWithdrawalsRouter from "./routes/admin/withdrawals";
 import adminProfitRouter from "./routes/admin/profit";
 import adminFulfilmentRouter from "./routes/admin/fulfilment";
+import adminStockRouter from "./routes/admin/stock";
+import adminSummaryRouter from "./routes/admin/summary";
 
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
 import { expireStalePendingOrders } from "./services/orderService";
+import { startDailySummary } from "./services/summaryService";
 
 export function createServer() {
   const app = express();
@@ -62,6 +65,9 @@ export function createServer() {
     }, 15 * 60 * 1000);
     g.__scExpiryTimer.unref?.();
   }
+
+  // Live site only: emails you the daily summary each morning (once per day).
+  if (process.env.NODE_ENV === "production") startDailySummary();
 
   app.get("/api/ping", (_req, res) => {
     const ping = process.env.PING_MESSAGE ?? "ping";
@@ -104,6 +110,8 @@ export function createServer() {
   app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
   app.use("/api/admin/profit", requireAuth, adminProfitRouter);
   app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
+  app.use("/api/admin/stock", requireAuth, adminStockRouter);
+  app.use("/api/admin/summary", requireAuth, adminSummaryRouter);
 
   return app;
 }

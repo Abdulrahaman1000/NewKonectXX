@@ -4,6 +4,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { getStockAlertCount } from '@/api/adminStock';
 import { Link } from 'react-router-dom';
 import {
   HelpCircle,
@@ -51,6 +52,11 @@ export default function AdminDashboard() {
     queryKey: ['admin-withdrawal-counts'],
     queryFn: () => listWithdrawals('requested').then((r) => r.counts),
     refetchInterval: 30000,
+  });
+  const { data: stockAlerts = 0 } = useQuery({
+    queryKey: ['admin-stock-alerts'],
+    queryFn: getStockAlertCount,
+    refetchInterval: 60000,
   });
   const { data: resellerCounts } = useQuery({
     queryKey: ['admin-reseller-counts'],
@@ -112,6 +118,8 @@ export default function AdminDashboard() {
             <TileLink to="/admin/record-sale" Icon={PlusCircle} label="Record a sale" desc="Add a WhatsApp or walk-in order so stock and profit stay correct" />
             <TileLink to="/admin/profit" Icon={TrendingUp} label="Profit & Expenses" desc="Sales, cost, expenses and profit; record what you spend" />
             <TileLink to="/admin/fulfilment" Icon={Package} label="Fulfilment" desc="Orders to pack and ship, packing slips, tracking" />
+            <TileLink to="/admin/today" Icon={TrendingUp} label="Today" desc="Sales, profit and what needs doing; daily email summary" highlight />
+            <TileLink to="/admin/stock" Icon={ShoppingBag} label="Stock" desc="Low-stock alerts, add stock, restock history" badge={stockAlerts} badgeLabel="low" />
             <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Products & Combos" desc="Add single products or combos, set price and cost, manage stock" highlight />
             <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />
