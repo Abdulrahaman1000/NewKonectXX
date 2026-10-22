@@ -30,6 +30,7 @@ import adminCommissionsRouter from "./routes/admin/commissions";
 import adminAdsRouter from "./routes/admin/ads";
 import adminWithdrawalsRouter from "./routes/admin/withdrawals";
 import adminProfitRouter from "./routes/admin/profit";
+import adminFulfilmentRouter from "./routes/admin/fulfilment";
 
 import { requireAuth } from "./middleware/requireAuth";
 import { connectDB } from "./db";
@@ -102,6 +103,7 @@ export function createServer() {
   app.use("/api/admin/ads", requireAuth, adminAdsRouter);
   app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
   app.use("/api/admin/profit", requireAuth, adminProfitRouter);
+  app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
 
   return app;
 }

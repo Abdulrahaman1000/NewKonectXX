@@ -111,6 +111,7 @@ export default function AdminDashboard() {
             <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
             <TileLink to="/admin/record-sale" Icon={PlusCircle} label="Record a sale" desc="Add a WhatsApp or walk-in order so stock and profit stay correct" />
             <TileLink to="/admin/profit" Icon={TrendingUp} label="Profit & Expenses" desc="Sales, cost, expenses and profit; record what you spend" />
+            <TileLink to="/admin/fulfilment" Icon={Package} label="Fulfilment" desc="Orders to pack and ship, packing slips, tracking" />
             <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Products & Combos" desc="Add single products or combos, set price and cost, manage stock" highlight />
             <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />
