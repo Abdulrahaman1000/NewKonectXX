@@ -23,6 +23,7 @@ export interface ProfitReport {
   marginPercent: number;
   expensesTotal: number;
   expensesByCategory: Record<string, number>;
+  partnerCommissions: number;
   netProfit: number;
   products: Array<{ name: string; units: number; revenue: number; cost: number; profit: number }>;
 }
@@ -54,6 +55,9 @@ export async function addExpense(payload: { date: string; category: ExpenseCateg
 }
 export async function deleteExpense(id: string) {
   await apiFetch(`/api/admin/profit/expenses/${id}`, { method: "DELETE" });
+}
+export async function recalculateCosts(from: string, to: string) {
+  return (await apiFetch<ApiResponse<{ tried: number; fixed: number; stillMissing: number }>>("/api/admin/profit/recalculate", { method: "POST", body: JSON.stringify({ from, to }) })).data;
 }
 export async function getOrderCost(orderId: string) {
   return (await apiFetch<ApiResponse<OrderCostInfo | null>>(`/api/admin/profit/order/${orderId}`)).data;

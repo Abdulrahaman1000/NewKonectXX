@@ -50,6 +50,12 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
   const costs = orders.length ? await OrderCost.find({ orderId: { $in: orders.map((o: any) => o._id) } }).lean() : [];
   const report = buildReport(orders as any, costs as any, expenses as any);
 
+  // Partner commission on the orders that are counted in profit
+  const costedIds = (costs as any[]).filter((c) => c.complete).map((c) => c.orderId);
+  const commissionCost = costedIds.length
+    ? ((await Commission.find({ orderId: { $in: costedIds } }).select("amount").lean()) as any[]).reduce((t, c) => t + (c.amount ?? 0), 0)
+    : 0;
+
   // best sellers by units
   const units = new Map<string, number>();
   for (const o of orders as any[]) for (const it of o.items ?? []) if (!it.isFreeGift) units.set(it.name, (units.get(it.name) ?? 0) + it.quantity);
@@ -80,7 +86,7 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
     orders: orders.length,
     manualOrders: (orders as any[]).filter((o) => (o.source ?? "website") !== "website").length,
     revenue,
-    profit: report.orders.costed > 0 ? report.netProfit : null,
+    profit: report.orders.costed > 0 ? report.netProfit - commissionCost : null,
     profitCoverage: { costed: report.orders.costed, total: report.orders.total },
     expenses: report.expensesTotal,
     bestSellers,

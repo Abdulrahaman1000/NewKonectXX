@@ -13,7 +13,8 @@ import { Router, Request, Response } from "express";
 import { Order } from "../../models/Order";
 import { OrderCost } from "../../models/OrderCost";
 import { Expense, EXPENSE_CATEGORIES } from "../../models/Expense";
-import { buildReport } from "../../services/costService";
+import { buildReport, recordOrderCost } from "../../services/costService";
+import { Commission } from "../../models/Commission";
 
 const router = Router();
 const SALE_STATUSES = ["paid", "processing", "shipped", "delivered"];
@@ -58,11 +59,41 @@ router.get("/report", async (req: Request, res: Response) => {
       Expense.find({ date: { $gte: range.start, $lte: range.end } }).select("amount category").lean(),
     ]);
 
+    const base = buildReport(orders as any, costs as any, expenses as any);
+    // Partner commission only on the orders that are counted in the profit figures
+    const costedIds = (costs as any[]).filter((c) => c.complete).map((c) => c.orderId);
+    const partnerCommissions = costedIds.length
+      ? ((await Commission.find({ orderId: { $in: costedIds } }).select("amount").lean()) as any[]).reduce((t, c) => t + (c.amount ?? 0), 0)
+      : 0;
     res.json({
-      data: { from: range.from, to: range.to, ...buildReport(orders as any, costs as any, expenses as any) },
+      data: { from: range.from, to: range.to, ...base, partnerCommissions, netProfit: base.netProfit - partnerCommissions },
     });
   } catch (err) {
     fail(res, "build the profit report", err);
+  }
+});
+
+// Re-works the cost of orders in the period that were left out (sold before cost prices were entered),
+// using the cost prices you have entered NOW. Orders that already have a complete cost are not touched.
+router.post("/recalculate", async (req: Request, res: Response) => {
+  try {
+    const range = parseRange({ query: { from: req.body?.from, to: req.body?.to } } as any);
+    if (!range) return bad(res, "Invalid date range");
+    const ids = (
+      await Order.find({ status: { $in: SALE_STATUSES }, createdAt: { $gte: range.start, $lte: range.end } }).select("_id").limit(5000).lean()
+    ).map((o: any) => o._id);
+    const done = new Set(
+      ((await OrderCost.find({ orderId: { $in: ids }, complete: true }).select("orderId").lean()) as any[]).map((c) => String(c.orderId)),
+    );
+    const todo = ids.filter((id: any) => !done.has(String(id))).slice(0, 500);
+    for (const id of todo) {
+      const order = await Order.findById(id).lean();
+      if (order) await recordOrderCost(order);
+    }
+    const nowDone = await OrderCost.countDocuments({ orderId: { $in: todo }, complete: true });
+    res.json({ data: { tried: todo.length, fixed: nowDone, stillMissing: todo.length - nowDone } });
+  } catch (err) {
+    fail(res, "recalculate costs", err);
   }
 });
 

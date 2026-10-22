@@ -17,6 +17,7 @@ import {
   deleteExpense,
   getProfitReport,
   listExpenses,
+  recalculateCosts,
   type ExpenseCategory,
 } from '@/api/adminProfit';
 
@@ -55,6 +56,17 @@ export default function AdminProfit() {
   const [exCategory, setExCategory] = useState<ExpenseCategory>('ads');
   const [exAmount, setExAmount] = useState('');
   const [exNote, setExNote] = useState('');
+
+  const recalc = useMutation({
+    mutationFn: () => recalculateCosts(range.from, range.to),
+    onSuccess: (res) => {
+      qc.invalidateQueries();
+      if (res.tried === 0) toast.info('Nothing to recalculate');
+      else if (res.stillMissing === 0) toast.success(`${res.fixed} order(s) added to your profit`);
+      else toast.warning(`${res.fixed} fixed, ${res.stillMissing} still have items with no cost price`);
+    },
+    onError: (e: any) => toast.error(e?.message || 'Could not recalculate'),
+  });
 
   const choose = (p: Preset) => {
     setPreset(p);
@@ -149,8 +161,12 @@ export default function AdminProfit() {
           {r.orders.uncosted > 0 && (
             <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
               {r.orders.uncosted} of {r.orders.total} paid orders in this period are left out of the profit figures
-              because some items had no cost price when they were sold. Enter cost prices on your combos and new
-              orders will be included.
+              because some items had no cost price when they were sold. Enter cost prices on your products, then
+              press the button to count them using today's cost prices.
+              <button type="button" onClick={() => recalc.mutate()} disabled={recalc.isPending}
+                className="mt-2 block px-3 py-1.5 rounded-lg bg-amber-400 text-black font-bold disabled:opacity-50">
+                {recalc.isPending ? 'Working…' : 'Recalculate cost'}
+              </button>
             </div>
           )}
 
@@ -168,8 +184,8 @@ export default function AdminProfit() {
               </p>
             </div>
             <p className="text-[11px] text-white/45 max-w-sm">
-              Gross profit + delivery fees collected ({formatNaira(r.deliveryFees)}) − expenses. Partner commissions
-              and free gift costs are not included yet.
+              Gross profit + delivery fees collected ({formatNaira(r.deliveryFees)}) − partner commissions ({formatNaira(r.partnerCommissions ?? 0)}) − expenses.
+              Free gifts are already counted in the cost of goods.
             </p>
           </div>
 
