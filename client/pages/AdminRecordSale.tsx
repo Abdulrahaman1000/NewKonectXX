@@ -13,6 +13,7 @@ import { AdminFrame } from '@/components/admin/AdminFrame';
 import { listCombosAdmin } from '@/api/adminCombos';
 import { createManualSale, SOURCE_LABELS, type SalePayment, type SaleSource } from '@/api/adminSale';
 import { formatNaira } from '@/lib/format';
+import { useAuth } from '@/contexts/AuthContext';
 
 const LOCAL_DELIVERY_FEE = 1000;
 const STATES = [
@@ -43,6 +44,7 @@ function unitCost(combo: any, variants: Record<string, string>): number {
 
 export default function AdminRecordSale() {
   const navigate = useNavigate();
+  const { can } = useAuth();
   const { data: combos = [], isLoading } = useQuery({ queryKey: ['admin-combos-for-sale'], queryFn: listCombosAdmin });
 
   const [lines, setLines] = useState<Line[]>([]);
@@ -241,7 +243,7 @@ export default function AdminRecordSale() {
                 <input className={inputCls} value={ref} onChange={(e) => setRef(e.target.value.toUpperCase())} placeholder="SC1234" />
               </Field>
             </div>
-            <label className="mt-4 flex items-start gap-2 text-sm text-white/80 cursor-pointer">
+            <label className={can('owner') ? 'mt-4 flex items-start gap-2 text-sm text-white/80 cursor-pointer' : 'hidden'}>
               <input type="checkbox" className="mt-1" checked={paid} onChange={(e) => setPaid(e.target.checked)} />
               <span>
                 Payment already received
@@ -270,7 +272,7 @@ export default function AdminRecordSale() {
             <span className="text-sm font-bold text-white/70">Total</span>
             <span className="text-xl font-black text-primary tabular-nums">{formatNaira(total)}</span>
           </div>
-          {lines.length > 0 && (
+          {lines.length > 0 && can('owner') && (
             <p className="mt-3 text-[11px] text-white/45">
               {costKnown
                 ? `Estimated profit on items: ${formatNaira(subtotal - cost)}`

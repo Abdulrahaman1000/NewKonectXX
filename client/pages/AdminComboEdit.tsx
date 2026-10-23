@@ -32,6 +32,7 @@ import {
 import { fetchCategories } from '@/api/categories';
 import type { Combo } from '@/types/combo';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface AlternativeForm {
   id?: string;
@@ -797,6 +798,8 @@ export default function AdminComboEdit() {
 
 /** Shows cost and profit for the combo, using the cost prices entered on its items (worst case when variants differ). */
 function CostSummary({ form }: { form: FormState }) {
+  const { can } = useAuth();
+  if (!can('owner')) return null;
   if (!form.totalPrice) return null;
   const itemsCost = form.items.reduce((sum, it) => {
     const alts = it.alternatives.map((a) => a.costPrice || it.costPrice || 0);
@@ -831,6 +834,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
+  const { can } = useAuth();
+  if (/cost price/i.test(label) && !can('owner')) return null;
   return (
     <label className="block">
       <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">

@@ -1,18 +1,9 @@
 /**
- * AuthContext — React state for "am I logged in?".
+ * AuthContext — "who is logged in, and what may they do?"  (SC-STAFF version)
  *
- * Provides:
- *   user — the logged-in admin (or null)
- *   isLoading — true while we're checking the saved token on mount
- *   login() — log in with email + password
- *   logout() — log out
- *   refresh() — re-fetch the user (e.g. after profile update)
- *
- * On mount, if there's a token in localStorage, we hit /api/auth/me to
- * verify it's still valid and get the user info. If invalid, the token
- * is auto-cleared (handled in apiFetch).
+ *   can(permission) — true if the person may use that part of the admin.
+ *   The owner can do everything. Staff get a list from the server.
  */
-
 import {
   createContext,
   useCallback,
@@ -35,6 +26,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;
+  can: (permission?: string | null) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -53,7 +45,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await fetchCurrentUser();
       setUser(u);
     } catch {
-      // 401 will have already cleared the token via apiFetch
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -74,8 +65,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const can = useCallback(
+    (permission?: string | null) => {
+      if (!permission) return true;
+      const perms = user?.permissions ?? [];
+      return perms.includes("*") || perms.includes(permission);
+    },
+    [user],
+  );
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh, can }}>
       {children}
     </AuthContext.Provider>
   );

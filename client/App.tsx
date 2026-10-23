@@ -56,6 +56,10 @@ import AdminFulfilment from './pages/AdminFulfilment';
 import AdminStock from './pages/AdminStock';
 import AdminToday from './pages/AdminToday';
 import AdminRecordSale from './pages/AdminRecordSale';
+import AdminStaff from './pages/AdminStaff';
+import AdminAudit from './pages/AdminAudit';
+import AdminExpenses from './pages/AdminExpenses';
+import AdminReports from './pages/AdminReports';
 import { captureReferral } from "@/lib/referral";
 
 const queryClient = new QueryClient({
@@ -101,30 +105,35 @@ const App = () => (
                   {/* Admin routes */}
                   <Route path="/admin/login" element={<AdminLogin />} />
                   <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
-                  <Route path="/admin/orders" element={<AdminProtectedRoute><AdminOrders /></AdminProtectedRoute>} />
-                  <Route path="/admin/orders/:id" element={<AdminProtectedRoute><AdminOrderDetail /></AdminProtectedRoute>} />
-                  <Route path="/admin/gift-bank" element={<AdminProtectedRoute><AdminGiftBankPage /></AdminProtectedRoute>} />
-                  <Route path="/admin/categories" element={<AdminProtectedRoute><AdminCategories /></AdminProtectedRoute>} />
-                  <Route path="/admin/combos" element={<AdminProtectedRoute><AdminCombos /></AdminProtectedRoute>} />
-                  <Route path="/admin/combos/new" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
-                  <Route path="/admin/combos/:id" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
-                  <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute><AdminComboEdit /></AdminProtectedRoute>} />
-                  <Route path="/admin/hero-slides" element={<AdminProtectedRoute><AdminHeroSlides /></AdminProtectedRoute>} />
-                  <Route path="/admin/settings" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />
-                  <Route path="/admin/faqs" element={<AdminProtectedRoute><AdminFaqs /></AdminProtectedRoute>} />
-                  <Route path="/admin/testimonials" element={<AdminProtectedRoute><AdminTestimonials /></AdminProtectedRoute>} />
-                  <Route path="/admin/chats" element={<AdminProtectedRoute><AdminChats /></AdminProtectedRoute>} />
-                  <Route path="/admin/test-upload" element={<AdminProtectedRoute><AdminTestUpload /></AdminProtectedRoute>} />
-                  <Route path="/admin/resellers" element={<AdminProtectedRoute><AdminResellers /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders" element={<AdminProtectedRoute perm="orders.view"><AdminOrders /></AdminProtectedRoute>} />
+                  <Route path="/admin/orders/:id" element={<AdminProtectedRoute perm="orders.view"><AdminOrderDetail /></AdminProtectedRoute>} />
+                  <Route path="/admin/gift-bank" element={<AdminProtectedRoute perm="owner"><AdminGiftBankPage /></AdminProtectedRoute>} />
+                  <Route path="/admin/categories" element={<AdminProtectedRoute perm="products.edit"><AdminCategories /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos" element={<AdminProtectedRoute perm="products.edit"><AdminCombos /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/new" element={<AdminProtectedRoute perm="products.edit"><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id" element={<AdminProtectedRoute perm="products.edit"><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/combos/:id/edit" element={<AdminProtectedRoute perm="products.edit"><AdminComboEdit /></AdminProtectedRoute>} />
+                  <Route path="/admin/hero-slides" element={<AdminProtectedRoute perm="slides.use"><AdminHeroSlides /></AdminProtectedRoute>} />
+                  <Route path="/admin/settings" element={<AdminProtectedRoute perm="owner"><AdminSettings /></AdminProtectedRoute>} />
+                  <Route path="/admin/faqs" element={<AdminProtectedRoute perm="faqs.use"><AdminFaqs /></AdminProtectedRoute>} />
+                  <Route path="/admin/testimonials" element={<AdminProtectedRoute perm="testimonials.use"><AdminTestimonials /></AdminProtectedRoute>} />
+                  <Route path="/admin/chats" element={<AdminProtectedRoute perm="chats.use"><AdminChats /></AdminProtectedRoute>} />
+                  <Route path="/admin/test-upload" element={<AdminProtectedRoute perm="owner"><AdminTestUpload /></AdminProtectedRoute>} />
+                  <Route path="/admin/resellers" element={<AdminProtectedRoute perm="owner"><AdminResellers /></AdminProtectedRoute>} />
 
-                  <Route path="/admin/partners/:id" element={<AdminProtectedRoute><AdminPartnerSales /></AdminProtectedRoute>} />
-                  <Route path="/admin/payouts" element={<AdminProtectedRoute><AdminWithdrawals /></AdminProtectedRoute>} />
-                  <Route path="/admin/record-sale" element={<AdminProtectedRoute><AdminRecordSale /></AdminProtectedRoute>} />
-                  <Route path="/admin/profit" element={<AdminProtectedRoute><AdminProfit /></AdminProtectedRoute>} />
-                  <Route path="/admin/today" element={<AdminProtectedRoute><AdminToday /></AdminProtectedRoute>} />
-                  <Route path="/admin/stock" element={<AdminProtectedRoute><AdminStock /></AdminProtectedRoute>} />
-                  <Route path="/admin/fulfilment" element={<AdminProtectedRoute><AdminFulfilment /></AdminProtectedRoute>} />
-                  <Route path="/admin/ads" element={<AdminProtectedRoute><AdminAds /></AdminProtectedRoute>} />
+                  <Route path="/admin/partners/:id" element={<AdminProtectedRoute perm="owner"><AdminPartnerSales /></AdminProtectedRoute>} />
+                  <Route path="/admin/payouts" element={<AdminProtectedRoute perm="owner"><AdminWithdrawals /></AdminProtectedRoute>} />
+                  <Route path="/admin/record-sale" element={<AdminProtectedRoute perm="sale.record"><AdminRecordSale /></AdminProtectedRoute>} />
+                  <Route path="/admin/profit" element={<AdminProtectedRoute perm="owner"><AdminProfit /></AdminProtectedRoute>} />
+                  <Route path="/admin/today" element={<AdminProtectedRoute perm="owner"><AdminToday /></AdminProtectedRoute>} />
+                  <Route path="/admin/stock" element={<AdminProtectedRoute perm="stock.use"><AdminStock /></AdminProtectedRoute>} />
+                  <Route path="/admin/fulfilment" element={<AdminProtectedRoute perm="fulfilment.use"><AdminFulfilment /></AdminProtectedRoute>} />
+                  <Route path="/admin/ads" element={<AdminProtectedRoute perm="ads.use"><AdminAds /></AdminProtectedRoute>} />
+
+                  <Route path="/admin/expenses" element={<AdminProtectedRoute perm="expenses.use"><AdminExpenses /></AdminProtectedRoute>} />
+                  <Route path="/admin/reports" element={<AdminProtectedRoute perm="reports.view"><AdminReports /></AdminProtectedRoute>} />
+                  <Route path="/admin/staff" element={<AdminProtectedRoute perm="owner"><AdminStaff /></AdminProtectedRoute>} />
+                  <Route path="/admin/audit" element={<AdminProtectedRoute perm="owner"><AdminAudit /></AdminProtectedRoute>} />
 
                   {/* Partner portal */}
                   <Route path="/partner" element={<PartnerPortal />} />

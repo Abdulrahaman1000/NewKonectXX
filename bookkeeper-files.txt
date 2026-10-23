@@ -1,0 +1,1126 @@
+
+
+===== server\routes\admin\profit.ts =====
+/**
+ * Admin profit & expenses.
+ *
+ * GET    /api/admin/profit/report?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * GET    /api/admin/profit/expenses?from=&to=
+ * POST   /api/admin/profit/expenses        { date?, category, amount, note? }
+ * DELETE /api/admin/profit/expenses/:id
+ * GET    /api/admin/profit/order/:orderId  cost lines for one order
+ *
+ * Dates are read as Nigerian time (UTC+1).
+ */
+import { Router, Request, Response } from "express";
+import { Order } from "../../models/Order";
+import { OrderCost } from "../../models/OrderCost";
+import { Expense, EXPENSE_CATEGORIES } from "../../models/Expense";
+import { buildReport, recordOrderCost } from "../../services/costService";
+import { Commission } from "../../models/Commission";
+
+const router = Router();
+const SALE_STATUSES = ["paid", "processing", "shipped", "delivered"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function lagosToday(): string {
+  return new Date(Date.now() + 3600_000).toISOString().slice(0, 10);
+}
+
+function parseRange(req: Request): { from: string; to: string; start: Date; end: Date } | null {
+  const today = lagosToday();
+  const from = typeof req.query.from === "string" && DATE_RE.test(req.query.from) ? req.query.from : `${today.slice(0, 8)}01`;
+  const to = typeof req.query.to === "string" && DATE_RE.test(req.query.to) ? req.query.to : today;
+  const start = new Date(`${from}T00:00:00+01:00`);
+  const end = new Date(`${to}T23:59:59.999+01:00`);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return null;
+  return { from, to, start, end };
+}
+
+const bad = (res: Response, message: string) =>
+  res.status(400).json({ error: { code: "BAD_REQUEST", message } });
+const fail = (res: Response, what: string, err: unknown) => {
+  console.error(`${what} failed:`, err);
+  return res.status(500).json({ error: { code: "SERVER_ERROR", message: `Failed to ${what}` } });
+};
+
+router.get("/report", async (req: Request, res: Response) => {
+  try {
+    const range = parseRange(req);
+    if (!range) return bad(res, "Invalid date range");
+
+    const orders = await Order.find({
+      status: { $in: SALE_STATUSES },
+      createdAt: { $gte: range.start, $lte: range.end },
+    })
+      .select("subtotal shippingFee")
+      .limit(5000)
+      .lean();
+
+    const [costs, expenses] = await Promise.all([
+      OrderCost.find({ orderId: { $in: orders.map((o) => o._id) } }).lean(),
+      Expense.find({ date: { $gte: range.start, $lte: range.end } }).select("amount category").lean(),
+    ]);
+
+    const base = buildReport(orders as any, costs as any, expenses as any);
+    // Partner commission only on the orders that are counted in the profit figures
+    const costedIds = (costs as any[]).filter((c) => c.complete).map((c) => c.orderId);
+    const partnerCommissions = costedIds.length
+      ? ((await Commission.find({ orderId: { $in: costedIds } }).select("amount").lean()) as any[]).reduce((t, c) => t + (c.amount ?? 0), 0)
+      : 0;
+    res.json({
+      data: { from: range.from, to: range.to, ...base, partnerCommissions, netProfit: base.netProfit - partnerCommissions },
+    });
+  } catch (err) {
+    fail(res, "build the profit report", err);
+  }
+});
+
+// Re-works the cost of orders in the period that were left out (sold before cost prices were entered),
+// using the cost prices you have entered NOW. Orders that already have a complete cost are not touched.
+router.post("/recalculate", async (req: Request, res: Response) => {
+  try {
+    const range = parseRange({ query: { from: req.body?.from, to: req.body?.to } } as any);
+    if (!range) return bad(res, "Invalid date range");
+    const ids = (
+      await Order.find({ status: { $in: SALE_STATUSES }, createdAt: { $gte: range.start, $lte: range.end } }).select("_id").limit(5000).lean()
+    ).map((o: any) => o._id);
+    const done = new Set(
+      ((await OrderCost.find({ orderId: { $in: ids }, complete: true }).select("orderId").lean()) as any[]).map((c) => String(c.orderId)),
+    );
+    const todo = ids.filter((id: any) => !done.has(String(id))).slice(0, 500);
+    for (const id of todo) {
+      const order = await Order.findById(id).lean();
+      if (order) await recordOrderCost(order);
+    }
+    const nowDone = await OrderCost.countDocuments({ orderId: { $in: todo }, complete: true });
+    res.json({ data: { tried: todo.length, fixed: nowDone, stillMissing: todo.length - nowDone } });
+  } catch (err) {
+    fail(res, "recalculate costs", err);
+  }
+});
+
+router.get("/expenses", async (req: Request, res: Response) => {
+  try {
+    const range = parseRange(req);
+    if (!range) return bad(res, "Invalid date range");
+    const items = await Expense.find({ date: { $gte: range.start, $lte: range.end } })
+      .sort({ date: -1, createdAt: -1 })
+      .limit(500)
+      .lean();
+    res.json({ data: items });
+  } catch (err) {
+    fail(res, "load expenses", err);
+  }
+});
+
+router.post("/expenses", async (req: Request, res: Response) => {
+  try {
+    const { date, category, amount, note } = req.body ?? {};
+    if (!EXPENSE_CATEGORIES.includes(category)) return bad(res, "Choose a valid category");
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 1_000_000_000) return bad(res, "Enter a valid amount");
+    const when = typeof date === "string" && DATE_RE.test(date) ? new Date(`${date}T12:00:00+01:00`) : new Date();
+    if (isNaN(when.getTime())) return bad(res, "Invalid date");
+    const expense = await Expense.create({
+      date: when,
+      category,
+      amount: Math.round(amt),
+      note: typeof note === "string" ? note.trim().slice(0, 200) : "",
+    });
+    res.status(201).json({ data: expense });
+  } catch (err) {
+    fail(res, "save the expense", err);
+  }
+});
+
+router.delete("/expenses/:id", async (req: Request, res: Response) => {
+  try {
+    const removed = await Expense.findByIdAndDelete(req.params.id).lean();
+    if (!removed) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Expense not found" } });
+    res.json({ data: { id: req.params.id, deleted: true } });
+  } catch (err: any) {
+    if (err?.name === "CastError") return res.status(404).json({ error: { code: "NOT_FOUND", message: "Expense not found" } });
+    fail(res, "delete the expense", err);
+  }
+});
+
+router.get("/order/:orderId", async (req: Request, res: Response) => {
+  try {
+    const cost = await OrderCost.findOne({ orderId: req.params.orderId }).lean();
+    res.json({ data: cost ?? null });
+  } catch (err: any) {
+    if (err?.name === "CastError") return res.json({ data: null });
+    fail(res, "load order cost", err);
+  }
+});
+
+export default router;
+
+===== server\routes\admin\orders.ts =====
+/**
+ * Admin order routes.
+ *
+ * All endpoints require a valid admin JWT (mounted under requireAuth).
+ *
+ * GET    /api/admin/orders                  — list orders (filterable + paginated)
+ * GET    /api/admin/orders/:id              — order detail (full, including adminNotes)
+ * PATCH  /api/admin/orders/:id/status       — update status. For paid/shipped/delivered
+ *                                              this goes through the service so the
+ *                                              right lifecycle email gets sent.
+ * PATCH  /api/admin/orders/:id              — update tracking URL, admin notes
+ */
+
+import { Router, Request, Response } from "express";
+import { Order, OrderStatus } from "../../models/Order";
+import {
+  markOrderPaid,
+  markOrderShipped,
+  markOrderDelivered,
+  cancelOrRefundOrder,
+  createOrder,
+  OrderError,
+} from "../../services/orderService";
+import { attachReferral } from "../../services/referralService";
+
+const router = Router();
+
+const VALID_STATUSES: OrderStatus[] = [
+  "pending",
+  "paid",
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+  "refunded",
+];
+
+// GET /api/admin/orders
+// Query params: status, search (orderNumber/phone/email), page, limit
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const status = req.query.status as string | undefined;
+    const search = (req.query.search as string | undefined)?.trim();
+    const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt((req.query.limit as string) || "25", 10)),
+    );
+
+    const filter: any = {};
+    if (status && VALID_STATUSES.includes(status as OrderStatus)) {
+      filter.status = status;
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, "i");
+      filter.$or = [
+        { orderNumber: searchRegex },
+        { "shipping.phone": searchRegex },
+        { "shipping.email": searchRegex },
+        { "shipping.fullName": searchRegex },
+      ];
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
+
+    res.json({
+      data: orders,
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error("GET /api/admin/orders failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch orders" },
+    });
+  }
+});
+
+// POST /api/admin/orders/manual
+// Records a sale made outside the website (WhatsApp, walk-in...). Goes through the same createOrder
+// as the checkout, so stock, cost, profit, gift progress and commission all work the same.
+const MANUAL_METHODS = ["bank_transfer", "cash", "pos"];
+const MANUAL_SOURCES = ["whatsapp", "walkin", "social", "other"];
+
+router.post("/manual", async (req: Request, res: Response) => {
+  const bad = (message: string) =>
+    res.status(400).json({ error: { code: "BAD_REQUEST", message } });
+  try {
+    const b = req.body ?? {};
+    const c = b.customer ?? {};
+    const str = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+    const fullName = str(c.fullName, 100);
+    const phone = str(c.phone, 30);
+    const email = str(c.email, 200);
+    if (!fullName) return bad("Enter the customer's name");
+    if (phone.replace(/\D/g, "").length < 10) return bad("Enter a valid phone number");
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad("That email address is not valid");
+    if (!MANUAL_METHODS.includes(b.paymentMethod)) return bad("Choose how the customer is paying");
+    if (!MANUAL_SOURCES.includes(b.source)) return bad("Choose where the order came from");
+
+    const pickup = b.pickup === true;
+    const state = pickup ? "Kwara" : str(c.state, 80);
+    const city = pickup ? "Ilorin" : str(c.city, 80);
+    const street = pickup ? "Pickup / walk-in" : str(c.street, 200);
+    if (!pickup && (!state || !city || !street)) return bad("Enter the delivery state, city and address");
+
+    if (!Array.isArray(b.items) || b.items.length === 0 || b.items.length > 20) {
+      return bad("Add between 1 and 20 products");
+    }
+    const items = b.items.map((it: any) => {
+      const selected: Record<string, string> = {};
+      if (it?.selectedVariants && typeof it.selectedVariants === "object") {
+        for (const [k, v] of Object.entries(it.selectedVariants).slice(0, 30)) {
+          if (typeof v === "string") selected[String(k).slice(0, 80)] = v.slice(0, 80);
+        }
+      }
+      // free gifts are not part of manual sales
+      return { comboId: String(it?.comboId ?? ""), quantity: Number(it?.quantity), selectedVariants: selected, isFreeGift: false };
+    });
+
+    const order = await createOrder(
+      {
+        items,
+        shipping: { fullName, phone, email, state, city, street, landmark: str(c.landmark, 200) },
+        paymentMethod: b.paymentMethod,
+        notes: str(b.notes, 500),
+      },
+      { source: b.source, paid: b.paid === true, pickup },
+    );
+    await attachReferral(order, b.ref);
+
+    res.status(201).json({ data: order });
+  } catch (err: any) {
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    }
+    console.error("POST /api/admin/orders/manual failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to record the sale" } });
+  }
+});
+
+// GET /api/admin/orders/:id
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const order = await Order.findById(req.params.id).lean();
+    if (!order) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    res.json({ data: order });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`GET /api/admin/orders/${req.params.id} failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch order" },
+    });
+  }
+});
+
+// PATCH /api/admin/orders/:id/status
+// Body: { status: OrderStatus, trackingNumber?: string, trackingProviderUrl?: string }
+//
+// For paid/shipped/delivered we route through orderService so the matching
+// lifecycle email is sent. Other statuses (processing/cancelled/refunded) just
+// update directly — there's no customer-facing email for those (you can change
+// that later if needed).
+router.patch("/:id/status", async (req: Request, res: Response) => {
+  try {
+    const { status, trackingNumber, trackingProviderUrl } = req.body;
+    if (!status || !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: `Invalid status. Allowed: ${VALID_STATUSES.join(", ")}`,
+        },
+      });
+    }
+
+    // Need the order number to call service helpers
+    const existing = await Order.findById(req.params.id).select("orderNumber status").lean();
+    if (!existing) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    let updated: any = null;
+
+    // A cancelled or refunded order is finished. Only cancelled -> refunded is allowed
+    // (money returned later); reopening it would hand out stock that is already back on the shelf.
+    if (
+      (existing.status === "cancelled" || existing.status === "refunded") &&
+      !(existing.status === "cancelled" && status === "refunded") &&
+      status !== existing.status
+    ) {
+      return res.status(409).json({
+        error: {
+          code: "ORDER_CLOSED",
+          message: `This order is ${existing.status}. Create a new order instead of reopening it.`,
+        },
+      });
+    }
+
+    if (status === "paid") {
+      updated = await markOrderPaid(
+        existing.orderNumber,
+        // Admin-driven manual mark — use a synthetic ref so we know it wasn't gateway
+        `admin-mark-paid-${Date.now()}`,
+      );
+    } else if (status === "shipped") {
+      updated = await markOrderShipped(
+        existing.orderNumber,
+        typeof trackingNumber === "string" ? trackingNumber.trim() || undefined : undefined,
+        typeof trackingProviderUrl === "string" ? trackingProviderUrl.trim() || undefined : undefined,
+      );
+    } else if (status === "delivered") {
+      updated = await markOrderDelivered(existing.orderNumber);
+    } else if (status === "cancelled" || status === "refunded") {
+      // Puts the stock back exactly once
+      updated = await cancelOrRefundOrder(existing.orderNumber, status);
+    } else {
+      // processing / pending: no email, no stock change
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        { status },
+        { new: true },
+      ).lean();
+      updated = order;
+    }
+
+    if (!updated) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    res.json({ data: updated });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`PATCH /api/admin/orders/${req.params.id}/status failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update status" },
+    });
+  }
+});
+
+// PATCH /api/admin/orders/:id
+// Body: { trackingUrl?: string, adminNotes?: string, trackingNumber?: string }
+router.patch("/:id", async (req: Request, res: Response) => {
+  try {
+    const update: any = {};
+    if (typeof req.body.trackingUrl === "string") {
+      update.trackingProviderUrl = req.body.trackingUrl.trim();
+    }
+    if (typeof req.body.trackingProviderUrl === "string") {
+      update.trackingProviderUrl = req.body.trackingProviderUrl.trim();
+    }
+    if (typeof req.body.trackingNumber === "string") {
+      update.trackingNumber = req.body.trackingNumber.trim();
+    }
+    if (typeof req.body.adminNotes === "string") {
+      update.adminNotes = req.body.adminNotes.trim();
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Nothing to update" },
+      });
+    }
+
+    const order = await Order.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    }).lean();
+
+    if (!order) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+
+    res.json({ data: order });
+  } catch (err: any) {
+    if (err.name === "CastError") {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Order not found" },
+      });
+    }
+    console.error(`PATCH /api/admin/orders/${req.params.id} failed:`, err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update order" },
+    });
+  }
+});
+
+export default router;
+
+===== server\models\Expense.ts =====
+/**
+ * Expense: money the business spent that is not the purchase price of stock
+ * (stock cost is counted automatically through each item's cost price).
+ */
+import { Schema, model, Document } from "mongoose";
+
+export const EXPENSE_CATEGORIES = ["ads", "packaging", "delivery", "transport", "software", "other"] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export interface ExpenseDocument extends Document {
+  date: Date;
+  category: ExpenseCategory;
+  amount: number;
+  note?: string;
+  createdAt: Date;
+}
+
+const ExpenseSchema = new Schema<ExpenseDocument>(
+  {
+    date: { type: Date, required: true, index: true },
+    category: { type: String, enum: EXPENSE_CATEGORIES, required: true },
+    amount: { type: Number, required: true, min: 0 },
+    note: { type: String, default: "", maxlength: 200 },
+  },
+  { timestamps: true },
+);
+
+export const Expense = model<ExpenseDocument>("Expense", ExpenseSchema);
+
+===== server\models\Order.ts =====
+/**
+ * Order model.
+ *
+ * Items now snapshot the customer's variant selections so admin knows
+ * exactly what to ship.
+ *
+ * phoneKey is the customer's phone number cleaned to its last 10 digits. It is
+ * how spending is added up for the free gift (customers do not have accounts).
+ */
+
+import { Schema, model, Document, Types } from "mongoose";
+
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded";
+
+export type OrderSource = "website" | "whatsapp" | "walkin" | "social" | "other";
+
+export type PaymentMethod =
+  | "paystack"
+  | "flutterwave"
+  | "bank_transfer"
+  | "cod"
+  | "whatsapp"
+  | "cash"
+  | "pos";
+
+export interface OrderItemSnapshot {
+  comboId: Types.ObjectId;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;   // itemId → alternativeId
+  variantSummary?: string;                     // human-readable
+  isFreeGift?: boolean;                        // identifies free gift items
+}
+
+export interface ShippingAddress {
+  fullName: string;
+  phone: string;
+  email: string;
+  state: string;
+  city: string;
+  street: string;
+  landmark?: string;
+}
+
+export interface OrderDocument extends Document {
+  orderNumber: string;
+  items: OrderItemSnapshot[];
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  stockRestored?: boolean;
+  /** where the order came from; "website" for normal checkout */
+  source?: OrderSource;
+  /** true when the owner recorded it by hand (WhatsApp, walk-in...) */
+  manual?: boolean;
+  paystackRefs?: string[];
+  shipping: ShippingAddress;
+  phoneKey?: string;
+  notes?: string;
+  trackingNumber?: string;
+  trackingProviderUrl?: string;
+  adminNotes?: string;
+  paidAt?: Date;
+  shippedAt?: Date;
+  deliveredAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
+  {
+    comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
+    slug: { type: String, required: true },
+    name: { type: String, required: true },
+    tagline: { type: String },
+    thumbnailUrl: { type: String },
+    unitPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+    subtotal: { type: Number, required: true, min: 0 },
+    selectedVariants: { type: Schema.Types.Mixed, default: {} },
+    variantSummary: { type: String, default: "" },
+    isFreeGift: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const ShippingAddressSchema = new Schema<ShippingAddress>(
+  {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    // optional: WhatsApp and walk-in customers often have no email
+    email: { type: String, default: "" },
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    street: { type: String, required: true },
+    landmark: { type: String },
+  },
+  { _id: false },
+);
+
+const OrderSchema = new Schema<OrderDocument>(
+  {
+    orderNumber: { type: String, required: true, unique: true, index: true },
+    items: { type: [OrderItemSnapshotSchema], required: true },
+    subtotal: { type: Number, required: true, min: 0 },
+    shippingFee: { type: Number, required: true, min: 0 },
+    total: { type: Number, required: true, min: 0 },
+    status: {
+      type: String,
+      enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
+      default: "pending",
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp", "cash", "pos"],
+      required: true,
+    },
+    paymentReference: { type: String, index: true },
+    // true once this order's stock has been given back (cancel / refund / expiry)
+    stockRestored: { type: Boolean, default: false },
+    // every Paystack reference started for this order (a customer can retry), used to re-check unpaid orders
+    paystackRefs: { type: [String], default: [] },
+    shipping: { type: ShippingAddressSchema, required: true },
+    phoneKey: { type: String },
+    source: { type: String, enum: ["website", "whatsapp", "walkin", "social", "other"], default: "website", index: true },
+    manual: { type: Boolean, default: false },
+    notes: { type: String },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    adminNotes: { type: String },
+    paidAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
+OrderSchema.index({ phoneKey: 1, createdAt: -1 });
+
+export const Order = model<OrderDocument>("Order", OrderSchema);
+
+===== client\pages\AdminProfit.tsx =====
+/**
+ * Admin: Profit & Expenses.
+ * Shows sales, cost of goods, expenses and profit for a period, profit per product,
+ * and lets the owner record business expenses (ads, packaging, transport...).
+ */
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Loader2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { SEO } from '@/components/shared/SEO';
+import { AdminFrame } from '@/components/admin/AdminFrame';
+import { formatNaira } from '@/lib/format';
+import {
+  EXPENSE_LABELS,
+  addExpense,
+  deleteExpense,
+  getProfitReport,
+  listExpenses,
+  recalculateCosts,
+  type ExpenseCategory,
+} from '@/api/adminProfit';
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+type Preset = 'today' | '7d' | 'month' | '30d' | 'custom';
+
+function presetRange(p: Exclude<Preset, 'custom'>): { from: string; to: string } {
+  const now = new Date();
+  const to = ymd(now);
+  if (p === 'today') return { from: to, to };
+  if (p === 'month') return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to };
+  const back = new Date(now);
+  back.setDate(back.getDate() - (p === '7d' ? 6 : 29));
+  return { from: ymd(back), to };
+}
+
+const PRESETS: Array<{ id: Preset; label: string }> = [
+  { id: 'today', label: 'Today' },
+  { id: '7d', label: 'Last 7 days' },
+  { id: 'month', label: 'This month' },
+  { id: '30d', label: 'Last 30 days' },
+  { id: 'custom', label: 'Custom' },
+];
+
+const inputCls =
+  'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder:text-white/30';
+
+export default function AdminProfit() {
+  const qc = useQueryClient();
+  const [preset, setPreset] = useState<Preset>('month');
+  const [range, setRange] = useState(presetRange('month'));
+
+  const [exDate, setExDate] = useState(ymd(new Date()));
+  const [exCategory, setExCategory] = useState<ExpenseCategory>('ads');
+  const [exAmount, setExAmount] = useState('');
+  const [exNote, setExNote] = useState('');
+
+  const recalc = useMutation({
+    mutationFn: () => recalculateCosts(range.from, range.to),
+    onSuccess: (res) => {
+      qc.invalidateQueries();
+      if (res.tried === 0) toast.info('Nothing to recalculate');
+      else if (res.stillMissing === 0) toast.success(`${res.fixed} order(s) added to your profit`);
+      else toast.warning(`${res.fixed} fixed, ${res.stillMissing} still have items with no cost price`);
+    },
+    onError: (e: any) => toast.error(e?.message || 'Could not recalculate'),
+  });
+
+  const choose = (p: Preset) => {
+    setPreset(p);
+    if (p !== 'custom') setRange(presetRange(p));
+  };
+
+  const report = useQuery({
+    queryKey: ['admin-profit', range.from, range.to],
+    queryFn: () => getProfitReport(range.from, range.to),
+  });
+  const expenses = useQuery({
+    queryKey: ['admin-expenses', range.from, range.to],
+    queryFn: () => listExpenses(range.from, range.to),
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['admin-profit'] });
+    qc.invalidateQueries({ queryKey: ['admin-expenses'] });
+  };
+
+  const addMutation = useMutation({
+    mutationFn: () =>
+      addExpense({ date: exDate, category: exCategory, amount: Number(exAmount), note: exNote.trim() }),
+    onSuccess: () => {
+      toast.success('Expense saved');
+      setExAmount('');
+      setExNote('');
+      refresh();
+    },
+    onError: (e: any) => toast.error(e?.message || 'Could not save the expense'),
+  });
+
+  const delMutation = useMutation({
+    mutationFn: (id: string) => deleteExpense(id),
+    onSuccess: () => {
+      toast.success('Expense removed');
+      refresh();
+    },
+    onError: (e: any) => toast.error(e?.message || 'Could not remove the expense'),
+  });
+
+  const r = report.data;
+  const canSave = Number(exAmount) > 0 && !addMutation.isPending;
+
+  return (
+    <AdminFrame>
+      <SEO title="Profit & Expenses" />
+      <Link to="/admin" className="inline-flex items-center gap-2 text-xs text-white/50 hover:text-white/80 mb-5">
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
+      </Link>
+      <h1 className="text-2xl md:text-3xl font-black text-white mb-1">Profit &amp; Expenses</h1>
+      <p className="text-sm text-white/45 mb-6">
+        Sales are counted from paid orders. Cost comes from the cost price you enter on each combo item.
+      </p>
+
+      {/* Period */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        {PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => choose(p.id)}
+            className={`px-3 py-1.5 rounded-full border text-xs font-bold transition-colors ${
+              preset === p.id
+                ? 'bg-primary/15 border-primary/40 text-primary'
+                : 'border-white/10 text-white/60 hover:border-white/25'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+        {preset === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={range.from} max={range.to}
+              onChange={(e) => setRange((x) => ({ ...x, from: e.target.value }))} className={`${inputCls} w-auto`} />
+            <span className="text-white/40 text-xs">to</span>
+            <input type="date" value={range.to} min={range.from}
+              onChange={(e) => setRange((x) => ({ ...x, to: e.target.value }))} className={`${inputCls} w-auto`} />
+          </div>
+        )}
+      </div>
+
+      {report.isLoading && (
+        <div className="flex items-center gap-2 text-white/50 text-sm py-10">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      )}
+      {report.isError && <p className="text-sm text-red-300 py-6">Could not load the report. Try again.</p>}
+
+      {r && (
+        <>
+          {r.orders.uncosted > 0 && (
+            <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              {r.orders.uncosted} of {r.orders.total} paid orders in this period are left out of the profit figures
+              because some items had no cost price when they were sold. Enter cost prices on your products, then
+              press the button to count them using today's cost prices.
+              <button type="button" onClick={() => recalc.mutate()} disabled={recalc.isPending}
+                className="mt-2 block px-3 py-1.5 rounded-lg bg-amber-400 text-black font-bold disabled:opacity-50">
+                {recalc.isPending ? 'Working…' : 'Recalculate cost'}
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <Stat label="Sales" value={formatNaira(r.sales)} />
+            <Stat label="Cost of goods" value={formatNaira(r.costOfGoods)} />
+            <Stat label="Gross profit" value={formatNaira(r.grossProfit)} sub={`${r.marginPercent}% margin`} />
+            <Stat label="Expenses" value={formatNaira(r.expensesTotal)} />
+          </div>
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 mb-8 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-widest text-white/50 mb-1">Net profit</p>
+              <p className={`text-3xl font-black tabular-nums ${r.netProfit < 0 ? 'text-red-300' : 'text-primary'}`}>
+                {formatNaira(r.netProfit)}
+              </p>
+            </div>
+            <p className="text-[11px] text-white/45 max-w-sm">
+              Gross profit + delivery fees collected ({formatNaira(r.deliveryFees)}) − partner commissions ({formatNaira(r.partnerCommissions ?? 0)}) − expenses.
+              Free gifts are already counted in the cost of goods.
+            </p>
+          </div>
+
+          <h2 className="text-base font-bold text-white mb-3">Profit by product</h2>
+          <div className="rounded-2xl border border-white/10 overflow-x-auto mb-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            {r.products.length === 0 ? (
+              <p className="p-5 text-sm text-white/45">No costed sales in this period yet.</p>
+            ) : (
+              <table className="w-full text-xs min-w-[520px]">
+                <thead>
+                  <tr className="text-left text-white/40 uppercase tracking-wider text-[10px] border-b border-white/10">
+                    <th className="p-3">Product</th>
+                    <th className="p-3 text-right">Units</th>
+                    <th className="p-3 text-right">Sales</th>
+                    <th className="p-3 text-right">Cost</th>
+                    <th className="p-3 text-right">Profit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.products.map((p, i) => (
+                    <tr key={i} className="border-b border-white/5 last:border-0">
+                      <td className="p-3 text-white font-semibold">{p.name}</td>
+                      <td className="p-3 text-right tabular-nums text-white/70">{p.units}</td>
+                      <td className="p-3 text-right tabular-nums text-white/70">{formatNaira(p.revenue)}</td>
+                      <td className="p-3 text-right tabular-nums text-white/70">{formatNaira(p.cost)}</td>
+                      <td className={`p-3 text-right tabular-nums font-bold ${p.profit < 0 ? 'text-red-300' : 'text-emerald-300'}`}>
+                        {formatNaira(p.profit)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Expenses */}
+      <h2 className="text-base font-bold text-white mb-1">Expenses</h2>
+      <p className="text-xs text-white/45 mb-4">
+        Record ads, packaging, transport and similar costs. Do not enter what you paid for stock here — that is
+        already counted through each item&apos;s cost price.
+      </p>
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (canSave) addMutation.mutate(); }}
+        className="rounded-2xl border border-white/10 p-4 mb-5 grid grid-cols-2 md:grid-cols-[150px_160px_140px_1fr_auto] gap-3 items-end"
+        style={{ background: 'rgba(255,255,255,0.02)' }}
+      >
+        <label className="block">
+          <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1">Date</span>
+          <input type="date" value={exDate} onChange={(e) => setExDate(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1">Category</span>
+          <select value={exCategory} onChange={(e) => setExCategory(e.target.value as ExpenseCategory)} className={inputCls}>
+            {Object.entries(EXPENSE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1">Amount (₦)</span>
+          <input type="number" min={1} inputMode="numeric" value={exAmount}
+            onChange={(e) => setExAmount(e.target.value)} className={inputCls} placeholder="30000" />
+        </label>
+        <label className="block col-span-2 md:col-span-1">
+          <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1">Note (optional)</span>
+          <input type="text" maxLength={200} value={exNote}
+            onChange={(e) => setExNote(e.target.value)} className={inputCls} placeholder="TikTok ads" />
+        </label>
+        <button
+          type="submit"
+          disabled={!canSave}
+          className="col-span-2 md:col-span-1 px-5 py-2.5 rounded-lg bg-primary text-black text-sm font-black disabled:opacity-40"
+        >
+          {addMutation.isPending ? 'Saving…' : 'Add expense'}
+        </button>
+      </form>
+
+      <div className="rounded-2xl border border-white/10 divide-y divide-white/5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+        {(expenses.data ?? []).length === 0 && (
+          <p className="p-5 text-sm text-white/45">No expenses recorded in this period.</p>
+        )}
+        {(expenses.data ?? []).map((ex) => (
+          <div key={ex._id} className="flex items-center gap-3 p-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-white font-semibold">
+                {EXPENSE_LABELS[ex.category] ?? ex.category}
+                {ex.note ? <span className="text-white/50 font-normal"> · {ex.note}</span> : null}
+              </p>
+              <p className="text-[11px] text-white/40">
+                {new Date(ex.date).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })}
+              </p>
+            </div>
+            <p className="text-sm font-bold text-white tabular-nums">{formatNaira(ex.amount)}</p>
+            <button
+              type="button"
+              aria-label="Delete expense"
+              disabled={delMutation.isPending}
+              onClick={() => { if (window.confirm('Remove this expense?')) delMutation.mutate(ex._id); }}
+              className="p-2 rounded-lg hover:bg-red-500/10 text-white/40 hover:text-red-400"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </AdminFrame>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <p className="text-[11px] uppercase tracking-widest text-white/40 mb-1">{label}</p>
+      <p className="text-xl md:text-2xl font-black text-white tabular-nums">{value}</p>
+      {sub && <p className="text-[11px] text-white/40 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+===== client\api\adminProfit.ts =====
+/** Admin profit & expenses API. */
+import { apiFetch } from "./client";
+
+export type ExpenseCategory = "ads" | "packaging" | "delivery" | "transport" | "software" | "other";
+
+export const EXPENSE_LABELS: Record<ExpenseCategory, string> = {
+  ads: "Ads",
+  packaging: "Packaging",
+  delivery: "Delivery",
+  transport: "Transport",
+  software: "Software / tools",
+  other: "Other",
+};
+
+export interface ProfitReport {
+  from: string;
+  to: string;
+  orders: { total: number; costed: number; uncosted: number };
+  sales: number;
+  deliveryFees: number;
+  costOfGoods: number;
+  grossProfit: number;
+  marginPercent: number;
+  expensesTotal: number;
+  expensesByCategory: Record<string, number>;
+  partnerCommissions: number;
+  netProfit: number;
+  products: Array<{ name: string; units: number; revenue: number; cost: number; profit: number }>;
+}
+
+export interface Expense {
+  _id: string;
+  date: string;
+  category: ExpenseCategory;
+  amount: number;
+  note?: string;
+}
+
+export interface OrderCostInfo {
+  lines: Array<{ name: string; quantity: number; unitPrice: number; unitCost: number; isFreeGift: boolean; known: boolean }>;
+  totalCost: number;
+  complete: boolean;
+}
+
+interface ApiResponse<T> { data: T }
+
+export async function getProfitReport(from: string, to: string) {
+  return (await apiFetch<ApiResponse<ProfitReport>>(`/api/admin/profit/report?from=${from}&to=${to}`)).data;
+}
+export async function listExpenses(from: string, to: string) {
+  return (await apiFetch<ApiResponse<Expense[]>>(`/api/admin/profit/expenses?from=${from}&to=${to}`)).data;
+}
+export async function addExpense(payload: { date: string; category: ExpenseCategory; amount: number; note?: string }) {
+  return (await apiFetch<ApiResponse<Expense>>("/api/admin/profit/expenses", { method: "POST", body: JSON.stringify(payload) })).data;
+}
+export async function deleteExpense(id: string) {
+  await apiFetch(`/api/admin/profit/expenses/${id}`, { method: "DELETE" });
+}
+export async function recalculateCosts(from: string, to: string) {
+  return (await apiFetch<ApiResponse<{ tried: number; fixed: number; stillMissing: number }>>("/api/admin/profit/recalculate", { method: "POST", body: JSON.stringify({ from, to }) })).data;
+}
+export async function getOrderCost(orderId: string) {
+  return (await apiFetch<ApiResponse<OrderCostInfo | null>>(`/api/admin/profit/order/${orderId}`)).data;
+}
+
+===== client\api\adminOrders.ts =====
+/**
+ * Admin orders API — frontend client.
+ *
+ * All requests go through apiFetch, which automatically attaches the
+ * admin JWT from localStorage. If the token is invalid/expired,
+ * apiFetch will throw a 401, AdminProtectedRoute redirects to login.
+ */
+
+import { apiFetch } from "./client";
+import type { Order, OrderStatus } from "@/types/order";
+
+interface ListResponse {
+  data: Order[];
+  meta: { total: number; page: number; limit: number; pages: number };
+}
+
+interface ItemResponse {
+  data: Order;
+}
+
+interface StatsResponse {
+  data: {
+    ordersToday: number;
+    revenueToday: number;
+    pendingOrders: number;
+    customers: number;
+    recentOrders: Pick<
+      Order,
+      "_id" | "orderNumber" | "status" | "total" | "createdAt"
+    > &
+      { shipping: { fullName: string } }[];
+  };
+}
+
+export interface ListOrdersParams {
+  status?: OrderStatus | "all";
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export async function listOrders(
+  params: ListOrdersParams = {},
+): Promise<ListResponse> {
+  const qs = new URLSearchParams();
+  if (params.status && params.status !== "all") qs.set("status", params.status);
+  if (params.search?.trim()) qs.set("search", params.search.trim());
+  if (params.page) qs.set("page", String(params.page));
+  if (params.limit) qs.set("limit", String(params.limit));
+
+  const query = qs.toString();
+  return apiFetch<ListResponse>(
+    `/api/admin/orders${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getOrder(id: string): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}`);
+  return res.data;
+}
+
+export async function updateOrderStatus(
+  id: string,
+  status: OrderStatus,
+): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return res.data;
+}
+
+export async function updateOrder(
+  id: string,
+  payload: { trackingUrl?: string; adminNotes?: string },
+): Promise<Order> {
+  const res = await apiFetch<ItemResponse>(`/api/admin/orders/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
+export async function getDashboardStats() {
+  const res = await apiFetch<StatsResponse>("/api/admin/dashboard/stats");
+  return res.data;
+}

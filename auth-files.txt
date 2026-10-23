@@ -1,0 +1,880 @@
+
+
+===== client\api\client.ts =====
+/**
+ * Base API client.
+ *
+ * Wraps fetch() with consistent error handling AND automatic JWT attachment.
+ *
+ * If a token exists in localStorage (admin is logged in), it's added to every
+ * request as `Authorization: Bearer <token>`. This is harmless for public
+ * endpoints (they ignore the header) and required for admin endpoints.
+ *
+ * On 401 responses (token expired/invalid), automatically clears the stored
+ * token so the user gets redirected to login on next protected route.
+ */
+
+import { getToken, clearToken } from "@/lib/auth";
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (!res.ok) {
+    let message = `Request failed: ${res.status}`;
+    let code: string | undefined;
+    try {
+      const body = await res.json();
+      message = body?.error?.message || body?.message || message;
+      code = body?.error?.code;
+    } catch {
+      // ignore JSON parse errors
+    }
+
+    // Auto-clear stale tokens on auth errors
+    if (res.status === 401 && token) {
+      clearToken();
+    }
+
+    throw new ApiError(res.status, message, code);
+  }
+
+  return res.json();
+}
+
+===== client\components\admin\AdminFrame.tsx =====
+/**
+ * Shared admin layout — top bar with logo, sign out, view store link.
+ * Wraps admin pages so we don't repeat the same header in every file.
+ */
+
+import { Link } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+
+export function AdminFrame({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth();
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          {children}
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\components\AdminProtectedRoute.tsx =====
+/**
+ * AdminProtectedRoute — wraps admin pages.
+ *
+ * Behavior:
+ *  - While checking auth (initial mount): show a spinner
+ *  - If not logged in: redirect to /admin/login, remembering the intended page
+ *  - If logged in: render the children
+ *
+ * Usage in App.tsx:
+ *   <Route
+ *     path="/admin"
+ *     element={
+ *       <AdminProtectedRoute>
+ *         <AdminDashboard />
+ *       </AdminProtectedRoute>
+ *     }
+ *   />
+ */
+
+import { ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+
+interface Props {
+  children: ReactNode;
+}
+
+export function AdminProtectedRoute({ children }: Props) {
+  const { user, isLoading } = useAuth();
+  const location = useLocation();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/admin/login"
+        replace
+        state={{ from: location.pathname }}
+      />
+    );
+  }
+
+  return <>{children}</>;
+}
+
+===== client\contexts\AuthContext.tsx =====
+/**
+ * AuthContext — React state for "am I logged in?".
+ *
+ * Provides:
+ *   user — the logged-in admin (or null)
+ *   isLoading — true while we're checking the saved token on mount
+ *   login() — log in with email + password
+ *   logout() — log out
+ *   refresh() — re-fetch the user (e.g. after profile update)
+ *
+ * On mount, if there's a token in localStorage, we hit /api/auth/me to
+ * verify it's still valid and get the user info. If invalid, the token
+ * is auto-cleared (handled in apiFetch).
+ */
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import {
+  fetchCurrentUser,
+  login as apiLogin,
+  logout as apiLogout,
+  type AdminUser,
+} from "@/api/auth";
+import { getToken } from "@/lib/auth";
+
+interface AuthContextValue {
+  user: AdminUser | null;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => void;
+  refresh: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AdminUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!getToken()) {
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const u = await fetchCurrentUser();
+      setUser(u);
+    } catch {
+      // 401 will have already cleared the token via apiFetch
+      setUser(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const u = await apiLogin(email, password);
+    setUser(u);
+  }, []);
+
+  const logout = useCallback(() => {
+    apiLogout();
+    setUser(null);
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  return ctx;
+}
+
+===== client\pages\AdminDashboard.tsx =====
+/**
+ * Admin Dashboard.
+ * Clean overview page with navigation to management sub-pages.
+ */
+
+import { useQuery } from '@tanstack/react-query';
+import { getStockAlertCount } from '@/api/adminStock';
+import { Link } from 'react-router-dom';
+import {
+  HelpCircle,
+  Image as ImageIcon,
+  LayoutGrid,
+  LogOut,
+  MessageCircle,
+  MessageSquareQuote,
+  Package,
+  Settings,
+  ShoppingBag,
+  Users,
+  UserPlus,
+  ArrowRight,
+  Gift,
+  Megaphone,
+  Banknote,
+  TrendingUp,
+  PlusCircle,
+} from 'lucide-react';
+import { SEO } from '@/components/shared/SEO';
+import { useAuth } from '@/contexts/AuthContext';
+import { getDashboardStats } from '@/api/adminOrders';
+import { getChatUnreadCount } from '@/api/adminChats';
+import { getResellerCounts } from '@/api/adminResellers';
+import { listWithdrawals } from '@/api/adminWithdrawals';
+import { formatNaira } from '@/lib/format';
+
+export default function AdminDashboard() {
+  const { user, logout } = useAuth();
+
+  const { data: stats } = useQuery({
+    queryKey: ['admin-stats'],
+    queryFn: getDashboardStats,
+    refetchInterval: 30000,
+  });
+
+  const { data: unreadChats = 0 } = useQuery({
+    queryKey: ['admin-chat-unread'],
+    queryFn: getChatUnreadCount,
+    refetchInterval: 15000,
+  });
+
+  const { data: payoutCounts } = useQuery({
+    queryKey: ['admin-withdrawal-counts'],
+    queryFn: () => listWithdrawals('requested').then((r) => r.counts),
+    refetchInterval: 30000,
+  });
+  const { data: stockAlerts = 0 } = useQuery({
+    queryKey: ['admin-stock-alerts'],
+    queryFn: getStockAlertCount,
+    refetchInterval: 60000,
+  });
+  const { data: resellerCounts } = useQuery({
+    queryKey: ['admin-reseller-counts'],
+    queryFn: getResellerCounts,
+    refetchInterval: 30000,
+  });
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Admin Dashboard" />
+
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80 transition-colors">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          <div className="mb-8">
+            <p className="text-xs uppercase tracking-[0.28em] text-primary/70 font-bold mb-2">
+              {user?.role === 'superadmin' ? 'Super Admin' : 'Admin'}
+            </p>
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-1">
+              Welcome back, {user?.name?.split(' ')[0] ?? 'there'} 👋
+            </h1>
+            <p className="text-white/45 text-sm">Here's what's happening with your store today.</p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+            <StatCard label="Orders today" value={(stats?.ordersToday ?? 0).toString()} />
+            <StatCard label="Revenue today" value={formatNaira(stats?.revenueToday ?? 0)} />
+            <StatCard label="Pending orders" value={(stats?.pendingOrders ?? 0).toString()} />
+            <StatCard label="Customers" value={(stats?.customers ?? 0).toString()} />
+          </div>
+
+          <h2 className="text-base font-bold text-white mb-4">Manage Store</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
+            <TileLink to="/admin/orders" Icon={Package} label="Orders" desc="View, fulfill, and update orders" badge={stats?.pendingOrders ?? 0} />
+            <TileLink to="/admin/record-sale" Icon={PlusCircle} label="Record a sale" desc="Add a WhatsApp or walk-in order so stock and profit stay correct" />
+            <TileLink to="/admin/profit" Icon={TrendingUp} label="Profit & Expenses" desc="Sales, cost, expenses and profit; record what you spend" />
+            <TileLink to="/admin/fulfilment" Icon={Package} label="Fulfilment" desc="Orders to pack and ship, packing slips, tracking" />
+            <TileLink to="/admin/today" Icon={TrendingUp} label="Today" desc="Sales, profit and what needs doing; daily email summary" highlight />
+            <TileLink to="/admin/stock" Icon={ShoppingBag} label="Stock" desc="Low-stock alerts, add stock, restock history" badge={stockAlerts} badgeLabel="low" />
+            <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
+            <TileLink to="/admin/combos" Icon={ShoppingBag} label="Products & Combos" desc="Add single products or combos, set price and cost, manage stock" highlight />
+            <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />
+            <TileLink to="/admin/payouts" Icon={Banknote} label="Partner Payouts" desc="Withdrawal requests to pay each week" badge={payoutCounts?.requested ?? 0} badgeLabel="to pay" />
+            <TileLink to="/admin/ads" Icon={Megaphone} label="Partner Ads" desc="Images, videos and captions partners can download" />
+            <TileLink to="/admin/gift-bank" Icon={Gift} label="Free Gift Bank" desc="Manage standalone free gift items for cart threshold rewards" />
+            <TileLink to="/admin/categories" Icon={LayoutGrid} label="Categories" desc="Organize combos by category" />
+            <TileLink to="/admin/hero-slides" Icon={ImageIcon} label="Hero Slides" desc="Homepage carousel slides" />
+            <TileLink to="/admin/settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" />
+            <TileLink to="/admin/faqs" Icon={HelpCircle} label="FAQs" desc="Frequently asked questions" />
+            <TileLink to="/admin/testimonials" Icon={MessageSquareQuote} label="Testimonials" desc="Customer reviews shown on homepage" />
+            <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
+          </div>
+
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="rounded-2xl border border-white/10 p-5"
+      style={{ background: 'rgba(255,255,255,0.02)' }}
+    >
+      <p className="text-[11px] uppercase tracking-widest text-white/40 mb-1">{label}</p>
+      <p className="text-2xl font-black text-white tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function TileLink({
+  to, Icon, label, desc, disabled, badge, badgeLabel = 'pending', highlight,
+}: {
+  to: string;
+  Icon: any;
+  label: string;
+  desc: string;
+  disabled?: boolean;
+  badge?: number;
+  badgeLabel?: string;
+  highlight?: boolean;
+}) {
+  const content = (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center border ${
+          highlight 
+            ? 'bg-primary/20 border-primary/40 text-primary' 
+            : 'bg-primary/10 border-primary/20 text-primary'
+        }`}>
+          <Icon className="w-4 h-4" />
+        </div>
+        {!!badge && badge > 0 && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+            {badge} {badgeLabel}
+          </span>
+        )}
+        {disabled && (
+          <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide">Soon</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white mb-1">{label}</h3>
+        {highlight && <ArrowRight className="w-4 h-4 text-primary" />}
+      </div>
+      <p className="text-xs text-white/50">{desc}</p>
+    </>
+  );
+
+  const baseCls = 'block text-left p-5 rounded-2xl border transition-all';
+  const enabledCls = highlight 
+    ? 'border-primary/40 bg-primary/5 hover:border-primary hover:bg-primary/10 cursor-pointer shadow-lg shadow-primary/5' 
+    : 'border-white/10 hover:border-primary/40 cursor-pointer';
+  const disabledCls = 'border-white/5 opacity-50 cursor-not-allowed';
+
+  if (disabled) {
+    return (
+      <div className={`${baseCls} ${disabledCls}`} style={{ background: 'rgba(255,255,255,0.02)' }}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Link to={to} className={`${baseCls} ${enabledCls}`} style={!highlight ? { background: 'rgba(255,255,255,0.02)' } : undefined}>
+      {content}
+    </Link>
+  );
+}
+
+===== server\db.ts =====
+/**
+ * MongoDB connection.
+ *
+ * Called once on server startup. If the connection fails, the server exits
+ * — there's no point running the app without a database.
+ */
+
+import mongoose from "mongoose";
+import { config } from "./config";
+
+export async function connectDB() {
+  try {
+    await mongoose.connect(config.mongodbUri, {
+      // Fail fast if the database is unreachable, instead of hanging
+      serverSelectionTimeoutMS: 5000,
+    });
+    console.log("✅ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:");
+    console.error(err);
+    process.exit(1);
+  }
+
+  // Listen for runtime connection events (e.g. network drops)
+  mongoose.connection.on("disconnected", () => {
+    console.warn("⚠️  MongoDB disconnected. Mongoose will auto-retry.");
+  });
+
+  mongoose.connection.on("error", (err) => {
+    console.error("MongoDB error:", err);
+  });
+}
+
+===== server\middleware\requireAuth.ts =====
+/**
+ * requireAuth middleware.
+ *
+ * Verifies the JWT in the Authorization header.
+ * If valid, attaches { userId, email, role } to req.user and calls next().
+ * If missing/invalid/expired, responds with 401.
+ *
+ * Usage on routes:
+ *   router.get("/admin/orders", requireAuth, listOrdersHandler);
+ *
+ * Or apply to a whole router:
+ *   app.use("/api/admin", requireAuth, adminRouter);
+ */
+
+import { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
+import { config } from "../config";
+
+export interface AuthPayload {
+  userId: string;
+  email: string;
+  role: string;
+}
+
+export function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void | Response {
+  const authHeader = req.header("Authorization");
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      error: { code: "UNAUTHENTICATED", message: "Missing auth token" },
+    });
+  }
+
+  const token = authHeader.slice("Bearer ".length);
+
+  try {
+    const payload = jwt.verify(token, config.jwtSecret) as AuthPayload;
+    (req as any).user = payload;
+    next();
+  } catch (err: any) {
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({
+        error: { code: "TOKEN_EXPIRED", message: "Session expired, please log in again" },
+      });
+    }
+    return res.status(401).json({
+      error: { code: "INVALID_TOKEN", message: "Invalid auth token" },
+    });
+  }
+}
+
+===== server\models\AdminUser.ts =====
+/**
+ * AdminUser model.
+ *
+ * Admin accounts that can log into /admin to manage the store.
+ * Passwords are hashed with bcrypt — we NEVER store plaintext.
+ *
+ * Future-proof: `role` field allows for staff/superadmin levels later.
+ */
+
+import { Schema, model, Document } from "mongoose";
+import bcrypt from "bcryptjs";
+
+export type AdminRole = "superadmin" | "admin" | "staff";
+
+export interface AdminUserDocument extends Document {
+  email: string;
+  passwordHash: string;
+  name: string;
+  role: AdminRole;
+  lastLoginAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+
+  // Methods
+  verifyPassword(plain: string): Promise<boolean>;
+}
+
+const AdminUserSchema = new Schema<AdminUserDocument>(
+  {
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    passwordHash: { type: String, required: true },
+    name: { type: String, required: true, trim: true },
+    role: {
+      type: String,
+      enum: ["superadmin", "admin", "staff"],
+      default: "admin",
+    },
+    lastLoginAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+// Instance method to verify a plain-text password against the hash
+AdminUserSchema.methods.verifyPassword = async function (
+  plain: string,
+): Promise<boolean> {
+  return bcrypt.compare(plain, this.passwordHash);
+};
+
+// Helper to hash a plain-text password — used by seed scripts and signup flows
+export async function hashPassword(plain: string): Promise<string> {
+  const COST = 12;
+  return bcrypt.hash(plain, COST);
+}
+
+export const AdminUser = model<AdminUserDocument>("AdminUser", AdminUserSchema);
+
+===== server\routes\admin\AdminSettingsRoute.ts =====
+/**
+ * Admin site settings routes.
+ * Handles hero { headline, subtext } and welcomePopup { giftImages, comboImages }.
+ */
+
+import { Router, Request, Response } from "express";
+import { SiteSettings } from "../../models/SiteSettings";
+
+const router = Router();
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    let settings = await SiteSettings.findOne({}).lean();
+    if (!settings) {
+      const created = await SiteSettings.create({});
+      settings = created.toObject();
+    }
+    res.json({ data: settings });
+  } catch (err) {
+    console.error("GET /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch settings" },
+    });
+  }
+});
+
+router.patch("/", async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const update: any = {};
+
+    if (typeof body.storeName === "string") update.storeName = body.storeName.trim();
+    if (typeof body.tagline === "string") update.tagline = body.tagline;
+    if (typeof body.defaultHeroImage === "string") update.defaultHeroImage = body.defaultHeroImage;
+
+    // Hero (nested)
+    if (body.hero && typeof body.hero === "object") {
+      if (typeof body.hero.headline === "string") update["hero.headline"] = body.hero.headline;
+      if (typeof body.hero.subtext === "string") update["hero.subtext"] = body.hero.subtext;
+    }
+
+    // Welcome popup pictures (max 5 per tab)
+    if (body.welcomePopup && typeof body.welcomePopup === "object") {
+      const clean = (list: any[]): string[] =>
+        list
+          .filter((u) => typeof u === "string" && u.trim())
+          .map((u) => u.trim())
+          .slice(0, 5);
+      if (Array.isArray(body.welcomePopup.giftImages)) {
+        update["welcomePopup.giftImages"] = clean(body.welcomePopup.giftImages);
+      }
+      if (Array.isArray(body.welcomePopup.comboImages)) {
+        update["welcomePopup.comboImages"] = clean(body.welcomePopup.comboImages);
+      }
+    }
+
+    if (body.promo && typeof body.promo === "object") {
+      if (body.promo.endsAt !== undefined) {
+        const date = new Date(body.promo.endsAt);
+        if (!isNaN(date.getTime())) update["promo.endsAt"] = date;
+      }
+      if (body.promo.enabled !== undefined) update["promo.enabled"] = Boolean(body.promo.enabled);
+      if (typeof body.promo.headline === "string") update["promo.headline"] = body.promo.headline;
+      if (typeof body.promo.subline === "string") update["promo.subline"] = body.promo.subline;
+    }
+
+    if (body.contact && typeof body.contact === "object") {
+      if (typeof body.contact.whatsappNumber === "string") update["contact.whatsappNumber"] = body.contact.whatsappNumber.trim();
+      if (typeof body.contact.email === "string") update["contact.email"] = body.contact.email.trim();
+      if (typeof body.contact.phone === "string") update["contact.phone"] = body.contact.phone.trim();
+      if (typeof body.contact.address === "string") update["contact.address"] = body.contact.address;
+    }
+
+    if (body.video && typeof body.video === "object") {
+      if (typeof body.video.url === "string") update["video.url"] = body.video.url.trim();
+      if (typeof body.video.thumbnail === "string") update["video.thumbnail"] = body.video.thumbnail;
+      if (typeof body.video.title === "string") update["video.title"] = body.video.title;
+      if (typeof body.video.duration === "string") update["video.duration"] = body.video.duration;
+    }
+
+    if (body.trustStats && typeof body.trustStats === "object") {
+      if (body.trustStats.rating !== undefined) {
+        const r = Math.max(0, Math.min(5, Number(body.trustStats.rating) || 0));
+        update["trustStats.rating"] = r;
+      }
+      if (body.trustStats.reviewCount !== undefined) {
+        update["trustStats.reviewCount"] = Math.max(0, Math.floor(Number(body.trustStats.reviewCount) || 0));
+      }
+    }
+
+    if (body.bankAccount && typeof body.bankAccount === "object") {
+      if (typeof body.bankAccount.bankName === "string") update["bankAccount.bankName"] = body.bankAccount.bankName.trim();
+      if (typeof body.bankAccount.accountName === "string") update["bankAccount.accountName"] = body.bankAccount.accountName.trim();
+      if (typeof body.bankAccount.accountNumber === "string") update["bankAccount.accountNumber"] = body.bankAccount.accountNumber.trim();
+    }
+
+    if (body.shipping && typeof body.shipping === "object") {
+      if (body.shipping.standardFee !== undefined) {
+        update["shipping.standardFee"] = Math.max(0, Number(body.shipping.standardFee) || 0);
+      }
+      if (Array.isArray(body.shipping.codCities)) {
+        update["shipping.codCities"] = body.shipping.codCities
+          .map((c: any) => String(c).trim().toLowerCase())
+          .filter(Boolean);
+      }
+      if (body.shipping.freeShippingThreshold !== undefined) {
+        update["shipping.freeShippingThreshold"] = Math.max(0, Number(body.shipping.freeShippingThreshold) || 0);
+      }
+    }
+
+    const settings = await SiteSettings.findOneAndUpdate(
+      {},
+      { $set: update },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+
+    res.json({ data: settings });
+  } catch (err: any) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: err.message },
+      });
+    }
+    console.error("PATCH /api/admin/settings failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to update settings" },
+    });
+  }
+});
+
+export default router;
+
+===== server\routes\auth.ts =====
+/**
+ * Auth routes — admin login.
+ *
+ * POST /api/auth/login   — exchanges email + password for a JWT
+ * GET  /api/auth/me      — returns current admin user (requires valid JWT)
+ *
+ * The JWT contains the admin's userId and role. It expires after 7 days
+ * (configurable via JWT_EXPIRES_IN env var).
+ */
+
+import { Router, Request, Response } from "express";
+import jwt from "jsonwebtoken";
+import { AdminUser } from "../models/AdminUser";
+import { config } from "../config";
+import { requireAuth } from "../middleware/requireAuth";
+
+const router = Router();
+
+// POST /api/auth/login
+router.post("/login", async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Email and password required" },
+      });
+    }
+
+    const user = await AdminUser.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Don't reveal whether email exists — same error for both cases
+      return res.status(401).json({
+        error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials" },
+      });
+    }
+
+    const valid = await user.verifyPassword(password);
+    if (!valid) {
+      return res.status(401).json({
+        error: { code: "INVALID_CREDENTIALS", message: "Invalid credentials" },
+      });
+    }
+
+    // Update last login timestamp
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    // Generate JWT
+    const token = jwt.sign(
+      {
+        userId: user._id.toString(),
+        email: user.email,
+        role: user.role,
+      },
+      config.jwtSecret,
+      { expiresIn: config.jwtExpiresIn } as jwt.SignOptions,
+    );
+
+    res.json({
+      data: {
+        token,
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("POST /api/auth/login failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Login failed" },
+    });
+  }
+});
+
+// GET /api/auth/me — requires valid JWT
+router.get("/me", requireAuth, async (req: Request, res: Response) => {
+  try {
+    // requireAuth attaches the user to req.user
+    const user = await AdminUser.findById((req as any).user.userId).lean();
+    if (!user) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "User not found" },
+      });
+    }
+
+    res.json({
+      data: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        lastLoginAt: user.lastLoginAt,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/auth/me failed:", err);
+    res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to fetch user" },
+    });
+  }
+});
+
+export default router;

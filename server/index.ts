@@ -33,8 +33,12 @@ import adminProfitRouter from "./routes/admin/profit";
 import adminFulfilmentRouter from "./routes/admin/fulfilment";
 import adminStockRouter from "./routes/admin/stock";
 import adminSummaryRouter from "./routes/admin/summary";
+import staffRouter from "./routes/admin/staff";
+import auditRouter from "./routes/admin/audit";
+import bookkeepingRouter from "./routes/admin/bookkeeping";
 
 import { requireAuth } from "./middleware/requireAuth";
+import { accessGuard } from "./middleware/access";
 import { connectDB } from "./db";
 import { expireStalePendingOrders } from "./services/orderService";
 import { startDailySummary } from "./services/summaryService";
@@ -93,6 +97,9 @@ export function createServer() {
   // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.
   app.use("/api/gifts", publicGiftsRouter);
 
+  // Staff roles: every /api/admin request is checked against the person's role (see server/permissions.ts)
+  app.use("/api/admin", requireAuth, accessGuard);
+
   // Admin API routes (Protected by authentication)
   app.use("/api/admin/gifts", requireAuth, giftRoutes);
   app.use("/api/admin/orders", requireAuth, adminOrdersRouter);
@@ -112,6 +119,9 @@ export function createServer() {
   app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
   app.use("/api/admin/stock", requireAuth, adminStockRouter);
   app.use("/api/admin/summary", requireAuth, adminSummaryRouter);
+  app.use("/api/admin/staff", requireAuth, staffRouter);
+  app.use("/api/admin/audit", requireAuth, auditRouter);
+  app.use("/api/admin/bookkeeping", requireAuth, bookkeepingRouter);
 
   return app;
 }

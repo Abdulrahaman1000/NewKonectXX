@@ -1,32 +1,24 @@
 /**
- * AdminProtectedRoute — wraps admin pages.
+ * AdminProtectedRoute  (SC-STAFF version)
+ *  - checking login: spinner
+ *  - not logged in: go to /admin/login
+ *  - logged in but this role may not use the page: back to /admin
+ *  - otherwise: show the page
  *
- * Behavior:
- *  - While checking auth (initial mount): show a spinner
- *  - If not logged in: redirect to /admin/login, remembering the intended page
- *  - If logged in: render the children
- *
- * Usage in App.tsx:
- *   <Route
- *     path="/admin"
- *     element={
- *       <AdminProtectedRoute>
- *         <AdminDashboard />
- *       </AdminProtectedRoute>
- *     }
- *   />
+ * <AdminProtectedRoute perm="stock.use"> ... </AdminProtectedRoute>
+ * No perm = any signed-in person. perm="owner" = owner only.
  */
-
 import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   children: ReactNode;
+  perm?: string;
 }
 
-export function AdminProtectedRoute({ children }: Props) {
-  const { user, isLoading } = useAuth();
+export function AdminProtectedRoute({ children, perm }: Props) {
+  const { user, isLoading, can } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -38,13 +30,11 @@ export function AdminProtectedRoute({ children }: Props) {
   }
 
   if (!user) {
-    return (
-      <Navigate
-        to="/admin/login"
-        replace
-        state={{ from: location.pathname }}
-      />
-    );
+    return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (perm && !can(perm)) {
+    return <Navigate to="/admin" replace />;
   }
 
   return <>{children}</>;

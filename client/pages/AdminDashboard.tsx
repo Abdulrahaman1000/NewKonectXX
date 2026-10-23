@@ -24,6 +24,8 @@ import {
   Banknote,
   TrendingUp,
   PlusCircle,
+  ShieldCheck,
+  ClipboardList,
 } from 'lucide-react';
 import { SEO } from '@/components/shared/SEO';
 import { useAuth } from '@/contexts/AuthContext';
@@ -32,35 +34,41 @@ import { getChatUnreadCount } from '@/api/adminChats';
 import { getResellerCounts } from '@/api/adminResellers';
 import { listWithdrawals } from '@/api/adminWithdrawals';
 import { formatNaira } from '@/lib/format';
+import { permForPath } from '@/lib/adminAccess';
 
 export default function AdminDashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
 
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: getDashboardStats,
+    enabled: can('orders.view'),
     refetchInterval: 30000,
   });
 
   const { data: unreadChats = 0 } = useQuery({
     queryKey: ['admin-chat-unread'],
     queryFn: getChatUnreadCount,
+    enabled: can('chats.use'),
     refetchInterval: 15000,
   });
 
   const { data: payoutCounts } = useQuery({
     queryKey: ['admin-withdrawal-counts'],
     queryFn: () => listWithdrawals('requested').then((r) => r.counts),
+    enabled: can('owner'),
     refetchInterval: 30000,
   });
   const { data: stockAlerts = 0 } = useQuery({
     queryKey: ['admin-stock-alerts'],
     queryFn: getStockAlertCount,
+    enabled: can('stock.use'),
     refetchInterval: 60000,
   });
   const { data: resellerCounts } = useQuery({
     queryKey: ['admin-reseller-counts'],
     queryFn: getResellerCounts,
+    enabled: can('owner'),
     refetchInterval: 30000,
   });
 
@@ -97,7 +105,7 @@ export default function AdminDashboard() {
         <div className="container-premium">
           <div className="mb-8">
             <p className="text-xs uppercase tracking-[0.28em] text-primary/70 font-bold mb-2">
-              {user?.role === 'superadmin' ? 'Super Admin' : 'Admin'}
+              {user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'staff' ? 'Staff' : 'Admin'}
             </p>
             <h1 className="text-2xl md:text-3xl font-black text-white mb-1">
               Welcome back, {user?.name?.split(' ')[0] ?? 'there'} 👋
@@ -105,7 +113,7 @@ export default function AdminDashboard() {
             <p className="text-white/45 text-sm">Here's what's happening with your store today.</p>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+          <div className={can('orders.view') ? 'grid grid-cols-2 md:grid-cols-4 gap-4 mb-10' : 'hidden'}>
             <StatCard label="Orders today" value={(stats?.ordersToday ?? 0).toString()} />
             <StatCard label="Revenue today" value={formatNaira(stats?.revenueToday ?? 0)} />
             <StatCard label="Pending orders" value={(stats?.pendingOrders ?? 0).toString()} />
@@ -131,6 +139,10 @@ export default function AdminDashboard() {
             <TileLink to="/admin/settings" Icon={Settings} label="Site Settings" desc="Phone, bank account, promo, video" />
             <TileLink to="/admin/faqs" Icon={HelpCircle} label="FAQs" desc="Frequently asked questions" />
             <TileLink to="/admin/testimonials" Icon={MessageSquareQuote} label="Testimonials" desc="Customer reviews shown on homepage" />
+            <TileLink to="/admin/expenses" Icon={Banknote} label="Expenses" desc="Record ads, packaging and transport costs; download as CSV" />
+            <TileLink to="/admin/reports" Icon={ClipboardList} label="Sales report" desc="Orders and totals by date, payment method and source; CSV export" />
+            <TileLink to="/admin/staff" Icon={ShieldCheck} label="Staff" desc="Create staff logins and choose what each person can use" />
+            <TileLink to="/admin/audit" Icon={ClipboardList} label="Activity log" desc="Who changed what, and when" />
             <TileLink to="#customers" Icon={Users} label="Customers" desc="Customer list and order history" disabled />
           </div>
 
@@ -167,6 +179,8 @@ function TileLink({
   badgeLabel?: string;
   highlight?: boolean;
 }) {
+  const { can } = useAuth();
+  if (!can(permForPath(to))) return null;
   const content = (
     <>
       <div className="flex items-center justify-between mb-3">

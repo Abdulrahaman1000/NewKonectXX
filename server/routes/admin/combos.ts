@@ -53,6 +53,24 @@ function ensureItemIds(items: any[]): any[] {
   }));
 }
 
+/** Staff never see or send cost prices, so on their edits keep the stored costs instead of resetting them to 0. */
+function keepCosts(newItems: any[], oldItems: any[]): any[] {
+  const oldById = new Map((oldItems ?? []).map((o: any) => [o.id, o]));
+  return newItems.map((it) => {
+    const old: any = oldById.get(it.id);
+    if (!old) return it;
+    const oldAlts = new Map((old.alternatives ?? []).map((a: any) => [a.id, a]));
+    return {
+      ...it,
+      costPrice: Math.max(0, Number(old.costPrice) || 0),
+      alternatives: (it.alternatives ?? []).map((a: any) => ({
+        ...a,
+        costPrice: Math.max(0, Number((oldAlts.get(a.id) as any)?.costPrice) || 0),
+      })),
+    };
+  });
+}
+
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const combos = await Combo.find({}).select(COST_SELECT).sort({ createdAt: -1 }).lean();
@@ -137,7 +155,14 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (body.customComboEligible !== undefined) update.customComboEligible = Boolean(body.customComboEligible);
     if (body.heroImage !== undefined) update.heroImage = body.heroImage;
     if (Array.isArray(body.categorySlugs)) update.categorySlugs = body.categorySlugs;
-    if (Array.isArray(body.items)) update.items = ensureItemIds(body.items);
+    if (Array.isArray(body.items)) {
+      update.items = ensureItemIds(body.items);
+      const perms: string[] = (req as any).user?.permissions || [];
+      if (!perms.includes("*")) {
+        const old: any = await Combo.findById(req.params.id).select(COST_SELECT).lean();
+        update.items = keepCosts(update.items, old?.items ?? []);
+      }
+    }
 
     if (body.slug !== undefined) {
       const newSlug = slugify(body.slug);

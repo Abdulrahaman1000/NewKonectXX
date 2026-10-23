@@ -1,11 +1,6 @@
 /**
- * Auth API — frontend client functions.
- *
- * login() — exchanges email + password for a token, stores token
- * fetchCurrentUser() — returns logged-in admin info, requires token
- * logout() — clears the local token
+ * Auth API — frontend client functions.  (SC-STAFF version)
  */
-
 import { apiFetch } from "./client";
 import { setToken, clearToken } from "@/lib/auth";
 
@@ -18,6 +13,9 @@ export interface AdminUser {
   email: string;
   name: string;
   role: "superadmin" | "admin" | "staff";
+  staffRole?: "packer" | "sales" | "content" | "bookkeeper" | "manager";
+  /** ["*"] for the owner, otherwise the list for their role */
+  permissions: string[];
   lastLoginAt?: string;
 }
 
@@ -26,10 +24,7 @@ interface LoginResponse {
   user: AdminUser;
 }
 
-export async function login(
-  email: string,
-  password: string,
-): Promise<AdminUser> {
+export async function login(email: string, password: string): Promise<AdminUser> {
   const res = await apiFetch<ApiResponse<LoginResponse>>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),

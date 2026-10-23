@@ -59,7 +59,7 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
 
 export default function AdminOrderDetail() {
   const { id } = useParams<{ id: string }>();
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -73,7 +73,7 @@ export default function AdminOrderDetail() {
   const { data: commissions } = useQuery({
     queryKey: ['admin-commissions-by-orders', id, order?.status],
     queryFn: () => getCommissionsByOrders([id!]),
-    enabled: !!id && !!order,
+    enabled: !!id && !!order && can('owner'),
   });
   const commission = id ? commissions?.[id] : undefined;
 
@@ -241,7 +241,7 @@ export default function AdminOrderDetail() {
             <select
               value={order.status}
               onChange={(e) => statusMutation.mutate(e.target.value as OrderStatus)}
-              disabled={statusMutation.isPending}
+              disabled={statusMutation.isPending || !can('owner')}
               className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white"
             >
               {STATUS_OPTIONS.map((s) => (
@@ -249,7 +249,7 @@ export default function AdminOrderDetail() {
               ))}
             </select>
             <p className="text-[10px] text-white/30 mt-2">
-              Changes save immediately.
+              {can('owner') ? 'Changes save immediately.' : 'Only the owner can change the status.'}
             </p>
           </Card>
 
@@ -367,7 +367,8 @@ function paymentLabel(method: string): string {
 
 /** Cost of goods and profit on the items for this order. Admin only. */
 function OrderProfitCard({ orderId, subtotal }: { orderId: string; subtotal: number }) {
-  const { data } = useQuery({ queryKey: ['admin-order-cost', orderId], queryFn: () => getOrderCost(orderId) });
+  const { can } = useAuth();
+  const { data } = useQuery({ queryKey: ['admin-order-cost', orderId], queryFn: () => getOrderCost(orderId), enabled: can('owner') });
   if (!data) return null;
   const profit = subtotal - data.totalCost;
   return (
