@@ -175,11 +175,11 @@ function ComboCard({ combo, whatsappLink }: { combo: Combo; whatsappLink: string
           <button
             type="button"
             onClick={handleAddToCart}
-            disabled={combo.stockLeft === 0}
+            disabled={combo.stockLeft === 0 && !(combo as any).preorder}
             className="btn-primary flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ShoppingBag className="w-4 h-4" />
-            {combo.stockLeft === 0 ? 'Out of stock' : `Add to cart — ${formatNaira(combo.totalPrice)}`}
+            {combo.stockLeft === 0 ? ((combo as any).preorder ? 'Pre-order now' : 'Out of stock') : `Add to cart — ${formatNaira(combo.totalPrice)}`}
           </button>
           <Link
             to={`/combos/${combo.slug}`}

@@ -18,6 +18,8 @@ import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
 import { SiteSettings } from "../models/SiteSettings";
 import { nextSeq } from "../models/Counter";
 import { recordOrderCost } from "./costService";
+import { BULK_DELIVERY_FEE, BULK_MAX_QTY, maxQtyFor, orderHasBulk, unitPriceFor } from "./bulkPricing";
+import { planQty, isMixed, buildShipments, stepShipments, openGotIt, anyPartSent, type Step } from "./splitOrder";
 import { config } from "../config";
 import { verifyTransaction, PaystackError } from "./paystackService";
 import {
@@ -40,6 +42,10 @@ export interface CreateOrderInput {
   shipping: ShippingAddress;
   paymentMethod: PaymentMethod;
   notes?: string;
+  /** the customer ticked "I understand some items are pre-order" */
+  ackPreorder?: boolean;
+  /** "now": send the ready pieces first (Ilorin only). Anything else: send everything together. */
+  partialChoice?: "now" | "together";
 }
 
 export class OrderError extends Error {
@@ -116,7 +122,7 @@ async function buildItemSnapshots(
 
       const combo = await Combo.findById(cartItem.comboId);
       if (combo && combo.isActive) {
-        paidSubtotal += combo.totalPrice * cartItem.quantity;
+        paidSubtotal += unitPriceFor(combo, cartItem.quantity) * cartItem.quantity;
       }
     }
   }
@@ -139,8 +145,8 @@ async function buildItemSnapshots(
     if (!cartItem.comboId) {
       throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
     }
-    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > 20) {
-      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number from 1 to 20");
+    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > BULK_MAX_QTY) {
+      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number of 1 or more");
     }
 
     // Free gifts normally come from the Gift Bank
@@ -174,7 +180,16 @@ async function buildItemSnapshots(
     if (!combo.isActive) {
       throw new OrderError(400, "COMBO_INACTIVE", `${combo.name} is no longer available`);
     }
-    if (combo.stockLeft < cartItem.quantity) {
+    if (cartItem.quantity > maxQtyFor(combo)) {
+      throw new OrderError(
+        400,
+        "INVALID_ITEM",
+        `You can order up to ${maxQtyFor(combo)} of ${combo.name} at a time`,
+      );
+    }
+    // Pre-order switch on: pieces in stock come from stock, the rest are bought after payment.
+    const plan = planQty(combo.stockLeft, cartItem.quantity, Boolean((combo as any).preorder));
+    if (!plan) {
       throw new OrderError(
         409,
         "INSUFFICIENT_STOCK",
@@ -193,25 +208,35 @@ async function buildItemSnapshots(
       );
     }
 
-    const unitPrice = isFree ? 0 : combo.totalPrice;
-    const subtotal = unitPrice * cartItem.quantity;
+    // The price level follows the TOTAL quantity, even when the line is split in two below.
+    const unitPrice = isFree ? 0 : unitPriceFor(combo, cartItem.quantity);
 
     const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
     const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
-
-    snapshots.push({
+    const base = {
       comboId: combo._id,
       slug: combo.slug,
       name: isFree ? `[FREE GIFT] ${combo.name}` : combo.name,
       tagline: combo.tagline,
       thumbnailUrl,
       unitPrice,
-      quantity: isFree ? 1 : cartItem.quantity,
-      subtotal,
       selectedVariants: cartItem.selectedVariants ?? {},
       variantSummary,
       isFreeGift: isFree,
-    });
+    };
+    const lead = {
+      preorder: true,
+      leadDaysMin: Number((combo as any).leadDaysMin) || 5,
+      leadDaysMax: Number((combo as any).leadDaysMax) || 10,
+    };
+
+    if (isFree) {
+      snapshots.push({ ...base, quantity: 1, subtotal: 0, ...(plan.ready === 0 ? lead : {}) });
+    } else {
+      // Ready pieces and pieces we still have to get become two lines of the same product.
+      if (plan.ready > 0) snapshots.push({ ...base, quantity: plan.ready, subtotal: unitPrice * plan.ready });
+      if (plan.waiting > 0) snapshots.push({ ...base, quantity: plan.waiting, subtotal: unitPrice * plan.waiting, ...lead });
+    }
   }
 
   return snapshots;
@@ -219,6 +244,8 @@ async function buildItemSnapshots(
 
 /** Takes one item's stock. Says where it came from, or throws if sold out. */
 async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "combo"> {
+  // Pre-order line: there is no stock to take
+  if (item.preorder) return "combo";
   // Gift Bank gifts have their own stock
   if (item.isFreeGift) {
     const gift = await Gift.findOneAndUpdate(
@@ -238,6 +265,8 @@ async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "comb
 }
 
 async function giveStockBackForItem(item: OrderItemSnapshot, kind?: "gift" | "combo"): Promise<void> {
+  // Pre-order line: nothing was taken, so nothing goes back
+  if (item.preorder) return;
   if (kind === "combo") {
     await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
     return;
@@ -305,13 +334,39 @@ export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOp
   const items = await buildItemSnapshots(input.items, priorSpend);
 
   const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
-  const shippingFee = manual?.pickup
+  // Bulk orders: one flat Ilorin delivery fee for the whole order, and they must be paid online.
+  const bulk = await orderHasBulk(input.items);
+  if (bulk && !manual && input.paymentMethod !== "paystack") {
+    throw new OrderError(400, "BULK_PAY_ONLINE", "Bulk orders must be paid online. Please choose Pay online.");
+  }
+  const baseFee = manual?.pickup
     ? 0
     : await calculateShippingFee(
         input.paymentMethod,
         input.shipping.city,
       );
+  const shippingFee = bulk && baseFee > 0 ? BULK_DELIVERY_FEE : baseFee;
+
+  // Pre-order items: the customer must tick the box and pay online (you buy the goods after payment).
+  const hasPre = items.some((i) => i.preorder);
+  if (hasPre && !manual) {
+    if (!input.ackPreorder) {
+      throw new OrderError(400, "PREORDER_ACK", "Please tick the box to say you understand some items are pre-order.");
+    }
+    if (input.paymentMethod !== "paystack") {
+      throw new OrderError(400, "PREORDER_PAY_ONLINE", "Pre-order items must be paid online. Please choose Pay online.");
+    }
+  }
   const total = subtotal + shippingFee;
+
+  // Some pieces ready and some to get: in Ilorin the customer may choose to have the ready pieces sent first.
+  // Everywhere else (Jumia) and for hand-recorded sales, everything is sent together.
+  const mixed = isMixed(items);
+  const partialChoice: "now" | "together" | "" = !mixed
+    ? ""
+    : !manual && input.partialChoice === "now" && baseFee > 0
+      ? "now"
+      : "together";
 
   const orderNumber = await generateOrderNumber();
 
@@ -333,6 +388,11 @@ export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOp
       subtotal,
       shippingFee,
       total,
+      isBulk: bulk,
+      hasPreorder: hasPre,
+      awaitingGoods: hasPre,
+      partialChoice,
+      ...(partialChoice === "now" ? { shipments: buildShipments(items) } : {}),
       status: initialStatus,
       paymentMethod: input.paymentMethod,
       shipping: input.shipping,
@@ -365,6 +425,114 @@ export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOp
   }
 
   return order;
+}
+
+/**
+ * Checkout asks this before the customer pays: which pieces are ready, which must be fetched,
+ * and whether the customer can choose to have the ready pieces sent first. Changes nothing.
+ */
+export async function previewOrder(items: CartItem[], city: string) {
+  const lines: Array<{
+    comboId: string;
+    name: string;
+    ready: number;
+    waiting: number;
+    leadDaysMin: number;
+    leadDaysMax: number;
+    /** the customer asks for more than we have and the product is not a pre-order product */
+    short: boolean;
+    want: number;
+  }> = [];
+  let subtotal = 0;
+  for (const it of items) {
+    if (it.isFreeGift || !it.comboId) continue;
+    const q = Math.floor(Number(it.quantity));
+    if (!Number.isInteger(q) || q < 1 || q > BULK_MAX_QTY) continue;
+    const combo: any = await Combo.findById(it.comboId).lean().catch(() => null);
+    if (!combo || !combo.isActive) continue;
+    const plan = planQty(combo.stockLeft, q, Boolean(combo.preorder));
+    subtotal += unitPriceFor(combo, q) * q;
+    lines.push({
+      comboId: String(combo._id),
+      name: combo.name,
+      ready: plan ? plan.ready : Math.max(0, combo.stockLeft),
+      waiting: plan ? plan.waiting : 0,
+      leadDaysMin: Number(combo.leadDaysMin) || 5,
+      leadDaysMax: Number(combo.leadDaysMax) || 10,
+      short: !plan,
+      want: q,
+    });
+  }
+  const waitingLines = lines.filter((l) => l.waiting > 0);
+  const hasPre = waitingLines.length > 0;
+  const mixed = hasPre && lines.some((l) => l.ready > 0);
+  const local = city.trim() !== "" && (await calculateShippingFee("paystack", city)) > 0;
+  return {
+    lines,
+    hasPre,
+    mixed,
+    local,
+    subtotal,
+    leadDaysMin: hasPre ? Math.min(...waitingLines.map((l) => l.leadDaysMin)) : 0,
+    leadDaysMax: hasPre ? Math.max(...waitingLines.map((l) => l.leadDaysMax)) : 0,
+  };
+}
+
+/** The goods arrived (To get > Got it). A split order also opens its waiting part for packing. */
+export async function gotItOrder(id: any, waiting: Record<string, any>): Promise<any> {
+  const cur: any = await Order.findOne({ _id: id, ...waiting }).lean();
+  if (!cur) return null;
+  const set: Record<string, any> = { awaitingGoods: false };
+  if (cur.partialChoice === "now" && cur.shipments?.length) set.shipments = openGotIt(cur.shipments);
+  return Order.findOneAndUpdate({ _id: cur._id, ...waiting }, { $set: set }, { new: true }).lean();
+}
+
+/**
+ * Moves ONE part of a split order: pack, ship or deliver.
+ * The order stays "processing" until every part is delivered, then it becomes "delivered".
+ * Returns { error } when the step is not allowed.
+ */
+export async function stepPart(
+  orderNumber: string,
+  n: number,
+  step: Step,
+  opts: { trackingNumber?: string; trackingProviderUrl?: string } = {},
+): Promise<{ order?: any; error?: string }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cur: any = await Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() }).lean();
+    if (!cur) return { error: "Order not found" };
+    if (cur.partialChoice !== "now" || !cur.shipments?.length) return { error: "This order is not sent in parts." };
+    if (cur.status !== "paid" && cur.status !== "processing") {
+      return { error: `An order that is ${cur.status} cannot be changed here.` };
+    }
+    const now = new Date();
+    const r = stepShipments(cur.shipments, n, step, { ...opts, now });
+    if (r.error) return { error: r.error };
+
+    const set: Record<string, any> = { shipments: r.shipments, status: "processing" };
+    if (step === "ship" && !cur.shippedAt) set.shippedAt = now;
+    if (r.allDelivered) {
+      set.status = "delivered";
+      set.deliveredAt = now;
+    }
+    // Only write if nobody changed the order since we read it
+    const saved = await Order.findOneAndUpdate(
+      { _id: cur._id, updatedAt: cur.updatedAt },
+      { $set: set },
+      { new: true },
+    );
+    if (!saved) continue;
+
+    const ctx = buildEmailContext(saved);
+    const part = (r.shipments.find((s) => s.n === n) ?? { itemIdx: [] as number[] }) as { itemIdx: number[] };
+    const partItems = ctx.items.filter((_: any, i: number) => part.itemIdx.includes(i));
+    if (step === "ship") {
+      sendOrderShipped({ ...ctx, items: partItems, trackingNumber: opts.trackingNumber, trackingProviderUrl: opts.trackingProviderUrl }).catch(() => {});
+    }
+    if (r.allDelivered) sendOrderDelivered(ctx).catch(() => {});
+    return { order: saved };
+  }
+  return { error: "The order was changed at the same time. Please refresh and try again." };
 }
 
 export async function findByNumberAndPhone(orderNumber: string, phone: string) {
@@ -462,7 +630,7 @@ export async function cancelOrRefundOrder(
   const current = await Order.findOne({ orderNumber: number });
   if (!current) return null;
 
-  const wasShipped = current.status === "shipped" || current.status === "delivered";
+  const wasShipped = current.status === "shipped" || current.status === "delivered" || anyPartSent((current as any).shipments);
   const shouldRestock = newStatus === "cancelled" || !wasShipped;
   const noteLine = note ? `${current.adminNotes ? current.adminNotes + "\n" : ""}${note}` : undefined;
 

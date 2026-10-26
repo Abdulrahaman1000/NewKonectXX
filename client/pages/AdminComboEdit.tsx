@@ -33,6 +33,8 @@ import { fetchCategories } from '@/api/categories';
 import type { Combo } from '@/types/combo';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { BulkPricesEditor } from '@/components/BulkPricesEditor';
+import { PreorderEditor } from '@/components/PreorderEditor';
 
 interface AlternativeForm {
   id?: string;
@@ -71,6 +73,10 @@ interface FormState {
   badge: string;
   stockLeft: number;
   costPrice: number;
+  bulkTiers: Array<{ minQty: number; unitPrice: number }>;
+  preorder: boolean;
+  leadDaysMin: number;
+  leadDaysMax: number;
   isFeatured: boolean;
   isActive: boolean;
   customComboEligible: boolean;
@@ -88,7 +94,7 @@ const EMPTY_ITEM: ItemForm = {
 
 const EMPTY_FORM: FormState = {
   slug: '', name: '', tagline: '', totalPrice: 0, originalPrice: 0, badge: '',
-  stockLeft: 0, costPrice: 0, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
+  stockLeft: 0, costPrice: 0, bulkTiers: [], preorder: false, leadDaysMin: 5, leadDaysMax: 10, isFeatured: false, isActive: true, customComboEligible: false, heroImage: '',
   categorySlugs: [], items: [],
 };
 
@@ -106,6 +112,13 @@ function fromCombo(combo: Combo): FormState {
     badge: combo.badge ?? '',
     stockLeft: combo.stockLeft,
     costPrice: (combo as any).costPrice ?? 0,
+    bulkTiers: ((combo as any).bulkTiers ?? []).map((t: any) => ({
+      minQty: Number(t.minQty) || 0,
+      unitPrice: Number(t.unitPrice) || 0,
+    })),
+    preorder: Boolean((combo as any).preorder),
+    leadDaysMin: Number((combo as any).leadDaysMin) || 5,
+    leadDaysMax: Number((combo as any).leadDaysMax) || 10,
     isFeatured: combo.isFeatured,
     isActive: combo.isActive,
     customComboEligible: combo.customComboEligible ?? false,
@@ -328,6 +341,14 @@ export default function AdminComboEdit() {
     if (!form.slug.trim()) return 'Slug is required';
     if (form.totalPrice < 0) return 'Total price cannot be negative';
     if (form.originalPrice < 0) return 'Original price cannot be negative';
+    for (const [i, t] of form.bulkTiers.entries()) {
+      if (t.minQty < 2) return `Bulk price ${i + 1}: "From pieces" must be 2 or more`;
+      if (t.unitPrice <= 0) return `Bulk price ${i + 1}: enter a price each`;
+      if (i > 0 && t.minQty <= form.bulkTiers[i - 1].minQty) return 'Bulk prices must go up in quantity, row by row';
+    }
+    if (form.preorder && (form.leadDaysMin < 1 || form.leadDaysMax < form.leadDaysMin)) {
+      return 'Pre-order waiting time: start at 1 day, and the second number cannot be smaller than the first';
+    }
     if (form.items.length === 0) return 'Add at least one item';
     for (const [i, item] of form.items.entries()) {
       if (!isSingle && !item.name.trim()) return `Item ${i + 1}: name is required`;
@@ -350,6 +371,10 @@ export default function AdminComboEdit() {
     badge: form.badge.trim(),
     stockLeft: form.stockLeft,
     costPrice: form.costPrice || 0,
+    bulkTiers: form.bulkTiers.filter((t) => t.minQty >= 2 && t.unitPrice > 0),
+    preorder: form.preorder,
+    leadDaysMin: form.leadDaysMin,
+    leadDaysMax: form.leadDaysMax,
     isFeatured: form.isFeatured,
     isActive: form.isActive,
     customComboEligible: form.customComboEligible,
@@ -502,6 +527,27 @@ export default function AdminComboEdit() {
           </div>
           <CostSummary form={form} />
         </Section>
+
+        <BulkPricesEditor
+          tiers={form.bulkTiers}
+          onChange={(t) => update('bulkTiers', t)}
+          sellingPrice={form.totalPrice}
+          cost={
+            form.costPrice > 0
+              ? form.costPrice
+              : form.items.reduce(
+                  (s, it) => s + Math.max(it.costPrice || 0, ...it.alternatives.map((a) => a.costPrice || it.costPrice || 0)),
+                  0,
+                )
+          }
+        />
+
+        <PreorderEditor
+          preorder={form.preorder}
+          min={form.leadDaysMin}
+          max={form.leadDaysMax}
+          onChange={(p) => setForm((f) => ({ ...f, ...p }))}
+        />
 
         <Section title="Visibility">
           <div className="space-y-2">

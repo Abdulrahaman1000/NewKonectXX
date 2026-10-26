@@ -53,6 +53,7 @@ import AdminWithdrawals from './pages/AdminWithdrawals';
 import AdminPartnerSales from './pages/AdminPartnerSales';
 import AdminProfit from './pages/AdminProfit';
 import AdminFulfilment from './pages/AdminFulfilment';
+import AdminToGet from './pages/AdminToGet';
 import AdminStock from './pages/AdminStock';
 import AdminToday from './pages/AdminToday';
 import AdminRecordSale from './pages/AdminRecordSale';
@@ -128,6 +129,7 @@ const App = () => (
                   <Route path="/admin/today" element={<AdminProtectedRoute perm="owner"><AdminToday /></AdminProtectedRoute>} />
                   <Route path="/admin/stock" element={<AdminProtectedRoute perm="stock.use"><AdminStock /></AdminProtectedRoute>} />
                   <Route path="/admin/fulfilment" element={<AdminProtectedRoute perm="fulfilment.use"><AdminFulfilment /></AdminProtectedRoute>} />
+                  <Route path="/admin/to-get" element={<AdminProtectedRoute><AdminToGet /></AdminProtectedRoute>} />
                   <Route path="/admin/ads" element={<AdminProtectedRoute perm="ads.use"><AdminAds /></AdminProtectedRoute>} />
 
                   <Route path="/admin/expenses" element={<AdminProtectedRoute perm="expenses.use"><AdminExpenses /></AdminProtectedRoute>} />

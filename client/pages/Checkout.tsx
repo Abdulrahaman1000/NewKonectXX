@@ -18,7 +18,11 @@ import { GiftPicker } from '@/components/shared/GiftPicker';
 import { GIFT_THRESHOLD, useCart } from '@/stores/cart';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatNaira } from '@/lib/format';
-import { createOrder } from '@/api/orders';
+import { BULK_DELIVERY_FEE, lineIsBulk } from '@/lib/bulk';
+import { cartPreorderWindow, lineIsPreorder } from '@/lib/preorder';
+import { PartialChoice, type PartialValue } from '@/components/PartialChoice';
+import { HelpLine } from '@/components/HelpLine';
+import { createOrder, previewOrder, type OrderPreview } from '@/api/orders';
 import { initializePaystack } from '@/api/payments';
 import { ApiError } from '@/api/client';
 import { fetchAvailableGifts, fetchGiftProgress, type BankGift } from '@/api/giftProgress';
@@ -53,6 +57,9 @@ export default function Checkout() {
 
   const [submitting, setSubmitting] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paystack');
+  const [ackPre, setAckPre] = useState(false);
+  const [partial, setPartial] = useState<PartialValue>('together');
+  const [preview, setPreview] = useState<OrderPreview | null>(null);
   const [form, setForm] = useState({
     fullName: '',
     phone: '',
@@ -87,6 +94,23 @@ export default function Checkout() {
     };
   }, [form.phone, setGiftCredit]);
 
+  // Ask the server which pieces are ready and which must be fetched (the cart only knows what it saw when the item was added).
+  useEffect(() => {
+    if (items.length === 0) {
+      setPreview(null);
+      return;
+    }
+    let off = false;
+    const t = setTimeout(async () => {
+      const p = await previewOrder(items, form.city);
+      if (!off) setPreview(p);
+    }, 400);
+    return () => {
+      off = true;
+      clearTimeout(t);
+    };
+  }, [items, form.city]);
+
   // Leaving checkout forgets the credit
   useEffect(() => () => setGiftCredit(0), [setGiftCredit]);
 
@@ -116,7 +140,24 @@ export default function Checkout() {
     form.city.trim() !== '' &&
     codCities.some((c) => form.city.toLowerCase().trim() === c);
 
-  const estimatedShipping = isCodEligible ? LOCAL_DELIVERY_FEE : 0;
+  // Bulk orders: one flat delivery fee for the whole order, and they must be paid online.
+  const hasBulk = items.some((i) => lineIsBulk(i));
+  const hasPre = items.some((i) => lineIsPreorder(i)) || Boolean(preview?.hasPre);
+  const cartWindow = cartPreorderWindow(items);
+  const preWindow = preview?.hasPre
+    ? { min: preview.leadDaysMin || cartWindow.min, max: preview.leadDaysMax || cartWindow.max }
+    : cartWindow;
+  // Asking for more than we have (and the product is not a pre-order product): tell the customer before they pay.
+  const shortLines = (preview?.lines ?? []).filter((l) => l.short);
+  const canChoosePart = Boolean(preview?.mixed);
+  const partialChoice: PartialValue = canChoosePart && preview?.local && isCodEligible ? partial : 'together';
+  // bulk and pre-order items are paid online only
+  const onlineOnly = hasBulk || hasPre;
+  const localFee = hasBulk ? BULK_DELIVERY_FEE : LOCAL_DELIVERY_FEE;
+  const estimatedShipping = isCodEligible ? localFee : 0;
+  useEffect(() => {
+    if (onlineOnly) setPaymentMethod('paystack');
+  }, [onlineOnly]);
   const deliveredByJumiaElsewhere = form.city.trim() !== '' && !isCodEligible;
 
   const computedSubtotal = subtotal();
@@ -152,6 +193,16 @@ export default function Checkout() {
       }
     }
 
+    if (shortLines.length > 0) {
+      toast.error(`Only ${shortLines[0].ready} of ${shortLines[0].name} left. Please lower the quantity in your cart.`);
+      return;
+    }
+
+    if (hasPre && !ackPre) {
+      toast.error('Please tick the box to say you understand some items are pre-order.');
+      return;
+    }
+
     if (giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
       toast.error('Please choose your free gift first');
       giftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -174,6 +225,8 @@ export default function Checkout() {
         },
         paymentMethod,
         notes: form.notes?.trim() || undefined,
+        ackPreorder: ackPre,
+        partialChoice,
       });
 
       // 2. If Paystack, get checkout URL and redirect
@@ -318,7 +371,7 @@ export default function Checkout() {
               </Section>
 
               {/* COD_BANNER_INSERTED */}
-              {isCodEligible && (
+              {isCodEligible && !onlineOnly && (
                 <div
                   className="rounded-2xl border border-emerald-500/40 p-4 md:p-5"
                   style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04))' }}
@@ -341,6 +394,42 @@ export default function Checkout() {
                 </div>
               )}
 
+              {shortLines.length > 0 && (
+                <div className="rounded-2xl border border-red-500/40 p-4 md:p-5" style={{ background: 'rgba(239,68,68,0.08)' }} data-testid="short-stock">
+                  <p className="text-sm md:text-base font-black text-red-300 mb-1">Not enough in stock</p>
+                  {shortLines.map((l) => (
+                    <p key={l.comboId} className="text-[13px] md:text-sm text-white/80 leading-relaxed">
+                      You asked for {l.want} of {l.name}. We have {l.ready} left. Please lower the quantity in your cart.
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {hasPre && (
+                <div className="rounded-2xl border border-primary/40 p-4 md:p-5" style={{ background: 'rgba(255,200,40,0.08)' }}>
+                  <p className="text-sm md:text-base font-black text-primary mb-1">Some items are pre-order</p>
+                  <p className="text-[13px] md:text-sm text-white/75 leading-relaxed mb-3">
+                    We get these items for you after you pay. They arrive in {preWindow.min} to {preWindow.max} business days after
+                    payment. If we cannot get them, you get your money back.
+                  </p>
+                  {canChoosePart && preview && (
+                    <div className="mb-3">
+                      <PartialChoice preview={preview} value={partialChoice} onChange={setPartial} />
+                    </div>
+                  )}
+                  <label className="flex items-start gap-3 cursor-pointer min-h-[44px]">
+                    <input
+                      type="checkbox"
+                      checked={ackPre}
+                      onChange={(e) => setAckPre(e.target.checked)}
+                      className="mt-0.5 w-5 h-5 accent-yellow-400"
+                    />
+                    <span className="text-sm font-bold text-white">I understand some items are pre-order.</span>
+                  </label>
+                  <HelpLine className="mt-3" topic="my pre-order" />
+                </div>
+              )}
+
               <Section title="Payment method">
                 <div className="space-y-2">
                   <PaymentOption
@@ -355,6 +444,7 @@ export default function Checkout() {
                     value="bank_transfer"
                     selected={paymentMethod}
                     onSelect={handlePaymentChange}
+                    disabled={onlineOnly}
                     title="Direct bank transfer"
                     description="Pay to our account, we confirm and ship."
                   />
@@ -364,16 +454,19 @@ export default function Checkout() {
                     onSelect={handlePaymentChange}
                     title="Cash on delivery"
                     description={
-                      isCodEligible
+                      onlineOnly
+                        ? 'Not available for bulk or pre-order items. Please pay online.'
+                        : isCodEligible
                         ? `Pay when delivered. Delivery in your area is ${formatNaira(LOCAL_DELIVERY_FEE)}.`
                         : `Only available in: ${codCities.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`
                     }
-                    disabled={!isCodEligible}
+                    disabled={!isCodEligible || onlineOnly}
                   />
                   <PaymentOption
                     value="whatsapp"
                     selected={paymentMethod}
                     onSelect={handlePaymentChange}
+                    disabled={onlineOnly}
                     title="Pay via WhatsApp"
                     description="We'll DM you with payment options."
                   />
@@ -395,7 +488,7 @@ export default function Checkout() {
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
-                      <p className="text-[10px] text-white/40">Qty {item.quantity}</p>
+                      <p className="text-[10px] text-white/40">Qty {item.quantity}{!item.isFreeGift && item.quantity > 1 ? ' at ' + formatNaira(item.unitPrice) + ' each' : ''}</p>
                       <p className="text-xs text-primary font-bold">
                         {item.isFreeGift ? 'FREE' : formatNaira(item.unitPrice * item.quantity)}
                       </p>
@@ -453,9 +546,14 @@ export default function Checkout() {
               <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
                 <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
                 <Row
-                  label={isCodEligible ? 'Delivery' : 'Delivery (Jumia)'}
+                  label={isCodEligible ? (hasBulk ? 'Bulk delivery' : 'Delivery') : 'Delivery (Jumia)'}
                   value={isCodEligible ? formatNaira(estimatedShipping) : deliveredByJumiaElsewhere ? 'Paid to Jumia' : 'Enter your city'}
                 />
+                {hasBulk && isCodEligible && (
+                  <p className="text-[11px] leading-relaxed text-white/45">
+                    Bulk delivery in Ilorin is {formatNaira(BULK_DELIVERY_FEE)} for your whole order. Bulk orders are paid online.
+                  </p>
+                )}
                 {deliveredByJumiaElsewhere && (
                   <p className="text-[11px] leading-relaxed text-white/45">
                     Your order is delivered by Jumia. Jumia sets the delivery fee and you pay it directly to Jumia, not to us.

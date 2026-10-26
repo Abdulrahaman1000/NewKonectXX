@@ -197,6 +197,16 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       });
     }
 
+    // An order sent in parts is shipped and delivered part by part, in Fulfilment.
+    if (status === "shipped" || status === "delivered") {
+      const sp: any = await Order.findById(req.params.id).select("partialChoice shipments").lean();
+      if (sp?.partialChoice === "now" && (sp.shipments?.length ?? 0) > 0) {
+        return res.status(409).json({
+          error: { code: "SENT_IN_PARTS", message: "This order is sent in parts. Ship and deliver each part in Fulfilment." },
+        });
+      }
+    }
+
     let updated: any = null;
 
     // A cancelled or refunded order is finished. Only cancelled -> refunded is allowed

@@ -14,6 +14,8 @@ import {
 } from '@/api/adminFulfilment';
 import { formatNaira } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
+import { ToGetPanel } from '@/components/ToGetPanel';
+import { getToGet } from '@/api/adminToGet';
 
 const ROUTE_LABEL: Record<FulfilRoute, string> = {
   local: 'Ilorin: we deliver',
@@ -47,7 +49,7 @@ function slipHtml(o: FulfilOrder) {
   return `<section class="slip">
   <div class="top"><div class="brand"><span class="logo">SC</span><div><b>Smart Combo</b><small>Packing slip</small></div></div>
     <div class="no"><small>Order</small><b>${esc(o.orderNumber)}</b></div></div>
-  <div class="bar"><span>${esc(how)}</span><span>${esc(date)}</span></div>
+  <div class="bar"><span>${esc(how)}${(o as any).part ? ' - ' + esc((o as any).part) : ''}</span><span>${esc(date)}</span></div>
   <div class="body">
     <div class="card"><small>Ship to</small><h2>${esc(o.shipping.fullName)}</h2><p class="ph">${esc(o.shipping.phone)}</p><p>${esc(addr)}</p></div>
     <table><thead><tr><th>Qty</th><th>Item</th><th>Packed</th></tr></thead><tbody>${rows}</tbody></table>
@@ -106,7 +108,11 @@ function age(iso?: string) {
 
 export default function AdminFulfilment() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'pack' | 'transit'>('pack');
+  type Tab = 'pack' | 'transit' | 'toget';
+  const [tab, setTab] = useState<Tab>(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'toget' ? 'toget' : 'pack',
+  );
+  const { data: toGetData } = useQuery({ queryKey: ['admin-to-get'], queryFn: getToGet });
   const { data, isLoading, error } = useQuery({ queryKey: ['admin-fulfilment'], queryFn: getFulfilment });
 
   const refresh = () => {
@@ -122,7 +128,7 @@ export default function AdminFulfilment() {
   });
   const delivered = useMutation({ mutationFn: markDelivered, onSuccess: () => { toast.success('Marked as delivered'); refresh(); }, onError: onErr });
 
-  const list = tab === 'pack' ? data?.toPack ?? [] : data?.inTransit ?? [];
+  const list = tab === 'pack' ? data?.toPack ?? [] : tab === 'transit' ? data?.inTransit ?? [] : [];
 
   return (
     <AdminFrame>
@@ -144,7 +150,7 @@ export default function AdminFulfilment() {
       </div>
 
       <div className="flex gap-2 mb-6">
-        {([['pack', `To pack (${data?.toPack.length ?? 0})`], ['transit', `On the way (${data?.inTransit.length ?? 0})`]] as const).map(([k, label]) => (
+        {([['pack', `To pack (${data?.toPack.length ?? 0})`], ['transit', `On the way (${data?.inTransit.length ?? 0})`], ['toget', `To get (${toGetData?.orders.length ?? 0})`]] as const).map(([k, label]) => (
           <button key={k} type="button" onClick={() => setTab(k)}
             className={`px-4 py-2 rounded-full text-xs font-bold border ${tab === k ? 'bg-primary text-black border-primary' : 'border-white/15 text-white/70 hover:bg-white/5'}`}>
             {label}
@@ -154,13 +160,15 @@ export default function AdminFulfilment() {
 
       {isLoading && <p className="text-sm text-white/45 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>}
       {error && <p className="text-sm text-red-300">Could not load the queue.</p>}
-      {!isLoading && !error && list.length === 0 && (
+      {!isLoading && !error && tab !== 'toget' && list.length === 0 && (
         <p className="text-sm text-white/45 py-10 text-center">{tab === 'pack' ? 'Nothing to pack. All caught up.' : 'Nothing is on the way right now.'}</p>
       )}
 
+      {tab === 'toget' && <ToGetPanel />}
+
       <div className="grid gap-4 md:grid-cols-2">
         {list.map((o) => (
-          <OrderCard key={o._id} o={o} tab={tab}
+          <OrderCard key={o._id} o={o} tab={tab as 'pack' | 'transit'}
             busy={packed.isPending || shipped.isPending || delivered.isPending}
             onPacked={() => packed.mutate(o._id)}
             onShip={(tn, tu) => shipped.mutate({ id: o._id, tn, tu })}
@@ -186,7 +194,8 @@ function OrderCard({ o, tab, busy, onPacked, onShip, onDelivered }: {
     <article className="rounded-2xl border border-white/10 p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <div>
-          {can('orders.view') ? <Link to={`/admin/orders/${o._id}`} className="text-sm font-black text-white hover:text-primary">{o.orderNumber}</Link> : <span className="text-sm font-black text-white">{o.orderNumber}</span>}
+          {can('orders.view') ? <Link to={`/admin/orders/${(o as any).orderId ?? o._id}`} className="text-sm font-black text-white hover:text-primary">{o.orderNumber}</Link> : <span className="text-sm font-black text-white">{o.orderNumber}</span>}
+          {(o as any).part && <p className="text-[11px] font-black text-primary">{(o as any).part}</p>}
           <p className="text-[11px] text-white/40">{age(tab === 'pack' ? o.paidAt || o.createdAt : o.shippedAt)} · {formatNaira(o.total)}{unpaidCod ? ' · collect on delivery' : ''}</p>
         </div>
         <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${ROUTE_STYLE[o.route]}`}>{ROUTE_LABEL[o.route]}</span>

@@ -24,13 +24,16 @@ import {
 } from 'lucide-react';
 import type { Combo } from '@/types/combo';
 import { calculateSavings, formatNaira } from '@/lib/format';
+import { BulkBox } from '@/components/BulkBox';
+import { PreorderNotice } from '@/components/PreorderNotice';
+import { preorderInfo } from '@/lib/preorder';
 
 interface Props {
   combo: Combo;
   whatsappLink: string;
   photos?: { url: string; label: string }[];
   description?: string;
-  onOrder?: () => void;
+  onOrder?: (qty?: number) => void;
   ctaLabel?: string;
   onOpenCart?: () => void;
   customizer?: ReactNode;
@@ -65,7 +68,8 @@ export function MobileComboDetail({
   }, [photoSig]);
 
   const { saving, percent } = calculateSavings(combo.originalPrice, combo.totalPrice);
-  const outOfStock = combo.stockLeft === 0;
+  const isPre = preorderInfo(combo).active;
+  const outOfStock = combo.stockLeft === 0 && !isPre;
   const lowStock = combo.stockLeft > 0 && combo.stockLeft <= 10;
   const stockPct = Math.min(100, (combo.stockLeft / STOCK_BAR_MAX) * 100);
 
@@ -203,6 +207,9 @@ export function MobileComboDetail({
         {/* Your variant / colour pickers */}
         {customizer && <div className="rounded-xl bg-white/[0.04] p-3.5">{customizer}</div>}
 
+        <PreorderNotice combo={combo} />
+        <BulkBox combo={combo} onAdd={(q) => (onOrder ? onOrder(q) : openWhatsApp())} />
+
         {/* Delivery & returns */}
         <div className="rounded-xl bg-white/[0.04] py-3.5 grid grid-cols-3 text-center text-xs text-white/75">
           {[
@@ -278,7 +285,7 @@ export function MobileComboDetail({
             className="btn-primary flex-1 h-12 flex items-center justify-center gap-2 font-bold text-sm disabled:opacity-50"
           >
             <ShoppingBag className="w-4 h-4" />
-            {outOfStock ? 'Out of stock' : ctaLabel}
+            {outOfStock ? 'Out of stock' : isPre ? 'Pre-order now' : ctaLabel}
           </button>
         </div>
       </div>

@@ -35,6 +35,7 @@ import {
 import { formatNaira } from '@/lib/format';
 import type { OrderStatus } from '@/types/order';
 import { SEO } from '@/components/shared/SEO';
+import { OrderTags, OrderPartsPanel } from '@/components/OrderTags';
 import { toast } from 'sonner';
 
 const STATUS_OPTIONS: OrderStatus[] = [
@@ -160,6 +161,9 @@ export default function AdminOrderDetail() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <span className="flex flex-wrap items-center gap-1">
+            <OrderTags order={order as any} />
+          </span>
           <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${STATUS_STYLES[order.status]}`}>
             {order.status.toUpperCase()}
           </span>
@@ -169,6 +173,7 @@ export default function AdminOrderDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
         {/* Left: Items + customer */}
         <div className="space-y-6">
+          <OrderPartsPanel order={order as any} />
           <Card title="Items">
             <div className="space-y-3">
               {order.items.map((item, idx) => (

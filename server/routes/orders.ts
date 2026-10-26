@@ -12,6 +12,7 @@ import { Router, Request, Response } from "express";
 import {
   createOrder,
   findByNumberAndPhone,
+  previewOrder,
   OrderError,
 } from "../services/orderService";
 import { attachReferral } from "../services/referralService";
@@ -78,6 +79,41 @@ router.get("/gift-progress", async (req: Request, res: Response) => {
   }
 });
 
+// Checkout asks what is ready and what is not, before the customer pays. Changes nothing.
+const previewHits = new Map<string, { count: number; resetAt: number }>();
+function previewLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = previewHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    previewHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 120;
+}
+
+router.post("/preview", async (req: Request, res: Response) => {
+  try {
+    if (previewLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({ error: { code: "RATE_LIMITED", message: "Too many requests. Try again in a minute." } });
+    }
+    const raw = req.body?.items;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 20) {
+      return res.status(400).json({ error: { code: "BAD_REQUEST", message: "Your cart is empty or has too many items" } });
+    }
+    const items = raw.map((it: any) => ({
+      comboId: String(it?.comboId ?? ""),
+      quantity: Number(it?.quantity),
+      isFreeGift: Boolean(it?.isFreeGift),
+    }));
+    const data = await previewOrder(items, String(req.body?.city ?? "").slice(0, 80));
+    return res.json({ data });
+  } catch (err) {
+    console.error("POST /api/orders/preview failed:", err);
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not check the order" } });
+  }
+});
+
 router.post("/", async (req: Request, res: Response) => {
   try {
     if (orderLimited(req.ip ?? "unknown")) {
@@ -128,7 +164,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    const order = await createOrder({ items, shipping, paymentMethod, notes });
+    const order = await createOrder({ items, shipping, paymentMethod, notes, ackPreorder: req.body.ackPreorder === true, partialChoice: req.body.partialChoice === "now" ? "now" : "together" });
     await attachReferral(order, req.body.ref);
 
     return res.status(201).json({ data: order });

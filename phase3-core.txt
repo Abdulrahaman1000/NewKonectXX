@@ -1,0 +1,3002 @@
+
+===== server\services\orderService.ts =====
+/**
+ * Order service â€” business logic for orders.
+ *
+ * NEW: buildItemSnapshots reads the customer's selectedVariants per cart
+ * item, looks up the alternative names from the combo, and saves a
+ * human-readable summary like "Casio Watch Â· Bluetooth Audio Glasses Â· Premium Bracelet"
+ * onto the order item. Admin sees exactly what to ship.
+ *
+ * UPDATED: Added Free Gift validation logic (â‚¦40,000 threshold check and 1 gift max).
+ * UPDATED: The threshold counts what the same phone number already spent in the
+ * last 30 days (see giftProgress.ts), and free gifts can come from the Gift Bank.
+ */
+
+import { Order, OrderItemSnapshot, ShippingAddress, PaymentMethod, OrderStatus } from "../models/Order";
+import { Combo } from "../models/Combo";
+import { Gift } from "../models/Gift";
+import { GIFT_THRESHOLD, getPriorSpend, normalizePhone } from "./giftProgress";
+import { SiteSettings } from "../models/SiteSettings";
+import { nextSeq } from "../models/Counter";
+import { recordOrderCost } from "./costService";
+import { BULK_DELIVERY_FEE, BULK_MAX_QTY, maxQtyFor, orderHasBulk, unitPriceFor } from "./bulkPricing";
+import { config } from "../config";
+import { verifyTransaction, PaystackError } from "./paystackService";
+import {
+  sendOrderPlaced,
+  sendPaymentConfirmed,
+  sendOrderShipped,
+  sendOrderDelivered,
+  sendNewOrderAdminAlert,
+} from "./emailService";
+
+interface CartItem {
+  comboId: string;
+  quantity: number;
+  selectedVariants?: Record<string, string>;
+  isFreeGift?: boolean;
+}
+
+export interface CreateOrderInput {
+  items: CartItem[];
+  shipping: ShippingAddress;
+  paymentMethod: PaymentMethod;
+  notes?: string;
+  /** the customer ticked "I understand some items are pre-order" */
+  ackPreorder?: boolean;
+}
+
+export class OrderError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function generateOrderNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const seq = await nextSeq(`order:${year}`);
+  return `SC-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/** Flat delivery fee for customers in Ilorin. Everywhere else Jumia sets the price and the customer pays Jumia directly. */
+export const LOCAL_DELIVERY_FEE = 1000;
+
+async function calculateShippingFee(
+  _paymentMethod: PaymentMethod,
+  city: string,
+): Promise<number> {
+  const settings = await SiteSettings.findOne().lean();
+  const localCities = (settings?.shipping?.codCities ?? ["ilorin"]).map((c: string) => c.toLowerCase());
+  const cityLower = city.trim().toLowerCase();
+  return localCities.includes(cityLower) ? LOCAL_DELIVERY_FEE : 0;
+}
+
+/**
+ * Builds a human-readable summary of what the customer picked for each slot.
+ * Example: "Casio Watch Â· Bluetooth Audio Glasses Â· Premium Bracelet"
+ */
+function buildVariantSummary(
+  combo: any,
+  selectedVariants: Record<string, string> | undefined,
+): string {
+  return (combo.items ?? [])
+    .map((item: any) => {
+      const chosenId = selectedVariants?.[item.id];
+      const alt = chosenId ? (item.alternatives ?? []).find((a: any) => a.id === chosenId) : undefined;
+      const name = alt ? alt.name : item.name; // default when nothing was chosen
+      // include the chosen color so you know exactly what to pack
+      const colorId = selectedVariants?.[`${item.id}__color`];
+      const color = colorId ? (item.colors ?? []).find((c: any) => c.id === colorId) : undefined;
+      return color ? `${name} (${color.name})` : name;
+    })
+    .join(" Â· ");
+}
+
+async function buildItemSnapshots(
+  items: CartItem[],
+  priorSpend = 0,
+): Promise<OrderItemSnapshot[]> {
+  if (!items?.length) {
+    throw new OrderError(400, "EMPTY_CART", "Order has no items");
+  }
+
+  // Pass 1: Calculate subtotal from paid items only
+  let paidSubtotal = 0;
+  const freeGiftItems = items.filter((it) => it.isFreeGift);
+
+  if (freeGiftItems.length > 1) {
+    throw new OrderError(400, "INVALID_GIFT", "Only 1 free gift is allowed per order");
+  }
+
+  for (const cartItem of items) {
+    if (!cartItem.isFreeGift) {
+      if (!cartItem.comboId) {
+        throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+      }
+
+      const combo = await Combo.findById(cartItem.comboId);
+      if (combo && combo.isActive) {
+        paidSubtotal += unitPriceFor(combo, cartItem.quantity) * cartItem.quantity;
+      }
+    }
+  }
+
+  // Validate threshold if a free gift is attached
+  // Earlier paid spending by the same phone number counts too.
+  const giftUnlocked = paidSubtotal + priorSpend >= GIFT_THRESHOLD;
+  if (freeGiftItems.length === 1 && !giftUnlocked) {
+    throw new OrderError(
+      400,
+      "GIFT_THRESHOLD_NOT_MET",
+      "Your spending (this order plus the last 30 days) must reach â‚¦40,000 to qualify for a free gift",
+    );
+  }
+
+  const snapshots: OrderItemSnapshot[] = [];
+
+  // Pass 2: Build snapshot objects
+  for (const cartItem of items) {
+    if (!cartItem.comboId) {
+      throw new OrderError(400, "INVALID_ITEM", "Item missing combo reference");
+    }
+    if (!Number.isInteger(cartItem.quantity) || cartItem.quantity < 1 || cartItem.quantity > BULK_MAX_QTY) {
+      throw new OrderError(400, "INVALID_ITEM", "Item quantity must be a whole number of 1 or more");
+    }
+
+    // Free gifts normally come from the Gift Bank
+    if (cartItem.isFreeGift) {
+      const gift: any = await Gift.findById(cartItem.comboId).catch(() => null);
+      if (gift) {
+        if (gift.isActive === false || (gift.stock ?? 0) < 1) {
+          throw new OrderError(409, "INSUFFICIENT_STOCK", `${gift.name} is no longer available`);
+        }
+        snapshots.push({
+          comboId: gift._id,
+          slug: `gift-${gift._id}`,
+          name: `[FREE GIFT] ${gift.name}`,
+          tagline: gift.description ?? "",
+          thumbnailUrl: gift.images?.[0] || gift.image || "",
+          unitPrice: 0,
+          quantity: 1,
+          subtotal: 0,
+          selectedVariants: {},
+          variantSummary: "",
+          isFreeGift: true,
+        });
+        continue;
+      }
+    }
+
+    const combo = await Combo.findById(cartItem.comboId);
+    if (!combo) {
+      throw new OrderError(404, "COMBO_NOT_FOUND", `Combo not found: ${cartItem.comboId}`);
+    }
+    if (!combo.isActive) {
+      throw new OrderError(400, "COMBO_INACTIVE", `${combo.name} is no longer available`);
+    }
+    if (cartItem.quantity > maxQtyFor(combo)) {
+      throw new OrderError(
+        400,
+        "INVALID_ITEM",
+        `You can order up to ${maxQtyFor(combo)} of ${combo.name} at a time`,
+      );
+    }
+    // Pre-order: the switch is on and there is no stock. Nothing is taken from stock; you buy it after payment.
+    const isPre = Boolean((combo as any).preorder) && combo.stockLeft === 0;
+    if (!isPre && combo.stockLeft < cartItem.quantity) {
+      throw new OrderError(
+        409,
+        "INSUFFICIENT_STOCK",
+        `Only ${combo.stockLeft} of ${combo.name} available`,
+      );
+    }
+
+    const isFree = Boolean(cartItem.isFreeGift && giftUnlocked);
+
+    // Ensure the combo itself is eligible to be a free gift candidate
+    if (isFree && !combo.isFreeGiftCandidate && combo.totalPrice > 5000) {
+      throw new OrderError(
+        400,
+        "INELIGIBLE_FREE_GIFT",
+        `${combo.name} is not eligible as a free gift`,
+      );
+    }
+
+    const unitPrice = isFree ? 0 : unitPriceFor(combo, cartItem.quantity);
+    const subtotal = unitPrice * cartItem.quantity;
+
+    const thumbnailUrl = combo.items?.[0]?.images?.[0]?.url ?? "";
+    const variantSummary = buildVariantSummary(combo, cartItem.selectedVariants);
+
+    snapshots.push({
+      comboId: combo._id,
+      slug: combo.slug,
+      name: isFree ? `[FREE GIFT] ${combo.name}` : combo.name,
+      tagline: combo.tagline,
+      thumbnailUrl,
+      unitPrice,
+      quantity: isFree ? 1 : cartItem.quantity,
+      subtotal,
+      selectedVariants: cartItem.selectedVariants ?? {},
+      variantSummary,
+      isFreeGift: isFree,
+      ...(isPre
+        ? {
+            preorder: true,
+            leadDaysMin: Number((combo as any).leadDaysMin) || 5,
+            leadDaysMax: Number((combo as any).leadDaysMax) || 10,
+          }
+        : {}),
+    });
+  }
+
+  return snapshots;
+}
+
+/** Takes one item's stock. Says where it came from, or throws if sold out. */
+async function takeStockForItem(item: OrderItemSnapshot): Promise<"gift" | "combo"> {
+  // Pre-order line: there is no stock to take
+  if (item.preorder) return "combo";
+  // Gift Bank gifts have their own stock
+  if (item.isFreeGift) {
+    const gift = await Gift.findOneAndUpdate(
+      { _id: item.comboId, stock: { $gte: 1 } },
+      { $inc: { stock: -1 } },
+    );
+    if (gift) return "gift";
+  }
+  const updated = await Combo.findOneAndUpdate(
+    { _id: item.comboId, stockLeft: { $gte: item.quantity } },
+    { $inc: { stockLeft: -item.quantity } },
+  );
+  if (!updated) {
+    throw new OrderError(409, "INSUFFICIENT_STOCK", `${item.name} sold out before checkout`);
+  }
+  return "combo";
+}
+
+async function giveStockBackForItem(item: OrderItemSnapshot, kind?: "gift" | "combo"): Promise<void> {
+  // Pre-order line: nothing was taken, so nothing goes back
+  if (item.preorder) return;
+  if (kind === "combo") {
+    await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+    return;
+  }
+  if (kind === "gift" || item.isFreeGift) {
+    const r = await Gift.updateOne({ _id: item.comboId }, { $inc: { stock: 1 } });
+    if (r.matchedCount > 0) return;
+  }
+  await Combo.updateOne({ _id: item.comboId }, { $inc: { stockLeft: item.quantity } });
+}
+
+/** All-or-nothing: if any item is sold out, everything already taken is put back. */
+async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
+  const taken: Array<{ item: OrderItemSnapshot; kind: "gift" | "combo" }> = [];
+  try {
+    for (const item of items) {
+      const kind = await takeStockForItem(item);
+      taken.push({ item, kind });
+    }
+  } catch (err) {
+    for (const t of taken) {
+      await giveStockBackForItem(t.item, t.kind).catch((e) =>
+        console.error("Stock rollback failed:", e),
+      );
+    }
+    throw err;
+  }
+}
+
+function buildEmailContext(order: any) {
+  return {
+    orderNumber: order.orderNumber,
+    customerName: order.shipping.fullName,
+    customerEmail: order.shipping.email,
+    total: order.total,
+    items: order.items.map((it: any) => ({
+      name: it.variantSummary || it.name,
+      quantity: it.quantity,
+      subtotal: it.subtotal,
+    })),
+    shippingAddress: {
+      fullName: order.shipping.fullName,
+      street: order.shipping.street,
+      city: order.shipping.city,
+      state: order.shipping.state,
+      phone: order.shipping.phone,
+    },
+    paymentMethod: order.paymentMethod,
+    trackingUrl: `${config.siteUrl}/order-tracking?order=${encodeURIComponent(order.orderNumber)}`,
+  };
+}
+
+/** Extra options when the owner records a sale by hand (WhatsApp, walk-in...). */
+export interface ManualSaleOptions {
+  source: "whatsapp" | "walkin" | "social" | "other";
+  /** payment already received */
+  paid: boolean;
+  /** customer collects the goods: no delivery fee */
+  pickup: boolean;
+}
+
+export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOptions) {
+  const phoneKey = normalizePhone(input.shipping.phone);
+  const priorSpend = await getPriorSpend(phoneKey);
+  const items = await buildItemSnapshots(input.items, priorSpend);
+
+  const subtotal = items.reduce((sum, it) => sum + it.subtotal, 0);
+  // Bulk orders: one flat Ilorin delivery fee for the whole order, and they must be paid online.
+  const bulk = await orderHasBulk(input.items);
+  if (bulk && !manual && input.paymentMethod !== "paystack") {
+    throw new OrderError(400, "BULK_PAY_ONLINE", "Bulk orders must be paid online. Please choose Pay online.");
+  }
+  const baseFee = manual?.pickup
+    ? 0
+    : await calculateShippingFee(
+        input.paymentMethod,
+        input.shipping.city,
+      );
+  const shippingFee = bulk && baseFee > 0 ? BULK_DELIVERY_FEE : baseFee;
+
+  // Pre-order items: the customer must tick the box and pay online (you buy the goods after payment).
+  const hasPre = items.some((i) => i.preorder);
+  if (hasPre && !manual) {
+    if (!input.ackPreorder) {
+      throw new OrderError(400, "PREORDER_ACK", "Please tick the box to say you understand some items are pre-order.");
+    }
+    if (input.paymentMethod !== "paystack") {
+      throw new OrderError(400, "PREORDER_PAY_ONLINE", "Pre-order items must be paid online. Please choose Pay online.");
+    }
+  }
+  const total = subtotal + shippingFee;
+
+  const orderNumber = await generateOrderNumber();
+
+  await decrementStock(items);
+
+  const initialStatus: OrderStatus = manual
+    ? manual.paid
+      ? "paid"
+      : "pending"
+    : input.paymentMethod === "cod"
+      ? "processing"
+      : "pending";
+
+  let order;
+  try {
+    order = await Order.create({
+      orderNumber,
+      items,
+      subtotal,
+      shippingFee,
+      total,
+      isBulk: bulk,
+      hasPreorder: hasPre,
+      awaitingGoods: hasPre,
+      status: initialStatus,
+      paymentMethod: input.paymentMethod,
+      shipping: input.shipping,
+      phoneKey,
+      notes: input.notes,
+      ...(manual
+        ? {
+            source: manual.source,
+            manual: true,
+            ...(manual.paid ? { paidAt: new Date(), paymentReference: `manual-${input.paymentMethod}` } : {}),
+          }
+        : {}),
+    });
+  } catch (err) {
+    // The order could not be saved: put the stock back so nothing is lost.
+    for (const item of items) {
+      await giveStockBackForItem(item).catch((e) => console.error("Stock rollback failed:", e));
+    }
+    throw err;
+  }
+
+  // Remember what these goods cost you right now, so profit stays correct if prices change later.
+  await recordOrderCost(order);
+
+  // A sale recorded by hand needs no "order placed" email: you are already talking to the customer.
+  if (!manual) {
+    const ctx = buildEmailContext(order);
+    sendOrderPlaced(ctx).catch(() => {});
+    sendNewOrderAdminAlert(ctx).catch(() => {});
+  }
+
+  return order;
+}
+
+export async function findByNumberAndPhone(orderNumber: string, phone: string) {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+    "shipping.phone": phone.trim(),
+  }).lean();
+  return order;
+}
+
+export async function findByOrderNumber(orderNumber: string) {
+  return Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() });
+}
+
+/**
+ * A Paystack payment only counts for an order when the reference was started for THAT order,
+ * the payment succeeded, and the amount paid equals the order total (in kobo).
+ * Without this check a customer could pay a small amount and have a big order marked paid.
+ */
+export function paymentMatchesOrder(
+  order: { orderNumber: string; total: number },
+  v: { status: string; amount: number; currency?: string },
+  reference: string,
+): boolean {
+  return (
+    v.status === "success" &&
+    v.amount === Math.round(order.total * 100) &&
+    (!v.currency || v.currency === "NGN") &&
+    reference.startsWith(`${order.orderNumber}-`)
+  );
+}
+
+export async function markOrderPaid(
+  orderNumber: string,
+  paymentReference: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+
+  // Atomic claim: only ONE caller (webhook, return-redirect or admin) can flip
+  // pending -> paid, so emails are never doubled.
+  const claimed = await Order.findOneAndUpdate(
+    { orderNumber: number, status: "pending" },
+    { $set: { status: "paid", paidAt: new Date(), paymentReference } },
+    { new: true },
+  );
+  if (claimed) {
+    sendPaymentConfirmed(buildEmailContext(claimed)).catch(() => {});
+    return claimed;
+  }
+
+  const order = await Order.findOne({ orderNumber: number });
+  if (!order) return null;
+
+  // Customer paid AFTER the order was auto-cancelled: take the stock again if it is still there.
+  if (order.status === "cancelled" && order.stockRestored) {
+    const revived = await Order.findOneAndUpdate(
+      { orderNumber: number, status: "cancelled", stockRestored: true },
+      { $set: { status: "paid", paidAt: new Date(), paymentReference, stockRestored: false } },
+      { new: true },
+    );
+    if (revived) {
+      try {
+        await decrementStock(revived.items as any);
+      } catch {
+        revived.stockRestored = true;
+        revived.adminNotes =
+          `${revived.adminNotes ? revived.adminNotes + "\n" : ""}LATE PAYMENT: customer paid after the order was cancelled and an item is now out of stock. Ship when restocked or refund on Paystack.`;
+        await revived.save();
+      }
+      sendPaymentConfirmed(buildEmailContext(revived)).catch(() => {});
+      return revived;
+    }
+  }
+
+  // Already paid / processing / shipped / delivered / refunded: nothing to redo
+  if (!order.paymentReference && order.status !== "cancelled") {
+    order.paymentReference = paymentReference;
+    await order.save();
+  }
+  return order;
+}
+
+/**
+ * Cancels or refunds an order and gives its stock back, exactly once.
+ *  - cancelled: always puts stock back (if not already).
+ *  - refunded : puts stock back only if the order had not shipped yet
+ *               (shipped/delivered refunds mean goods come back - adjust stock by hand after checking them).
+ */
+export async function cancelOrRefundOrder(
+  orderNumber: string,
+  newStatus: "cancelled" | "refunded",
+  note?: string,
+): Promise<any> {
+  const number = orderNumber.trim().toUpperCase();
+  const current = await Order.findOne({ orderNumber: number });
+  if (!current) return null;
+
+  const wasShipped = current.status === "shipped" || current.status === "delivered";
+  const shouldRestock = newStatus === "cancelled" || !wasShipped;
+  const noteLine = note ? `${current.adminNotes ? current.adminNotes + "\n" : ""}${note}` : undefined;
+
+  if (shouldRestock) {
+    const claimed = await Order.findOneAndUpdate(
+      { orderNumber: number, stockRestored: { $ne: true }, status: { $nin: ["cancelled", "refunded"] } },
+      { $set: { status: newStatus, stockRestored: true, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+      { new: true },
+    );
+    if (claimed) {
+      for (const item of claimed.items as any[]) {
+        await giveStockBackForItem(item).catch((e) => console.error("Restock failed:", e));
+      }
+      return claimed;
+    }
+  }
+
+  // Already cancelled/refunded (or no restock wanted): only the label changes
+  return Order.findOneAndUpdate(
+    { orderNumber: number },
+    { $set: { status: newStatus, ...(noteLine ? { adminNotes: noteLine } : {}) } },
+    { new: true },
+  );
+}
+
+/**
+ * Cancels Paystack orders that were never paid so abandoned checkouts do not
+ * lock stock. Before cancelling, it asks Paystack whether the customer actually paid.
+ */
+export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+  const stale = await Order.find({
+    status: "pending",
+    paymentMethod: { $in: ["paystack", "flutterwave"] },
+    createdAt: { $lt: cutoff },
+  })
+    .sort({ createdAt: 1 })
+    .limit(50);
+
+  let cancelled = 0;
+  for (const order of stale) {
+    try {
+      const refs: string[] = (order as any).paystackRefs ?? [];
+      let verdict: "paid" | "unpaid" | "unknown" = "unknown";
+      if (refs.length === 0) {
+        verdict = "unpaid"; // customer never reached the Paystack page
+      } else {
+        let paid = false;
+        let unsure = false;
+        for (const ref of refs) {
+          try {
+            const v = await verifyTransaction(ref);
+            if (paymentMatchesOrder(order, v, ref)) {
+              await markOrderPaid(order.orderNumber, ref);
+              paid = true;
+              break;
+            }
+            if (v.status === "success") {
+              console.error(`[expire] ${order.orderNumber}: paid amount ${v.amount} does not match total, left pending for review`);
+              unsure = true;
+            }
+          } catch (err) {
+            // 404 = Paystack has no such payment (never started); anything else = could not check, so do not cancel
+            if (!(err instanceof PaystackError && err.status === 404)) unsure = true;
+          }
+        }
+        verdict = paid ? "paid" : unsure ? "unknown" : "unpaid";
+      }
+
+      if (verdict === "unpaid") {
+        await cancelOrRefundOrder(
+          order.orderNumber,
+          "cancelled",
+          "Auto-cancelled: payment was not completed in time. Stock returned.",
+        );
+        cancelled++;
+      }
+    } catch (err) {
+      console.error(`[expire] ${order.orderNumber} failed:`, err);
+    }
+  }
+  return cancelled;
+}
+
+export async function markOrderShipped(
+  orderNumber: string,
+  trackingNumber?: string,
+  trackingProviderUrl?: string,
+): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "shipped";
+  order.shippedAt = new Date();
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (trackingProviderUrl) order.trackingProviderUrl = trackingProviderUrl;
+  await order.save();
+
+  const ctx = buildEmailContext(order);
+  sendOrderShipped({ ...ctx, trackingNumber, trackingProviderUrl }).catch(() => {});
+
+  return order;
+}
+
+export async function markOrderDelivered(orderNumber: string): Promise<any> {
+  const order = await Order.findOne({
+    orderNumber: orderNumber.trim().toUpperCase(),
+  });
+  if (!order) return null;
+
+  order.status = "delivered";
+  order.deliveredAt = new Date();
+  await order.save();
+
+  sendOrderDelivered(buildEmailContext(order)).catch(() => {});
+
+  return order;
+}
+===== server\models\Order.ts =====
+/**
+ * Order model.
+ *
+ * Items now snapshot the customer's variant selections so admin knows
+ * exactly what to ship.
+ *
+ * phoneKey is the customer's phone number cleaned to its last 10 digits. It is
+ * how spending is added up for the free gift (customers do not have accounts).
+ */
+
+import { Schema, model, Document, Types } from "mongoose";
+
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded";
+
+export type OrderSource = "website" | "whatsapp" | "walkin" | "social" | "other";
+
+export type PaymentMethod =
+  | "paystack"
+  | "flutterwave"
+  | "bank_transfer"
+  | "cod"
+  | "whatsapp"
+  | "cash"
+  | "pos";
+
+export interface OrderItemSnapshot {
+  comboId: Types.ObjectId;
+  slug: string;
+  name: string;
+  tagline?: string;
+  thumbnailUrl?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  selectedVariants?: Record<string, string>;   // itemId â†’ alternativeId
+  variantSummary?: string;                     // human-readable
+  isFreeGift?: boolean;                        // identifies free gift items
+  preorder?: boolean;                          // pre-order line: nothing was taken from stock
+  leadDaysMin?: number;
+  leadDaysMax?: number;
+}
+
+export interface ShippingAddress {
+  fullName: string;
+  phone: string;
+  email: string;
+  state: string;
+  city: string;
+  street: string;
+  landmark?: string;
+}
+
+export interface OrderDocument extends Document {
+  orderNumber: string;
+  items: OrderItemSnapshot[];
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  stockRestored?: boolean;
+  /** where the order came from; "website" for normal checkout */
+  source?: OrderSource;
+  /** true when the owner recorded it by hand (WhatsApp, walk-in...) */
+  manual?: boolean;
+  /** true when the order reaches a bulk price level (flat bulk delivery, paid online) */
+  isBulk?: boolean;
+  /** the order has pre-order items */
+  hasPreorder?: boolean;
+  /** paid pre-order whose goods you have not got yet: kept out of the packing queue */
+  awaitingGoods?: boolean;
+  paystackRefs?: string[];
+  shipping: ShippingAddress;
+  phoneKey?: string;
+  notes?: string;
+  trackingNumber?: string;
+  trackingProviderUrl?: string;
+  adminNotes?: string;
+  paidAt?: Date;
+  shippedAt?: Date;
+  deliveredAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
+  {
+    comboId: { type: Schema.Types.ObjectId, ref: "Combo", required: true },
+    slug: { type: String, required: true },
+    name: { type: String, required: true },
+    tagline: { type: String },
+    thumbnailUrl: { type: String },
+    unitPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+    subtotal: { type: Number, required: true, min: 0 },
+    selectedVariants: { type: Schema.Types.Mixed, default: {} },
+    variantSummary: { type: String, default: "" },
+    isFreeGift: { type: Boolean, default: false },
+    preorder: { type: Boolean, default: false },
+    leadDaysMin: { type: Number },
+    leadDaysMax: { type: Number },
+  },
+  { _id: false },
+);
+
+const ShippingAddressSchema = new Schema<ShippingAddress>(
+  {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    // optional: WhatsApp and walk-in customers often have no email
+    email: { type: String, default: "" },
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    street: { type: String, required: true },
+    landmark: { type: String },
+  },
+  { _id: false },
+);
+
+const OrderSchema = new Schema<OrderDocument>(
+  {
+    orderNumber: { type: String, required: true, unique: true, index: true },
+    items: { type: [OrderItemSnapshotSchema], required: true },
+    subtotal: { type: Number, required: true, min: 0 },
+    shippingFee: { type: Number, required: true, min: 0 },
+    total: { type: Number, required: true, min: 0 },
+    status: {
+      type: String,
+      enum: ["pending", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"],
+      default: "pending",
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp", "cash", "pos"],
+      required: true,
+    },
+    paymentReference: { type: String, index: true },
+    // true once this order's stock has been given back (cancel / refund / expiry)
+    stockRestored: { type: Boolean, default: false },
+    // every Paystack reference started for this order (a customer can retry), used to re-check unpaid orders
+    paystackRefs: { type: [String], default: [] },
+    shipping: { type: ShippingAddressSchema, required: true },
+    phoneKey: { type: String },
+    source: { type: String, enum: ["website", "whatsapp", "walkin", "social", "other"], default: "website", index: true },
+    manual: { type: Boolean, default: false },
+    isBulk: { type: Boolean, default: false },
+    hasPreorder: { type: Boolean, default: false },
+    awaitingGoods: { type: Boolean, default: false, index: true },
+    notes: { type: String },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    adminNotes: { type: String },
+    paidAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
+  },
+  { timestamps: true },
+);
+
+OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ "shipping.phone": 1, orderNumber: 1 });
+OrderSchema.index({ phoneKey: 1, createdAt: -1 });
+
+export const Order = model<OrderDocument>("Order", OrderSchema);
+
+===== server\models\Combo.ts =====
+/**
+ * Combo model.
+ *
+ * Each ComboItem can now have:
+ *  - alternatives[]  â€” different products for the slot (e.g. Smart Watch vs Casio)
+ *  - colors[]        â€” color variants of the item (e.g. Black, Silver, Gold)
+ *
+ * Both are at the combo's total price â€” no price difference.
+ */
+
+import mongoose, { Schema, Document } from "mongoose";
+
+export interface ProductImage {
+  url: string;
+  alt?: string;
+}
+
+export interface ComboItemAlternative {
+  id: string;
+  name: string;
+  badge?: string;
+  images: ProductImage[];
+  description?: string;
+  /** What you paid for this variant, if different from the slot cost. Admin only. */
+  costPrice?: number;
+}
+
+export interface ComboItemColor {
+  id: string;
+  name: string;            // e.g. "Black", "Silver Gold"
+  hexCode?: string;        // optional CSS hex like "#000000" â€” if set, shows a dot; if not, shows a label
+  imageUrl?: string;       // optional swatch image override
+}
+
+export interface ComboItem {
+  id: string;
+  name: string;
+  badge: string;
+  individualPrice: number;
+  images: ProductImage[];
+  description?: string;
+  /** What you paid for one unit. Admin only: hidden from every normal query. */
+  costPrice?: number;
+  alternatives?: ComboItemAlternative[];
+  colors?: ComboItemColor[];
+}
+
+/** "From minQty pieces, each one costs unitPrice" (a bulk price level). */
+export interface BulkTier {
+  minQty: number;
+  unitPrice: number;
+}
+
+export interface ComboDocument extends Document {
+  slug: string;
+  name: string;
+  tagline: string;
+  totalPrice: number;
+  /** combo-level cost: what you paid for one unit of this product/combo. Admin only. */
+  costPrice?: number;
+  originalPrice: number;
+  badge: string;
+  stockLeft: number;
+  /** Bulk price levels, smallest quantity first. Empty = no bulk prices. */
+  bulkTiers?: BulkTier[];
+  /** Pre-order: when on and there is no stock, customers can still order and pay; you buy it after payment. */
+  preorder?: boolean;
+  leadDaysMin?: number;
+  leadDaysMax?: number;
+  isFeatured: boolean;
+  isActive: boolean;
+  /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
+  customComboEligible: boolean;
+  /** Whether this item can explicitly be offered as a free gift in the gift bank */
+  isFreeGiftCandidate: boolean;
+  items: ComboItem[];
+  heroImage?: string;
+  categorySlugs: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ProductImageSchema = new Schema<ProductImage>(
+  {
+    url: { type: String, required: true },
+    alt: { type: String },
+  },
+  { _id: false },
+);
+
+const ComboItemAlternativeSchema = new Schema<ComboItemAlternative>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+    costPrice: { type: Number, default: 0, min: 0, select: false },
+  },
+  { _id: false },
+);
+
+const ComboItemColorSchema = new Schema<ComboItemColor>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    hexCode: { type: String, default: "" },
+    imageUrl: { type: String, default: "" },
+  },
+  { _id: false },
+);
+
+const ComboItemSchema = new Schema<ComboItem>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    badge: { type: String, default: "" },
+    individualPrice: { type: Number, required: true, min: 0 },
+    // select:false keeps cost prices out of every public query. Admin code asks for them explicitly.
+    costPrice: { type: Number, default: 0, min: 0, select: false },
+    images: { type: [ProductImageSchema], default: [] },
+    description: { type: String, default: "" },
+    alternatives: { type: [ComboItemAlternativeSchema], default: [] },
+    colors: { type: [ComboItemColorSchema], default: [] },
+  },
+  { _id: false },
+);
+
+const BulkTierSchema = new Schema<BulkTier>(
+  {
+    minQty: { type: Number, required: true, min: 2 },
+    unitPrice: { type: Number, required: true, min: 1 },
+  },
+  { _id: false },
+);
+
+const ComboSchema = new Schema<ComboDocument>(
+  {
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+    name: { type: String, required: true, trim: true },
+    tagline: { type: String, default: "", trim: true },
+    totalPrice: { type: Number, required: true, min: 0 },
+    // combo-level cost (hidden from every normal query, like the item costs)
+    costPrice: { type: Number, default: 0, min: 0, select: false },
+    originalPrice: { type: Number, required: true, min: 0 },
+    badge: { type: String, default: "" },
+    stockLeft: { type: Number, default: 0, min: 0 },
+    bulkTiers: { type: [BulkTierSchema], default: [] },
+    preorder: { type: Boolean, default: false },
+    leadDaysMin: { type: Number, default: 5, min: 1 },
+    leadDaysMax: { type: Number, default: 10, min: 1 },
+    isFeatured: { type: Boolean, default: false, index: true },
+    isActive: { type: Boolean, default: true, index: true },
+    customComboEligible: { type: Boolean, default: false, index: true },
+    isFreeGiftCandidate: { type: Boolean, default: false, index: true },
+    items: { type: [ComboItemSchema], default: [] },
+    heroImage: { type: String },
+    categorySlugs: {
+      type: [String],
+      default: [],
+      index: true,
+    },
+  },
+  { timestamps: true },
+);
+
+// Guard against Mongoose's "Cannot overwrite model once compiled" error,
+// which happens on every hot-reload without this check.
+export const Combo =
+  (mongoose.models.Combo as mongoose.Model<ComboDocument>) ||
+  mongoose.model<ComboDocument>("Combo", ComboSchema);
+===== server\routes\orders.ts =====
+/**
+ * Orders â€” public routes.
+ *
+ * POST /api/orders                â€” create a new order (customer checkout)
+ * GET  /api/orders/track          â€” look up an order by orderNumber + phone
+ * GET  /api/orders/gift-progress  â€” how much this phone number has spent toward the free gift
+ *
+ * Admin order management lives in routes/admin/orders.ts (Phase 5D).
+ */
+
+import { Router, Request, Response } from "express";
+import {
+  createOrder,
+  findByNumberAndPhone,
+  OrderError,
+} from "../services/orderService";
+import { attachReferral } from "../services/referralService";
+import {
+  GIFT_THRESHOLD,
+  GIFT_WINDOW_DAYS,
+  getPriorSpend,
+  normalizePhone,
+} from "../services/giftProgress";
+
+const router = Router();
+
+const ALLOWED_METHODS = ["paystack", "flutterwave", "bank_transfer", "cod", "whatsapp"];
+
+// Order creation limiter: 10 orders per minute per visitor, so nobody can drain stock by spamming.
+const orderHits = new Map<string, { count: number; resetAt: number }>();
+function orderLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = orderHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    orderHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 10;
+}
+
+// Small in-memory limiter for gift-progress: 30 lookups per minute per IP.
+const progressHits = new Map<string, { count: number; resetAt: number }>();
+function progressLimited(ip: string): boolean {
+  const now = Date.now();
+  const hit = progressHits.get(ip);
+  if (!hit || hit.resetAt < now) {
+    progressHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  hit.count += 1;
+  return hit.count > 30;
+}
+
+router.get("/gift-progress", async (req: Request, res: Response) => {
+  try {
+    if (progressLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many requests. Try again in a minute." },
+      });
+    }
+    const phoneKey = normalizePhone(req.query.phone);
+    const spent = await getPriorSpend(phoneKey);
+    // Only the total is returned, never order details.
+    return res.json({
+      data: {
+        spent,
+        threshold: GIFT_THRESHOLD,
+        remaining: Math.max(0, GIFT_THRESHOLD - spent),
+        windowDays: GIFT_WINDOW_DAYS,
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/orders/gift-progress failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Could not check gift progress" },
+    });
+  }
+});
+
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    if (orderLimited(req.ip ?? "unknown")) {
+      return res.status(429).json({
+        error: { code: "RATE_LIMITED", message: "Too many orders. Please wait a minute and try again." },
+      });
+    }
+
+    const { items, shipping, paymentMethod, notes } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0 || items.length > 20) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Your cart is empty or has too many items" },
+      });
+    }
+
+    // Basic input shape validation
+    if (!shipping || typeof shipping !== "object") {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Missing shipping details" },
+      });
+    }
+    const required: (keyof typeof shipping)[] = [
+      "fullName",
+      "email",
+      "phone",
+      "state",
+      "city",
+      "street",
+    ];
+    for (const field of required) {
+      if (!shipping[field] || typeof shipping[field] !== "string") {
+        return res.status(400).json({
+          error: { code: "BAD_REQUEST", message: `Missing field: ${field}` },
+        });
+      }
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shipping.email.trim()) || shipping.email.length > 200) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Please enter a valid email address" },
+      });
+    }
+
+    if (!paymentMethod || typeof paymentMethod !== "string" || !ALLOWED_METHODS.includes(paymentMethod)) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "Choose a valid payment method" },
+      });
+    }
+
+    const order = await createOrder({ items, shipping, paymentMethod, notes, ackPreorder: req.body.ackPreorder === true });
+    await attachReferral(order, req.body.ref);
+
+    return res.status(201).json({ data: order });
+  } catch (err: any) {
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({
+        error: { code: err.code, message: err.message },
+      });
+    }
+    console.error("POST /api/orders failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to create order" },
+    });
+  }
+});
+
+router.get("/track", async (req: Request, res: Response) => {
+  try {
+    const orderNumber = String(req.query.orderNumber ?? "").trim();
+    const phone = String(req.query.phone ?? "").trim();
+
+    if (!orderNumber || !phone) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: "orderNumber and phone are required",
+        },
+      });
+    }
+
+    const order = await findByNumberAndPhone(orderNumber, phone);
+    if (!order) {
+      return res.status(404).json({
+        error: {
+          code: "NOT_FOUND",
+          message: "No order matches those details",
+        },
+      });
+    }
+
+    // Strip sensitive internal fields before returning to public
+    const { adminNotes: _drop, ...publicOrder } = order;
+    return res.json({ data: publicOrder });
+  } catch (err) {
+    console.error("GET /api/orders/track failed:", err);
+    return res.status(500).json({
+      error: { code: "SERVER_ERROR", message: "Failed to track order" },
+    });
+  }
+});
+
+export default router;
+
+===== server\routes\admin\fulfilment.ts =====
+/**
+ * Fulfilment queue: what to pack, what is on its way.
+ *
+ * GET  /api/admin/fulfilment              orders to pack + orders in transit
+ * POST /api/admin/fulfilment/:id/packed   paid/COD order -> "processing" (packed, waiting for pickup/Jumia)
+ * POST /api/admin/fulfilment/:id/ship     { trackingNumber?, trackingProviderUrl? } -> shipped (+ customer email if they have one)
+ * POST /api/admin/fulfilment/:id/delivered -> delivered
+ */
+import { Router, Request, Response } from "express";
+import { Order } from "../../models/Order";
+import { markOrderShipped, markOrderDelivered } from "../../services/orderService";
+
+const router = Router();
+
+type Route = "pickup" | "local" | "jumia";
+function routeOf(o: any): Route {
+  const street = String(o.shipping?.street ?? "");
+  if (street.startsWith("Pickup")) return "pickup";
+  return String(o.shipping?.city ?? "").trim().toLowerCase() === "ilorin" ? "local" : "jumia";
+}
+
+// COD orders sit in "pending" until delivery, but still have to be packed.
+const TO_PACK_FILTER = {
+  // pre-order orders wait on the To get page until you press Got it
+  awaitingGoods: { $ne: true },
+  $or: [
+    { status: { $in: ["paid", "processing"] } },
+    { status: "pending", paymentMethod: "cod" },
+  ],
+};
+
+function shape(o: any) {
+  return {
+    _id: String(o._id),
+    orderNumber: o.orderNumber,
+    status: o.status,
+    paymentMethod: o.paymentMethod,
+    source: o.source ?? "website",
+    total: o.total,
+    shippingFee: o.shippingFee,
+    createdAt: o.createdAt,
+    paidAt: o.paidAt,
+    shippedAt: o.shippedAt,
+    trackingNumber: o.trackingNumber ?? "",
+    trackingProviderUrl: o.trackingProviderUrl ?? "",
+    notes: o.notes ?? "",
+    adminNotes: o.adminNotes ?? "",
+    route: routeOf(o),
+    shipping: o.shipping,
+    items: (o.items ?? []).map((it: any) => ({
+      name: it.name,
+      variantSummary: it.variantSummary ?? "",
+      quantity: it.quantity,
+      isFreeGift: !!it.isFreeGift,
+    })),
+  };
+}
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const [toPack, inTransit] = await Promise.all([
+      Order.find(TO_PACK_FILTER).sort({ createdAt: 1 }).limit(200).lean(),
+      Order.find({ status: "shipped" }).sort({ shippedAt: 1 }).limit(200).lean(),
+    ]);
+    res.json({ data: { toPack: toPack.map(shape), inTransit: inTransit.map(shape) } });
+  } catch (err) {
+    console.error("GET /api/admin/fulfilment failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to load the queue" } });
+  }
+});
+
+function bad(res: Response, status: number, message: string) {
+  return res.status(status).json({ error: { code: status === 404 ? "NOT_FOUND" : "BAD_REQUEST", message } });
+}
+
+router.post("/:id/packed", async (req: Request, res: Response) => {
+  try {
+    const o = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...TO_PACK_FILTER, status: { $in: ["paid", "pending"] } },
+      { status: "processing" },
+      { new: true },
+    ).lean();
+    if (!o) return bad(res, 409, "This order cannot be marked as packed (already packed, unpaid, or closed).");
+    res.json({ data: shape(o) });
+  } catch (err: any) {
+    if (err.name === "CastError") return bad(res, 404, "Order not found");
+    console.error("fulfilment packed failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to update order" } });
+  }
+});
+
+router.post("/:id/ship", async (req: Request, res: Response) => {
+  try {
+    const existing = await Order.findById(req.params.id).select("orderNumber status paymentMethod awaitingGoods").lean();
+    if (!existing) return bad(res, 404, "Order not found");
+    if ((existing as any).awaitingGoods) return bad(res, 409, "This order is waiting for goods. Press Got it on the To get page first.");
+    const ok =
+      existing.status === "paid" ||
+      existing.status === "processing" ||
+      (existing.status === "pending" && existing.paymentMethod === "cod");
+    if (!ok) return bad(res, 409, `An order that is ${existing.status} cannot be shipped.`);
+    const tn = typeof req.body?.trackingNumber === "string" ? req.body.trackingNumber.trim().slice(0, 80) : "";
+    const tu = typeof req.body?.trackingProviderUrl === "string" ? req.body.trackingProviderUrl.trim().slice(0, 300) : "";
+    if (tu && !/^https?:\/\//i.test(tu)) return bad(res, 400, "The tracking link must start with http:// or https://");
+    const updated = await markOrderShipped(existing.orderNumber, tn || undefined, tu || undefined);
+    if (!updated) return bad(res, 404, "Order not found");
+    res.json({ data: shape(updated.toObject ? updated.toObject() : updated) });
+  } catch (err: any) {
+    if (err.name === "CastError") return bad(res, 404, "Order not found");
+    console.error("fulfilment ship failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to mark as shipped" } });
+  }
+});
+
+router.post("/:id/delivered", async (req: Request, res: Response) => {
+  try {
+    const existing = await Order.findById(req.params.id).select("orderNumber status paymentMethod awaitingGoods").lean();
+    if (!existing) return bad(res, 404, "Order not found");
+    if ((existing as any).awaitingGoods) return bad(res, 409, "This order is waiting for goods. Press Got it on the To get page first.");
+    const ok =
+      ["shipped", "paid", "processing"].includes(existing.status) ||
+      (existing.status === "pending" && existing.paymentMethod === "cod");
+    if (!ok) return bad(res, 409, `An order that is ${existing.status} cannot be marked delivered.`);
+    const updated = await markOrderDelivered(existing.orderNumber);
+    if (!updated) return bad(res, 404, "Order not found");
+    res.json({ data: shape(updated.toObject ? updated.toObject() : updated) });
+  } catch (err: any) {
+    if (err.name === "CastError") return bad(res, 404, "Order not found");
+    console.error("fulfilment delivered failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to mark as delivered" } });
+  }
+});
+
+export default router;
+
+===== server\routes\admin\toget.ts =====
+/**
+ * "To get": pre-order orders that are paid but whose goods you still have to buy.
+ *
+ * GET  /api/admin/to-get              what to buy (totals per product) + the orders waiting
+ * POST /api/admin/to-get/:id/got-it   the goods arrived: the order moves to Fulfilment > To pack
+ *
+ * Until you press Got it, the order is kept out of the packing queue.
+ */
+import { Router, Request, Response } from "express";
+import { Order } from "../../models/Order";
+
+const router = Router();
+
+/** Adds business days (Monday to Friday) to a date. */
+function addBusinessDays(from: Date, days: number): Date {
+  const d = new Date(from);
+  let left = Math.max(0, Math.floor(days));
+  while (left > 0) {
+    d.setDate(d.getDate() + 1);
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) left--;
+  }
+  return d;
+}
+
+const WAITING = { awaitingGoods: true, status: { $in: ["paid", "processing"] } };
+
+router.get("/", async (_req: Request, res: Response) => {
+  try {
+    const orders = await Order.find(WAITING).sort({ paidAt: 1, createdAt: 1 }).limit(300).lean();
+    const totals = new Map<string, { name: string; quantity: number; orders: number }>();
+    const now = Date.now();
+    const shaped = orders.map((o: any) => {
+      const lines = (o.items ?? []).filter((i: any) => i.preorder);
+      const maxDays = Math.max(0, ...lines.map((i: any) => Number(i.leadDaysMax) || 0));
+      const paid = new Date(o.paidAt || o.createdAt);
+      const promisedBy = addBusinessDays(paid, maxDays);
+      for (const i of lines) {
+        const key = `${i.comboId}`;
+        const t = totals.get(key) ?? { name: i.name, quantity: 0, orders: 0 };
+        t.quantity += i.quantity;
+        t.orders += 1;
+        totals.set(key, t);
+      }
+      return {
+        _id: String(o._id),
+        orderNumber: o.orderNumber,
+        customer: o.shipping?.fullName ?? "",
+        phone: o.shipping?.phone ?? "",
+        paidAt: paid,
+        promisedBy,
+        late: promisedBy.getTime() < now,
+        items: lines.map((i: any) => ({
+          name: i.name,
+          variantSummary: i.variantSummary ?? "",
+          quantity: i.quantity,
+          leadDaysMin: Number(i.leadDaysMin) || 0,
+          leadDaysMax: Number(i.leadDaysMax) || 0,
+        })),
+      };
+    });
+    res.json({ data: { list: [...totals.values()].sort((a, b) => b.quantity - a.quantity), orders: shaped } });
+  } catch (err) {
+    console.error("GET /api/admin/to-get failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to load the list" } });
+  }
+});
+
+router.post("/:id/got-it", async (req: Request, res: Response) => {
+  try {
+    const o = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...WAITING },
+      { $set: { awaitingGoods: false } },
+      { new: true },
+    ).lean();
+    if (!o) {
+      return res.status(409).json({
+        error: { code: "BAD_REQUEST", message: "This order is not waiting for goods (already done, unpaid, or closed)." },
+      });
+    }
+    res.json({ data: { _id: String(o._id), orderNumber: o.orderNumber } });
+  } catch (err: any) {
+    if (err.name === "CastError") return res.status(404).json({ error: { code: "NOT_FOUND", message: "Order not found" } });
+    console.error("to-get got-it failed:", err);
+    res.status(500).json({ error: { code: "SERVER_ERROR", message: "Failed to update the order" } });
+  }
+});
+
+export default router;
+
+===== client\stores\cart.ts =====
+/**
+ * Cart store â€” Zustand.
+ *
+ * Existing behavior unchanged: addItem accepts an optional `selectedVariants`
+ * map and stores it with the cart item. Items with different variant
+ * selections are treated as the SAME combo (quantity adds up).
+ *
+ * Free Gift Bank support:
+ *  - Unlocks at â‚¦40,000 subtotal threshold.
+ *  - Gift comes from the Gift Bank (admin-managed, /api/gifts) â€” NOT from
+ *    Combo. selectFreeGift takes a generic FreeGiftSource so it isn't tied
+ *    to the Combo shape.
+ *  - Automatically drops selected free gift if subtotal falls below â‚¦40,000.
+ *  - giftCredit: money the same phone number already spent in the last 30 days.
+ *    Checkout sets it (it is never saved), and it counts toward the â‚¦40,000.
+ */
+
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import type { CartItem } from '@/types/order';
+import type { Combo } from '@/types/combo';
+import { priceForQty, repriceLine, tiersOf } from '@/lib/bulk';
+import { preorderFlags } from '@/lib/preorder';
+
+export interface CustomComboGroup {
+  id: string;
+  /** Flat â‚¦ amount off, applied once for this whole group â€” not per item. */
+  discount: number;
+  /** When the group was created, for display ordering / debugging. */
+  createdAt: number;
+}
+
+/** Minimal shape needed to add ANY free gift as a cart line item â€” decoupled
+ *  from Combo, so it works for Gift Bank items (from /api/gifts). */
+export interface FreeGiftSource {
+  id: string;
+  name: string;
+  slug?: string;
+  image: string;
+  /** Estimated/original value, shown struck-through â€” not charged. */
+  price?: number;
+}
+
+export const GIFT_THRESHOLD = 40000;
+
+interface CartStore {
+  items: CartItem[];
+  customComboGroups: CustomComboGroup[];
+  isOpen: boolean;
+  /** Earlier paid spending that counts toward the gift. Set by Checkout, not saved. */
+  giftCredit: number;
+  setGiftCredit: (amount: number) => void;
+
+  addItem: (
+    combo: Combo,
+    quantity?: number,
+    selectedVariants?: Record<string, string>,
+  ) => void;
+
+  /** Adds 2-3 products as a linked "Build Your Own Combo" group. */
+  addCustomCombo: (products: Combo[], discount: number) => void;
+
+  /** Free Gift Actions */
+  selectFreeGift: (gift: FreeGiftSource) => void;
+  removeFreeGift: () => void;
+  selectedFreeGift: () => CartItem | undefined;
+  qualifiesForFreeGift: () => boolean;
+
+  removeItem: (comboId: string, comboGroupId?: string) => void;
+  updateQuantity: (comboId: string, quantity: number, comboGroupId?: string) => void;
+  clear: () => void;
+
+  openCart: () => void;
+  closeCart: () => void;
+  toggleCart: () => void;
+
+  itemCount: () => number;
+  /** Sum of unitPrice * quantity across all items, before any custom-combo discount. */
+  itemsSubtotal: () => number;
+  /** Total of all active custom-combo group discounts. */
+  customComboDiscountTotal: () => number;
+  /** itemsSubtotal() minus customComboDiscountTotal() â€” what the customer actually pays for items. */
+  subtotal: () => number;
+  originalTotal: () => number;
+  savings: () => number;
+}
+
+function makeGroupId(): string {
+  return `combo-group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export const useCart = create<CartStore>()(
+  persist(
+    (set, get) => ({
+      items: [],
+      customComboGroups: [],
+      isOpen: false,
+      giftCredit: 0,
+
+      setGiftCredit: (amount) => {
+        const credit = Math.max(0, Math.floor(amount) || 0);
+        const stillQualifies = get().subtotal() + credit >= GIFT_THRESHOLD;
+        set({
+          giftCredit: credit,
+          items: stillQualifies ? get().items : get().items.filter((i) => !i.isFreeGift),
+        });
+      },
+
+      addItem: (combo, quantity = 1, selectedVariants) => {
+        const existing = get().items.find(
+          (i) => i.comboId === combo.id && !i.comboGroupId && !i.isFreeGift,
+        );
+        if (existing) {
+          set({
+            items: get().items.map((i) =>
+              i.comboId === combo.id && !i.comboGroupId && !i.isFreeGift
+                ? {
+                    ...i,
+                    quantity: i.quantity + quantity,
+                    unitPrice: priceForQty(combo.totalPrice, tiersOf(combo), i.quantity + quantity),
+                    ...({ bulkTiers: tiersOf(combo), basePrice: combo.totalPrice, ...preorderFlags(combo) } as object),
+                    selectedVariants: selectedVariants ?? i.selectedVariants,
+                  }
+                : i,
+            ),
+          });
+        } else {
+          set({
+            items: [
+              ...get().items,
+              {
+                comboId: combo.id,
+                comboName: combo.name,
+                comboSlug: combo.slug,
+                unitPrice: priceForQty(combo.totalPrice, tiersOf(combo), quantity),
+                originalPrice: combo.originalPrice,
+                quantity,
+                ...({ bulkTiers: tiersOf(combo), basePrice: combo.totalPrice, ...preorderFlags(combo) } as object),
+                image: combo.items[0]?.images[0]?.url ?? '',
+                selectedVariants,
+              },
+            ],
+          });
+        }
+      },
+
+      addCustomCombo: (products, discount) => {
+        if (products.length < 2) return;
+        const groupId = makeGroupId();
+
+        const newItems: CartItem[] = products.map((combo) => ({
+          comboId: combo.id,
+          comboName: combo.name,
+          comboSlug: combo.slug,
+          unitPrice: combo.totalPrice,
+          originalPrice: combo.originalPrice,
+          quantity: 1,
+          image: combo.items[0]?.images[0]?.url ?? '',
+          comboGroupId: groupId,
+        }));
+
+        set({
+          items: [...get().items, ...newItems],
+          customComboGroups: [
+            ...get().customComboGroups,
+            { id: groupId, discount, createdAt: Date.now() },
+          ],
+        });
+      },
+
+      selectFreeGift: (gift) => {
+        if (!get().qualifiesForFreeGift()) return;
+
+        const giftItem: CartItem = {
+          comboId: gift.id,
+          comboName: gift.name,
+          comboSlug: gift.slug ?? '',
+          unitPrice: 0,
+          originalPrice: gift.price ?? 0,
+          quantity: 1,
+          image: gift.image,
+          isFreeGift: true,
+        };
+
+        // Remove any existing free gift line item before adding the new selection
+        const cleanedItems = get().items.filter((i) => !i.isFreeGift);
+        set({ items: [...cleanedItems, giftItem] });
+      },
+
+      removeFreeGift: () => {
+        set({ items: get().items.filter((i) => !i.isFreeGift) });
+      },
+
+      selectedFreeGift: () => {
+        return get().items.find((i) => i.isFreeGift);
+      },
+
+      qualifiesForFreeGift: () => {
+        return get().subtotal() + get().giftCredit >= GIFT_THRESHOLD;
+      },
+
+      removeItem: (comboId, comboGroupId) => {
+        const remaining = get().items.filter((i) =>
+          comboGroupId ? !(i.comboId === comboId && i.comboGroupId === comboGroupId) : i.comboId !== comboId,
+        );
+
+        let groups = get().customComboGroups;
+        if (comboGroupId) {
+          const groupStillHasItems = remaining.some((i) => i.comboGroupId === comboGroupId);
+          if (!groupStillHasItems) {
+            groups = groups.filter((g) => g.id !== comboGroupId);
+          }
+        }
+
+        // Enforce guardrail: if removal causes subtotal to drop below 40k, remove free gift automatically
+        const nonGiftSubtotal = remaining.reduce((sum, i) => {
+          if (i.isFreeGift) return sum;
+          return sum + i.unitPrice * i.quantity;
+        }, 0) - groups.reduce((sum, g) => sum + g.discount, 0) + get().giftCredit;
+
+        const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? remaining.filter((i) => !i.isFreeGift) : remaining;
+
+        set({ items: finalItems, customComboGroups: groups });
+      },
+
+      updateQuantity: (comboId, quantity, comboGroupId) => {
+        if (quantity <= 0) {
+          get().removeItem(comboId, comboGroupId);
+          return;
+        }
+
+        const updatedItems = get().items.map((i) =>
+          i.comboId === comboId && (comboGroupId ? i.comboGroupId === comboGroupId : !i.comboGroupId) && !i.isFreeGift
+            ? { ...i, quantity, unitPrice: repriceLine(i, quantity) }
+            : i,
+        );
+
+        const nonGiftSubtotal = updatedItems.reduce((sum, i) => {
+          if (i.isFreeGift) return sum;
+          return sum + i.unitPrice * i.quantity;
+        }, 0) - get().customComboDiscountTotal() + get().giftCredit;
+
+        const finalItems = nonGiftSubtotal < GIFT_THRESHOLD ? updatedItems.filter((i) => !i.isFreeGift) : updatedItems;
+
+        set({ items: finalItems });
+      },
+
+      clear: () => set({ items: [], customComboGroups: [], giftCredit: 0 }),
+
+      openCart: () => set({ isOpen: true }),
+      closeCart: () => set({ isOpen: false }),
+      toggleCart: () => set({ isOpen: !get().isOpen }),
+
+      itemCount: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
+
+      itemsSubtotal: () =>
+        get().items.reduce((sum, i) => (i.isFreeGift ? sum : sum + i.unitPrice * i.quantity), 0),
+
+      customComboDiscountTotal: () =>
+        get().customComboGroups.reduce((sum, g) => sum + g.discount, 0),
+
+      subtotal: () => get().itemsSubtotal() - get().customComboDiscountTotal(),
+
+      originalTotal: () =>
+        get().items.reduce((sum, i) => sum + (i.originalPrice || i.unitPrice) * i.quantity, 0),
+
+      savings: () => get().originalTotal() - get().subtotal(),
+    }),
+    {
+      name: 'smart-combo-cart',
+      partialize: (state) => ({ items: state.items, customComboGroups: state.customComboGroups }),
+    },
+  ),
+);
+===== client\pages\Checkout.tsx =====
+/**
+ * Checkout â€” now includes Paystack online payment option.
+ *
+ * Flow:
+ *  1. Customer fills shipping + picks payment method
+ *  2. Submit calls POST /api/orders â†’ creates order
+ *  3. If method is "paystack": redirect to Paystack checkout
+ *     Otherwise: navigate straight to /order-confirmation/:orderNumber
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, CreditCard, Gift, Loader2 } from 'lucide-react';
+import { Header } from '@/components/Header';
+import { Footer } from '@/components/Footer';
+import { CartDrawer } from '@/components/shared/CartDrawer';
+import { GiftPicker } from '@/components/shared/GiftPicker';
+import { GIFT_THRESHOLD, useCart } from '@/stores/cart';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatNaira } from '@/lib/format';
+import { BULK_DELIVERY_FEE, lineIsBulk } from '@/lib/bulk';
+import { cartPreorderWindow, lineIsPreorder } from '@/lib/preorder';
+import { createOrder } from '@/api/orders';
+import { initializePaystack } from '@/api/payments';
+import { ApiError } from '@/api/client';
+import { fetchAvailableGifts, fetchGiftProgress, type BankGift } from '@/api/giftProgress';
+import type { PaymentMethod } from '@/types/order';
+import { toast } from 'sonner';
+
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT - Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
+
+// Delivery in Ilorin is a flat fee. Everywhere else Jumia delivers and the customer pays Jumia directly.
+const LOCAL_DELIVERY_FEE = 1000;
+
+export default function Checkout() {
+  const navigate = useNavigate();
+  const {
+    items,
+    subtotal,
+    savings,
+    clear,
+    giftCredit,
+    setGiftCredit,
+    selectFreeGift,
+    selectedFreeGift,
+    qualifiesForFreeGift,
+  } = useCart();
+  const { settings } = useSettings();
+
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paystack');
+  const [ackPre, setAckPre] = useState(false);
+  const [form, setForm] = useState({
+    fullName: '',
+    phone: '',
+    email: '',
+    state: '',
+    city: '',
+    street: '',
+    landmark: '',
+    notes: '',
+  });
+
+  const update = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  // â”€â”€ Free gift: spending from the last 30 days (same phone number) counts too.
+  // These hooks stay above the early return for an empty cart.
+  const [gifts, setGifts] = useState<BankGift[] | null>(null);
+
+  useEffect(() => {
+    const digits = form.phone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      setGiftCredit(0);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const p = await fetchGiftProgress(form.phone);
+      if (!cancelled) setGiftCredit(p?.spent ?? 0);
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [form.phone, setGiftCredit]);
+
+  // Leaving checkout forgets the credit
+  useEffect(() => () => setGiftCredit(0), [setGiftCredit]);
+
+  const giftUnlocked = qualifiesForFreeGift();
+  const pickedGift = selectedFreeGift();
+
+  // When the gift unlocks, load the Gift Bank and pick one at random (only gifts in stock)
+  useEffect(() => {
+    if (!giftUnlocked || gifts !== null) return;
+    fetchAvailableGifts().then(setGifts);
+  }, [giftUnlocked, gifts]);
+
+  const giftRef = useRef<HTMLDivElement>(null);
+
+  // The customer picks the gift themselves (one only). Picking another replaces it.
+  const pickGift = (g: BankGift) => {
+    selectFreeGift({
+      id: g._id,
+      name: g.name,
+      image: g.images?.[0] || g.image || '',
+      price: g.price,
+    });
+  };
+
+  const codCities = (settings?.shipping?.codCities ?? ['ilorin']).map((c) => c.toLowerCase());
+  const isCodEligible =
+    form.city.trim() !== '' &&
+    codCities.some((c) => form.city.toLowerCase().trim() === c);
+
+  // Bulk orders: one flat delivery fee for the whole order, and they must be paid online.
+  const hasBulk = items.some((i) => lineIsBulk(i));
+  const hasPre = items.some((i) => lineIsPreorder(i));
+  const preWindow = cartPreorderWindow(items);
+  // bulk and pre-order items are paid online only
+  const onlineOnly = hasBulk || hasPre;
+  const localFee = hasBulk ? BULK_DELIVERY_FEE : LOCAL_DELIVERY_FEE;
+  const estimatedShipping = isCodEligible ? localFee : 0;
+  useEffect(() => {
+    if (onlineOnly) setPaymentMethod('paystack');
+  }, [onlineOnly]);
+  const deliveredByJumiaElsewhere = form.city.trim() !== '' && !isCodEligible;
+
+  const computedSubtotal = subtotal();
+  const total = computedSubtotal + estimatedShipping;
+
+  const handlePaymentChange = (method: PaymentMethod) => {
+    if (method === 'cod' && !isCodEligible) {
+      toast.error(
+        `Cash on delivery is only available in: ${codCities
+          .map((c) => c.charAt(0).toUpperCase() + c.slice(1))
+          .join(', ')}`,
+      );
+      return;
+    }
+    setPaymentMethod(method);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (items.length === 0) {
+      toast.error('Your cart is empty');
+      return;
+    }
+
+    const requiredFields: (keyof typeof form)[] = [
+      'fullName', 'phone', 'email', 'state', 'city', 'street',
+    ];
+    for (const f of requiredFields) {
+      if (!form[f]?.trim()) {
+        toast.error(`Please fill in: ${f.replace(/([A-Z])/g, ' $1').toLowerCase()}`);
+        return;
+      }
+    }
+
+    if (hasPre && !ackPre) {
+      toast.error('Please tick the box to say you understand some items are pre-order.');
+      return;
+    }
+
+    if (giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
+      toast.error('Please choose your free gift first');
+      giftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // 1. Create the order in our DB
+      const order = await createOrder({
+        items,
+        shipping: {
+          fullName: form.fullName.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim(),
+          state: form.state,
+          city: form.city.trim(),
+          street: form.street.trim(),
+          landmark: form.landmark?.trim() || undefined,
+        },
+        paymentMethod,
+        notes: form.notes?.trim() || undefined,
+        ackPreorder: ackPre,
+      });
+
+      // 2. If Paystack, get checkout URL and redirect
+      if (paymentMethod === 'paystack') {
+        try {
+          const init = await initializePaystack(order.orderNumber);
+          // Save phone so the confirmation page can fall back to tracking
+          sessionStorage.setItem(
+            `order:${order.orderNumber}:phone`,
+            form.phone.trim(),
+          );
+          // Clear cart before leaving (order is created either way)
+          clear();
+          // Redirect to Paystack â€” they'll come back via callback URL
+          window.location.href = init.authorizationUrl;
+          return;
+        } catch (err) {
+          // If Paystack init fails, fall through to confirmation page â€”
+          // customer can still see their order and try paying again from there.
+          if (err instanceof ApiError) {
+            toast.error(`Payment setup failed: ${err.message}`);
+          } else {
+            toast.error('Could not start payment. Try again from the order page.');
+          }
+          clear();
+          navigate(`/order-confirmation/${order.orderNumber}`, {
+            state: { order, phone: form.phone.trim() },
+          });
+          return;
+        }
+      }
+
+      // 3. Other payment methods â€” straight to confirmation
+      clear();
+      toast.success(`Order ${order.orderNumber} placed!`);
+      navigate(`/order-confirmation/${order.orderNumber}`, {
+        state: { order, phone: form.phone.trim() },
+      });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error('Something went wrong. Please try again.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex flex-col">
+        <Header />
+        <CartDrawer />
+        <main className="flex-1 section-padding py-20">
+          <div className="container-premium text-center">
+            <h1 className="text-2xl md:text-3xl font-black text-white mb-2">
+              Your cart is empty
+            </h1>
+            <p className="text-white/50 mb-6">Add a combo to your cart to continue.</p>
+            <Link
+              to="/products"
+              className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-bold"
+            >
+              View products
+            </Link>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <Header />
+      <CartDrawer />
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium max-w-5xl">
+          <Link
+            to="/products"
+            className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-6"
+          >
+            <ArrowLeft className="w-3 h-3" />
+            Back to products
+          </Link>
+
+          <h1 className="text-2xl md:text-3xl font-black text-white mb-2">Checkout</h1>
+          <p className="text-white/50 text-sm mb-8">
+            Confirm your details and place your order. We'll contact you shortly.
+          </p>
+
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
+            <div className="space-y-6">
+              <Section title="Contact information">
+                <Field label="Full name" required>
+                  <input type="text" value={form.fullName} onChange={(e) => update('fullName', e.target.value)} className={inputCls} placeholder="Aisha Mohammed" />
+                </Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Phone" required>
+                    <input type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value)} className={inputCls} placeholder="+234 800 000 0000" />
+                  </Field>
+                  <Field label="Email" required>
+                    <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} className={inputCls} placeholder="you@example.com" />
+                  </Field>
+                </div>
+              </Section>
+
+              {giftUnlocked && (
+                <div ref={giftRef}>
+                  <GiftPicker
+                    gifts={gifts}
+                    selectedId={pickedGift?.comboId}
+                    onPick={pickGift}
+                    credit={giftCredit}
+                  />
+                </div>
+              )}
+
+              <Section title="Delivery address">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="State" required>
+                    <select value={form.state} onChange={(e) => update('state', e.target.value)} className={inputCls}>
+                      <option value="">Select state</option>
+                      {NIGERIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="City" required>
+                    <input type="text" value={form.city} onChange={(e) => update('city', e.target.value)} className={inputCls} placeholder="Ilorin" />
+                  </Field>
+                </div>
+                <Field label="Street address" required>
+                  <input type="text" value={form.street} onChange={(e) => update('street', e.target.value)} className={inputCls} placeholder="No 12, Tanke road" />
+                </Field>
+                <Field label="Landmark (optional)">
+                  <input type="text" value={form.landmark} onChange={(e) => update('landmark', e.target.value)} className={inputCls} placeholder="Near Diamond Bank" />
+                </Field>
+                <Field label="Order notes (optional)">
+                  <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} rows={2} className={inputCls} placeholder="Anything we should know?" />
+                </Field>
+              </Section>
+
+              {/* COD_BANNER_INSERTED */}
+              {isCodEligible && !onlineOnly && (
+                <div
+                  className="rounded-2xl border border-emerald-500/40 p-4 md:p-5"
+                  style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04))' }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-5 h-5 text-emerald-300">
+                        <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm md:text-base font-black text-emerald-300 mb-0.5">
+                        Great news â€” you qualify for Pay on Delivery!
+                      </p>
+                      <p className="text-[12px] md:text-[13px] text-emerald-100/70 leading-relaxed">
+                        Delivery in {form.city || 'your area'} is {formatNaira(LOCAL_DELIVERY_FEE)}, handled by us directly. No upfront payment needed â€” pay cash when your order arrives.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {hasPre && (
+                <div className="rounded-2xl border border-primary/40 p-4 md:p-5" style={{ background: 'rgba(255,200,40,0.08)' }}>
+                  <p className="text-sm md:text-base font-black text-primary mb-1">Some items are pre-order</p>
+                  <p className="text-[13px] md:text-sm text-white/75 leading-relaxed mb-3">
+                    We get these items for you after you pay. They arrive in {preWindow.min} to {preWindow.max} business days after
+                    payment. If we cannot get them, you get your money back.
+                  </p>
+                  <label className="flex items-start gap-3 cursor-pointer min-h-[44px]">
+                    <input
+                      type="checkbox"
+                      checked={ackPre}
+                      onChange={(e) => setAckPre(e.target.checked)}
+                      className="mt-0.5 w-5 h-5 accent-yellow-400"
+                    />
+                    <span className="text-sm font-bold text-white">I understand some items are pre-order.</span>
+                  </label>
+                </div>
+              )}
+
+              <Section title="Payment method">
+                <div className="space-y-2">
+                  <PaymentOption
+                    value="paystack"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Pay online (card, transfer, USSD)"
+                    description="Secure payment via Paystack. Fastest confirmation."
+                    badge="RECOMMENDED"
+                  />
+                  <PaymentOption
+                    value="bank_transfer"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    disabled={onlineOnly}
+                    title="Direct bank transfer"
+                    description="Pay to our account, we confirm and ship."
+                  />
+                  <PaymentOption
+                    value="cod"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    title="Cash on delivery"
+                    description={
+                      onlineOnly
+                        ? 'Not available for bulk or pre-order items. Please pay online.'
+                        : isCodEligible
+                        ? `Pay when delivered. Delivery in your area is ${formatNaira(LOCAL_DELIVERY_FEE)}.`
+                        : `Only available in: ${codCities.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`
+                    }
+                    disabled={!isCodEligible || onlineOnly}
+                  />
+                  <PaymentOption
+                    value="whatsapp"
+                    selected={paymentMethod}
+                    onSelect={handlePaymentChange}
+                    disabled={onlineOnly}
+                    title="Pay via WhatsApp"
+                    description="We'll DM you with payment options."
+                  />
+                </div>
+              </Section>
+            </div>
+
+            <aside
+              className="rounded-2xl border border-primary/20 p-5 h-fit lg:sticky lg:top-24"
+              style={{ background: 'rgba(255,255,255,0.02)' }}
+            >
+              <h2 className="text-sm font-black text-white mb-4">Order summary</h2>
+
+              <div className="space-y-3 mb-4 max-h-72 overflow-y-auto">
+                {items.map((item) => (
+                  <div key={item.comboId} className="flex gap-3">
+                    {item.image && (
+                      <img src={item.image} alt={item.comboName} className="w-14 h-14 rounded-lg object-cover border border-white/10 flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{item.comboName}</p>
+                      <p className="text-[10px] text-white/40">Qty {item.quantity}{!item.isFreeGift && item.quantity > 1 ? ' at ' + formatNaira(item.unitPrice) + ' each' : ''}</p>
+                      <p className="text-xs text-primary font-bold">
+                        {item.isFreeGift ? 'FREE' : formatNaira(item.unitPrice * item.quantity)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Free gift progress */}
+              <div
+                className={`mb-4 rounded-xl border p-3 text-xs leading-relaxed ${
+                  giftUnlocked
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-primary/25 bg-primary/5 text-white/70'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <Gift className={`w-4 h-4 shrink-0 mt-0.5 ${giftUnlocked ? 'text-emerald-300' : 'text-primary'}`} />
+                  <div className="flex-1 min-w-0">
+                    {giftUnlocked ? (
+                      <>
+                        <p className="font-bold text-emerald-300">Free gift unlocked!</p>
+                        {pickedGift ? (
+                          <p className="mt-0.5">
+                            Your gift: <span className="font-semibold text-white">{pickedGift.comboName}</span>
+                            <span className="text-emerald-100/70"> (change it in the gift list)</span>
+                          </p>
+                        ) : gifts !== null && gifts.length === 0 ? (
+                          <p className="mt-0.5">No gifts are in stock right now.</p>
+                        ) : (
+                          <p className="mt-0.5">Choose one gift from the list. You can only pick one.</p>
+                        )}
+                        {giftCredit > 0 && (
+                          <p className="mt-0.5 text-emerald-100/70">
+                            Counts your {formatNaira(giftCredit)} spent in the last 30 days.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-bold text-white">
+                          Spend {formatNaira(Math.max(0, GIFT_THRESHOLD - computedSubtotal - giftCredit))} more to unlock a free gift
+                        </p>
+                        <p className="mt-0.5 text-white/55">
+                          {giftCredit > 0
+                            ? `You spent ${formatNaira(giftCredit)} with us in the last 30 days, and it counts.`
+                            : 'Purchases from the last 30 days on the same phone number add up, so you can also come back later.'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 text-xs border-t border-white/10 pt-4">
+                <Row label="Subtotal" value={formatNaira(computedSubtotal)} />
+                <Row
+                  label={isCodEligible ? (hasBulk ? 'Bulk delivery' : 'Delivery') : 'Delivery (Jumia)'}
+                  value={isCodEligible ? formatNaira(estimatedShipping) : deliveredByJumiaElsewhere ? 'Paid to Jumia' : 'Enter your city'}
+                />
+                {hasBulk && isCodEligible && (
+                  <p className="text-[11px] leading-relaxed text-white/45">
+                    Bulk delivery in Ilorin is {formatNaira(BULK_DELIVERY_FEE)} for your whole order. Bulk orders are paid online.
+                  </p>
+                )}
+                {deliveredByJumiaElsewhere && (
+                  <p className="text-[11px] leading-relaxed text-white/45">
+                    Your order is delivered by Jumia. Jumia sets the delivery fee and you pay it directly to Jumia, not to us.
+                  </p>
+                )}
+                {savings() > 0 && <Row label="You save" value={formatNaira(savings())} accent="emerald" />}
+              </div>
+              <div className="border-t border-white/10 mt-3 pt-3 flex items-center justify-between">
+                <span className="text-sm text-white/70 font-bold">Total</span>
+                <span className="text-lg text-primary font-black tabular-nums">{formatNaira(total)}</span>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn-primary w-full mt-5 py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Placing order...</>
+                ) : paymentMethod === 'paystack' ? (
+                  <><CreditCard className="w-4 h-4" />Pay {formatNaira(total)} now</>
+                ) : (
+                  <>Place order â€” {formatNaira(total)}</>
+                )}
+              </button>
+
+              <p className="mt-3 text-[10px] text-white/30 text-center">
+                {paymentMethod === 'paystack'
+                  ? 'You will be redirected to Paystack to complete payment.'
+                  : 'Pay cash when your order arrives.'}
+              </p>
+            </aside>
+          </form>
+        </div>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 p-5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <h2 className="text-sm font-black text-white mb-4">{title}</h2>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">
+        {label} {required && <span className="text-primary/70">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+const inputCls = 'w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-sm text-white placeholder-white/30 transition-colors';
+
+function Row({ label, value, accent }: { label: string; value: string; accent?: 'emerald' }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-white/50">{label}</span>
+      <span className={`tabular-nums font-medium ${accent === 'emerald' ? 'text-emerald-400' : 'text-white/80'}`}>{value}</span>
+    </div>
+  );
+}
+
+function PaymentOption({
+  value, selected, onSelect, title, description, disabled, badge,
+}: {
+  value: PaymentMethod;
+  selected: PaymentMethod;
+  onSelect: (m: PaymentMethod) => void;
+  title: string;
+  description: string;
+  disabled?: boolean;
+  badge?: string;
+}) {
+  const isSelected = selected === value;
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onSelect(value)}
+      disabled={disabled}
+      className={`w-full text-left p-3 rounded-lg border transition-colors ${
+        isSelected
+          ? 'border-primary/50 bg-primary/5'
+          : disabled
+          ? 'border-white/5 bg-white/[0.01] opacity-50 cursor-not-allowed'
+          : 'border-white/10 hover:border-white/30'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`w-4 h-4 rounded-full border flex-shrink-0 mt-0.5 ${isSelected ? 'border-primary bg-primary' : 'border-white/30'}`}>
+          {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-white">{title}</p>
+            {badge && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-white/50">{description}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+===== client\pages\AdminOrders.tsx =====
+/**
+ * Admin Orders list page.
+ *
+ * Shows all orders in a table with:
+ *  - Status filter chips (All / Pending / Paid / Processing / Shipped / Delivered / Cancelled)
+ *  - Search by order number, name, phone, or email
+ *  - Pagination
+ *  - A Partner column showing who referred the order and the commission it earned
+ *  - Click any row to view detail
+ */
+
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, LogOut, Search } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { listOrders } from '@/api/adminOrders';
+import {
+  COMMISSION_STATUS_LABEL,
+  COMMISSION_STATUS_STYLE,
+  getCommissionsByOrders,
+} from '@/api/adminCommissions';
+import { formatNaira } from '@/lib/format';
+import type { OrderStatus } from '@/types/order';
+import { SEO } from '@/components/shared/SEO';
+
+const STATUS_FILTERS: Array<{ value: OrderStatus | 'all'; label: string }> = [
+  { value: 'all',        label: 'All' },
+  { value: 'pending',    label: 'Pending' },
+  { value: 'paid',       label: 'Paid' },
+  { value: 'processing', label: 'Processing' },
+  { value: 'shipped',    label: 'Shipped' },
+  { value: 'delivered',  label: 'Delivered' },
+  { value: 'cancelled',  label: 'Cancelled' },
+];
+
+const STATUS_STYLES: Record<OrderStatus, string> = {
+  pending:    'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  paid:       'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  processing: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
+  shipped:    'bg-purple-500/15 text-purple-300 border-purple-500/25',
+  delivered:  'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
+  cancelled:  'bg-red-500/15 text-red-300 border-red-500/25',
+  refunded:   'bg-gray-500/15 text-gray-300 border-gray-500/25',
+};
+
+export default function AdminOrders() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const [status, setStatus] = useState<OrderStatus | 'all'>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-orders', status, search, page],
+    queryFn: () => listOrders({ status, search, page, limit: 25 }),
+  });
+
+  const orderIds = (data?.data ?? [])
+    .map((o) => o._id ?? o.id ?? '')
+    .filter(Boolean);
+
+  // Only orders that came through a partner's link appear in this map
+  const { data: commissions = {} } = useQuery({
+    queryKey: ['admin-commissions-by-orders', orderIds.join(',')],
+    queryFn: () => getCommissionsByOrders(orderIds),
+    enabled: orderIds.length > 0,
+  });
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearch(searchInput);
+    setPage(1);
+  };
+
+  const orders = data?.data ?? [];
+  const meta = data?.meta;
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <SEO title="Orders â€” Admin" />
+
+      {/* Top bar */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-background/95 backdrop-blur">
+        <div className="container-premium flex items-center justify-between py-3">
+          <Link to="/admin" className="flex items-center gap-2 group">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-amber-500 flex items-center justify-center shadow-[0_0_16px_rgba(255,215,0,0.3)] group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-sm">SC</span>
+            </div>
+            <div>
+              <p className="text-sm font-black text-white leading-tight">Smart Combo</p>
+              <p className="text-[10px] uppercase tracking-widest text-primary/70 font-bold leading-tight">Admin</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="hidden sm:inline text-xs text-white/50 hover:text-white/80">View store</Link>
+            <button
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-300 transition-colors text-xs font-medium text-white/70"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 section-padding py-10">
+        <div className="container-premium">
+          <Link to="/admin" className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-primary mb-4">
+            <ArrowLeft className="w-3 h-3" />
+            Back to dashboard
+          </Link>
+
+          <div className="flex items-end justify-between mb-8">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-black text-white">Orders</h1>
+              <p className="text-white/50 text-sm mt-1">
+                {meta ? `${meta.total} total` : 'Loading...'}
+              </p>
+            </div>
+            <Link
+              to="/admin/record-sale"
+              className="px-4 py-2.5 rounded-xl bg-primary text-black text-xs font-black hover:bg-primary/90 transition-colors"
+            >
+              + Record a sale
+            </Link>
+          </div>
+
+          {/* Filters + search */}
+          <div className="flex flex-col gap-3 mb-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => { setStatus(filter.value); setPage(1); }}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${
+                    status === filter.value
+                      ? 'bg-primary/15 border-primary/40 text-primary'
+                      : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSearch} className="relative flex-shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search by name, phone, order #..."
+                className="pl-9 pr-3 py-2 rounded-lg bg-black/30 border border-white/10 focus:border-primary/40 focus:outline-none text-xs text-white placeholder-white/30 w-full sm:w-72"
+              />
+            </form>
+          </div>
+
+          {/* Table */}
+          <div
+            className="rounded-2xl border border-white/10 overflow-hidden"
+            style={{ background: 'rgba(255,255,255,0.02)' }}
+          >
+            {isLoading ? (
+              <div className="py-20 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+              </div>
+            ) : error ? (
+              <div className="py-12 text-center text-red-400 text-sm">
+                Failed to load orders. Try refreshing.
+              </div>
+            ) : orders.length === 0 ? (
+              <div className="py-16 text-center text-white/40 text-sm">
+                No orders match your filters.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-white/5 text-xs uppercase text-white/50 tracking-wide">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Order #</th>
+                    <th className="px-4 py-3 text-left">Customer</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Items</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Partner</th>
+                    <th className="px-4 py-3 text-left">Total</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3 text-left hidden md:table-cell">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map((order) => {
+                    const id = order._id ?? order.id ?? '';
+                    const commission = commissions[id];
+                    return (
+                      <tr
+                        key={id}
+                        onClick={() => navigate(`/admin/orders/${id}`)}
+                        className="border-t border-white/5 hover:bg-white/[0.03] cursor-pointer transition-colors"
+                      >
+                        <td className="px-4 py-3 font-mono text-primary text-xs">
+                          {order.orderNumber}
+                          {(order as any).source && (order as any).source !== 'website' && (
+                            <span className="ml-2 inline-block rounded-full border border-white/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white/60">
+                              {({ whatsapp: 'WhatsApp', walkin: 'Walk-in', social: 'Social', other: 'Other' } as Record<string, string>)[(order as any).source] ?? (order as any).source}
+                            </span>
+                          )}
+                          {order.items.some((i: any) => i.isFreeGift || String(i.name || '').startsWith('[FREE GIFT]')) && (
+                            <span className="ml-2 inline-block rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
+                              Free gift
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="text-white font-medium text-xs">{order.shipping.fullName}</p>
+                          <p className="text-white/40 text-[10px]">{order.shipping.phone}</p>
+                          {commission && (
+                            <p className="md:hidden mt-0.5 text-[10px] text-primary/80">
+                              Partner {commission.resellerCode}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-white/60 text-xs">
+                          {order.items.reduce((s, i) => s + i.quantity, 0)} item{order.items.reduce((s, i) => s + i.quantity, 0) !== 1 ? 's' : ''}
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-xs">
+                          {commission ? (
+                            <div>
+                              <p className="text-white/80 font-medium">
+                                {commission.partnerName}{' '}
+                                <span className="font-mono text-primary text-[10px]">{commission.resellerCode}</span>
+                              </p>
+                              <p className="mt-0.5 flex items-center gap-1.5 text-white/50 text-[10px]">
+                                <span className="tabular-nums">{formatNaira(commission.amount)}</span>
+                                <span
+                                  className={`font-bold px-1.5 py-0.5 rounded-full border ${COMMISSION_STATUS_STYLE[commission.status]}`}
+                                >
+                                  {COMMISSION_STATUS_LABEL[commission.status]}
+                                </span>
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-white/20">&mdash;</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-white tabular-nums font-medium text-xs">
+                          {formatNaira(order.total)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLES[order.status]}`}>
+                            {order.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 hidden md:table-cell text-white/40 text-xs">
+                          {new Date(order.createdAt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {meta && meta.pages > 1 && (
+            <div className="flex items-center justify-between mt-6">
+              <p className="text-xs text-white/40">
+                Page {meta.page} of {meta.pages} Â· {meta.total} orders
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-3 h-3" /> Prev
+                </button>
+                <button
+                  type="button"
+                  disabled={page >= meta.pages}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                  Next <ChevronRight className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-8 text-xs text-white/30 text-center">
+            Logged in as {user?.email}
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+===== client\api\orders.ts =====
+/**
+ * Orders API - frontend client.
+ *
+ * Cart items include selectedVariants and the free-gift flag when sent to the backend.
+ */
+
+import { apiFetch } from "./client";
+import type { Order, ShippingAddress, PaymentMethod, CartItem } from "@/types/order";
+import { getReferral } from "@/lib/referral";
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+interface BackendOrder extends Omit<Order, "id"> {
+  _id: string;
+}
+
+function normalize(raw: BackendOrder): Order {
+  const { _id, ...rest } = raw;
+  return { ...rest, id: _id };
+}
+
+export interface CreateOrderInput {
+  items: CartItem[];
+  shipping: ShippingAddress;
+  paymentMethod: PaymentMethod;
+  notes?: string;
+  ackPreorder?: boolean;
+}
+
+export async function createOrder(input: CreateOrderInput): Promise<Order> {
+  // Send each cart item with its selectedVariants and free-gift flag.
+  // The server needs isFreeGift to know the item comes from the Gift Bank.
+  const payload = {
+    items: input.items.map((it) => ({
+      comboId: it.comboId,
+      quantity: it.quantity,
+      selectedVariants: it.selectedVariants ?? {},
+      isFreeGift: Boolean(it.isFreeGift),
+    })),
+    shipping: input.shipping,
+    paymentMethod: input.paymentMethod,
+    ref: getReferral(),
+    notes: input.notes,
+    ackPreorder: Boolean(input.ackPreorder),
+  };
+
+  const res = await apiFetch<ApiResponse<BackendOrder>>("/api/orders", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalize(res.data);
+}
+
+export async function trackOrder(orderNumber: string, phone: string): Promise<Order | null> {
+  try {
+    const res = await apiFetch<ApiResponse<BackendOrder>>(
+      `/api/orders/track?orderNumber=${encodeURIComponent(orderNumber)}&phone=${encodeURIComponent(phone)}`,
+    );
+    return normalize(res.data);
+  } catch (err: any) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+===== client\components\AIChatLauncher.tsx =====
+/**
+ * AIChatLauncher â€” desktop floating button that replaces the WhatsApp float.
+ * Opens the same chat panel the phone uses (AI + talk-to-us). WhatsApp is still
+ * one tap away inside the panel. Phones use the bottom-nav "Chat" tab instead.
+ */
+
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Sparkles, X } from 'lucide-react';
+import { ChatSheet } from '@/components/ChatSheet';
+import { chatUI, useChatOpen } from '@/stores/chat';
+import { useMobileLayout } from '@/hooks/useMobileLayout';
+
+export function AIChatLauncher() {
+  const isMobile = useMobileLayout();
+  const { pathname } = useLocation();
+  const open = useChatOpen();
+  const [visible, setVisible] = useState(false);
+  const [tipSeen, setTipSeen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 1200);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (isMobile || pathname.startsWith('/admin')) return null;
+
+  const toggle = () => {
+    setTipSeen(true);
+    if (open) chatUI.close();
+    else chatUI.open();
+  };
+
+  return (
+    <>
+      <div
+        className={`fixed bottom-6 right-6 z-[60] transition-all duration-500 ${
+          visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+        }`}
+      >
+        {!open && !tipSeen && (
+          <div className="absolute right-full mr-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="relative whitespace-nowrap rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-card-foreground shadow-lg">
+              Ask our AI assistant
+              <span className="absolute left-full top-1/2 -translate-y-1/2 border-y-[5px] border-l-[6px] border-y-transparent border-l-border" />
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={open ? 'Close chat' : 'Open chat assistant'}
+          aria-expanded={open}
+          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-amber-500 text-primary-foreground shadow-2xl transition-transform hover:scale-110 active:scale-95"
+          style={{ boxShadow: '0 8px 32px hsl(var(--primary) / 0.45)' }}
+        >
+          {!open && (
+            <span className="absolute inset-0 rounded-full bg-primary/50 animate-ping [animation-duration:2.5s]" />
+          )}
+          {open ? <X className="relative h-6 w-6" /> : <Sparkles className="relative h-6 w-6" />}
+        </button>
+      </div>
+
+      <ChatSheet />
+    </>
+  );
+}
+
+===== client\components\BulkBox.tsx =====
+/**
+ * "Buy more, pay less" box for a product page.
+ * Shows the price levels, a quantity box, the total, and a button to add that many pieces.
+ * It shows nothing for products that have no bulk prices.
+ *
+ * Plain words on purpose: one job (pick how many), big buttons, the total always visible.
+ */
+import { useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Minus, Plus, ShoppingBag, MessageCircle, Truck } from 'lucide-react';
+import { formatNaira } from '@/lib/format';
+import { fetchComboBySlug } from '@/api/combos';
+import { useSettings } from '@/contexts/SettingsContext';
+import { BULK_DELIVERY_FEE, priceForQty, tiersOf } from '@/lib/bulk';
+import { preorderInfo } from '@/lib/preorder';
+import type { Combo } from '@/types/combo';
+
+const MAX_QTY = 1000;
+
+export function BulkBox({ combo, onAdd }: { combo?: Combo; onAdd: (qty: number) => void }) {
+  const { slug } = useParams<{ slug: string }>();
+  const { settings } = useSettings();
+  const { data: fetched } = useQuery({
+    queryKey: ['combo', slug],
+    queryFn: () => fetchComboBySlug(slug!),
+    enabled: !combo && !!slug,
+  });
+  const c: any = combo ?? fetched;
+  const tiers = tiersOf(c);
+  const [qtyText, setQtyText] = useState('');
+  const [touched, setTouched] = useState(false);
+
+  if (!c || tiers.length === 0 || c.isActive === false) return null;
+
+  const firstMin = tiers[0].minQty;
+  const qty = !touched ? firstMin : Math.min(MAX_QTY, Math.max(1, parseInt(qtyText, 10) || 1));
+  const unit = priceForQty(c.totalPrice, tiers, qty);
+  const total = unit * qty;
+  const stock = Number(c.stockLeft) || 0;
+  const pre = preorderInfo(c);
+  const tooMany = !pre.active && qty > stock;
+  const isBulk = qty >= firstMin;
+
+  const setQty = (n: number) => {
+    setTouched(true);
+    setQtyText(String(Math.min(MAX_QTY, Math.max(1, n))));
+  };
+
+  const waBase = settings?.contact?.whatsappLink ?? '#';
+  const waUrl = `${waBase}${waBase.includes('?') ? '&' : '?'}text=${encodeURIComponent(
+    `Hello Smart Combo, I want ${qty} pieces of ${c.name}.`,
+  )}`;
+
+  // Rows: the normal price, then each price level
+  const rows = [
+    { label: firstMin - 1 === 1 ? '1 piece' : `1 to ${firstMin - 1} pieces`, price: c.totalPrice, from: 1 },
+    ...tiers.map((t) => ({ label: `${t.minQty}+ pieces`, price: t.unitPrice, from: t.minQty })),
+  ];
+  const activeFrom = [...rows].reverse().find((r) => qty >= r.from)?.from ?? 1;
+
+  return (
+    <div
+      className="mt-6 rounded-2xl border border-primary/25 p-4 md:p-5"
+      style={{ background: 'rgba(255,255,255,0.03)' }}
+      data-testid="bulk-box"
+    >
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <h3 className="text-base font-black text-white">Buy more, pay less</h3>
+        <span className="text-xs text-white/50">Price for each piece:</span>
+      </div>
+
+      <div className="mt-3 divide-y divide-white/10 rounded-xl border border-white/10 overflow-hidden">
+        {rows.map((r) => (
+          <div
+            key={r.from}
+            className={`flex items-center justify-between px-3 py-2.5 text-[15px] ${
+              r.from === activeFrom ? 'bg-primary/10 text-white font-bold' : 'text-white/75'
+            }`}
+          >
+            <span>{r.label}</span>
+            <span className={r.from === activeFrom ? 'text-primary font-black' : 'font-semibold'}>
+              {formatNaira(r.price)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <span className="text-[15px] text-white/80 font-semibold">How many?</span>
+        <div className="flex items-center rounded-xl border border-white/15">
+          <button
+            type="button"
+            onClick={() => setQty(qty - 1)}
+            aria-label="Fewer"
+            className="w-12 h-12 flex items-center justify-center rounded-l-xl hover:bg-white/10"
+          >
+            <Minus className="w-5 h-5" />
+          </button>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_QTY}
+            value={touched ? qtyText : String(firstMin)}
+            onChange={(e) => {
+              setTouched(true);
+              setQtyText(e.target.value);
+            }}
+            onBlur={() => setQtyText(String(qty))}
+            aria-label="Number of pieces"
+            className="w-16 h-12 bg-transparent text-center text-lg font-black text-white focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+          <button
+            type="button"
+            onClick={() => setQty(qty + 1)}
+            aria-label="More"
+            className="w-12 h-12 flex items-center justify-center rounded-r-xl hover:bg-white/10"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between rounded-xl bg-black/20 px-3 py-3">
+        <span className="text-sm text-white/70">
+          {qty} {qty === 1 ? 'piece' : 'pieces'} at {formatNaira(unit)}
+        </span>
+        <span className="text-xl font-black text-primary" data-testid="bulk-total">
+          {formatNaira(total)}
+        </span>
+      </div>
+
+      {isBulk && (
+        <div className="mt-3 flex items-start gap-2 text-[13px] leading-relaxed text-white/60">
+          <Truck className="w-4 h-4 shrink-0 mt-0.5 text-primary" />
+          <p>
+            Delivery in Ilorin: {formatNaira(BULK_DELIVERY_FEE)} for your whole bulk order. Elsewhere we send through
+            Jumia. You pay Jumia when it arrives. We add no fee. Bulk orders are paid online.
+          </p>
+        </div>
+      )}
+
+      {pre.active && (
+        <p className="mt-3 text-[13px] leading-relaxed text-primary/90">
+          Pre-order: we get these for you after you pay. They arrive in {pre.min} to {pre.max} business days. If we cannot
+          get them, you get your money back.
+        </p>
+      )}
+
+      {tooMany && (
+        <p className="mt-3 text-[13px] text-amber-300">
+          {stock > 0
+            ? `We have ${stock} ready. Please choose ${stock} or fewer, or get a price on WhatsApp.`
+            : 'This item is out of stock right now.'}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onAdd(qty)}
+        disabled={tooMany || (stock === 0 && !pre.active)}
+        className="btn-primary mt-4 w-full min-h-[48px] flex items-center justify-center gap-2 text-[15px] font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <ShoppingBag className="w-4 h-4" />
+        {pre.active ? 'Pre-order' : 'Add'} {qty} {qty === 1 ? 'piece' : 'pieces'}{pre.active ? '' : ' to cart'}
+      </button>
+
+      <a
+        href={waUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="btn-secondary mt-2 w-full min-h-[48px] flex items-center justify-center gap-2 text-[15px] font-bold"
+      >
+        <MessageCircle className="w-4 h-4" />
+        Get a price on WhatsApp
+      </a>
+    </div>
+  );
+}
+
+===== client\components\PreorderNotice.tsx =====
+/**
+ * Pre-order notice for a product page, plus a hook other pieces can use.
+ * Shows nothing unless the product is a pre-order item (switch on and no stock).
+ */
+import { useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Clock } from 'lucide-react';
+import { fetchComboBySlug } from '@/api/combos';
+import { preorderInfo, type PreorderInfo } from '@/lib/preorder';
+import type { Combo } from '@/types/combo';
+
+export function usePreorder(combo?: Combo): PreorderInfo {
+  const { slug } = useParams<{ slug: string }>();
+  const { data } = useQuery({
+    queryKey: ['combo', slug],
+    queryFn: () => fetchComboBySlug(slug!),
+    enabled: !combo && !!slug,
+  });
+  return preorderInfo(combo ?? data);
+}
+
+export function PreorderNotice({ combo }: { combo?: Combo }) {
+  const p = usePreorder(combo);
+  if (!p.active) return null;
+  return (
+    <div
+      className="mt-5 rounded-2xl border border-primary/40 p-4"
+      style={{ background: 'rgba(255,200,40,0.08)' }}
+      data-testid="preorder-notice"
+    >
+      <div className="flex items-start gap-3">
+        <Clock className="w-5 h-5 shrink-0 mt-0.5 text-primary" />
+        <div>
+          <p className="text-[15px] font-black text-primary">Pre-order</p>
+          <p className="mt-1 text-[14px] leading-relaxed text-white/80">
+            We get this item for you after you pay. It arrives in {p.min} to {p.max} business days. If we cannot get it,
+            you get your money back.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+===== client\lib\preorder.ts =====
+/**
+ * Pre-order helpers for the browser. A product is a pre-order item while its switch is on AND it has no stock.
+ * The server decides for real when an order is placed.
+ */
+export interface PreorderInfo {
+  active: boolean;
+  min: number;
+  max: number;
+}
+
+export function preorderInfo(x: any): PreorderInfo {
+  const active = Boolean(x?.preorder) && (Number(x?.stockLeft) || 0) === 0;
+  return {
+    active,
+    min: Math.max(1, Math.floor(Number(x?.leadDaysMin)) || 5),
+    max: Math.max(1, Math.floor(Number(x?.leadDaysMax)) || 10),
+  };
+}
+
+/** Flags saved on a cart line when it is added. */
+export function preorderFlags(combo: any): { preorder: boolean; leadDaysMin: number; leadDaysMax: number } {
+  const p = preorderInfo(combo);
+  return { preorder: p.active, leadDaysMin: p.min, leadDaysMax: p.max };
+}
+
+export function lineIsPreorder(line: any): boolean {
+  return !line?.isFreeGift && Boolean(line?.preorder);
+}
+
+/** "5 to 10" across all pre-order lines of a cart. */
+export function cartPreorderWindow(lines: any[]): { min: number; max: number } {
+  const pre = lines.filter(lineIsPreorder);
+  if (pre.length === 0) return { min: 0, max: 0 };
+  return {
+    min: Math.min(...pre.map((l) => Number(l.leadDaysMin) || 5)),
+    max: Math.max(...pre.map((l) => Number(l.leadDaysMax) || 10)),
+  };
+}

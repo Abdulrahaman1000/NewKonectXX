@@ -23,6 +23,7 @@ import {
 import { formatNaira } from '@/lib/format';
 import type { OrderStatus } from '@/types/order';
 import { SEO } from '@/components/shared/SEO';
+import { OrderTags } from '@/components/OrderTags';
 
 const STATUS_FILTERS: Array<{ value: OrderStatus | 'all'; label: string }> = [
   { value: 'all',        label: 'All' },
@@ -208,6 +209,7 @@ export default function AdminOrders() {
                               {({ whatsapp: 'WhatsApp', walkin: 'Walk-in', social: 'Social', other: 'Other' } as Record<string, string>)[(order as any).source] ?? (order as any).source}
                             </span>
                           )}
+                          <OrderTags order={order as any} />
                           {order.items.some((i: any) => i.isFreeGift || String(i.name || '').startsWith('[FREE GIFT]')) && (
                             <span className="ml-2 inline-block rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-primary">
                               Free gift

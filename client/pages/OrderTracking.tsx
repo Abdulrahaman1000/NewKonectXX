@@ -28,6 +28,7 @@ import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
 import { trackOrder } from '@/api/orders';
+import { OrderParts } from '@/components/OrderParts';
 import { formatNaira } from '@/lib/format';
 import type { Order, OrderStatus } from '@/types/order';
 import { toast } from 'sonner';
@@ -320,6 +321,8 @@ function OrderDetails({ order }: { order: Order }) {
           </div>
         )}
       </div>
+
+      <OrderParts order={order} />
 
       {/* Items */}
       <div className="rounded-2xl border border-white/10 p-5 md:p-6" style={{ background: 'rgba(255,255,255,0.02)' }}>

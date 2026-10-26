@@ -53,6 +53,34 @@ function ensureItemIds(items: any[]): any[] {
   }));
 }
 
+/** Bulk price levels: whole numbers only, quantity 2 or more, sorted, one row per quantity. */
+function cleanTiers(raw: any): Array<{ minQty: number; unitPrice: number }> {
+  if (!Array.isArray(raw)) return [];
+  const byQty = new Map<number, number>();
+  for (const t of raw) {
+    const minQty = Math.floor(Number(t?.minQty));
+    const unitPrice = Math.floor(Number(t?.unitPrice));
+    if (Number.isFinite(minQty) && minQty >= 2 && Number.isFinite(unitPrice) && unitPrice > 0) byQty.set(minQty, unitPrice);
+  }
+  return [...byQty.entries()].sort((a, b) => a[0] - b[0]).map(([minQty, unitPrice]) => ({ minQty, unitPrice }));
+}
+
+/** Pre-order settings: whole days, at least 1, first number not above the second. */
+function cleanPreorder(body: any): { preorder: boolean; leadDaysMin: number; leadDaysMax: number } {
+  let min = Math.floor(Number(body?.leadDaysMin)) || 5;
+  let max = Math.floor(Number(body?.leadDaysMax)) || 10;
+  min = Math.min(365, Math.max(1, min));
+  max = Math.min(365, Math.max(1, max));
+  if (min > max) [min, max] = [max, min];
+  return { preorder: Boolean(body?.preorder), leadDaysMin: min, leadDaysMax: max };
+}
+
+/** Only the owner sets bulk prices. */
+function isOwnerReq(req: Request): boolean {
+  const perms: string[] = (req as any).user?.permissions || [];
+  return perms.includes("*");
+}
+
 /** Staff never see or send cost prices, so on their edits keep the stored costs instead of resetting them to 0. */
 function keepCosts(newItems: any[], oldItems: any[]): any[] {
   const oldById = new Map((oldItems ?? []).map((o: any) => [o.id, o]));
@@ -125,6 +153,8 @@ router.post("/", async (req: Request, res: Response) => {
       isFeatured: Boolean(body.isFeatured),
       isActive: body.isActive !== false,
       customComboEligible: Boolean(body.customComboEligible),
+      bulkTiers: isOwnerReq(req) ? cleanTiers(body.bulkTiers) : [],
+      ...(isOwnerReq(req) ? cleanPreorder(body) : {}),
       items: ensureItemIds(body.items),
       heroImage: body.heroImage ?? "",
       categorySlugs: Array.isArray(body.categorySlugs) ? body.categorySlugs : [],
@@ -154,6 +184,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
     if (body.isActive !== undefined) update.isActive = Boolean(body.isActive);
     if (body.customComboEligible !== undefined) update.customComboEligible = Boolean(body.customComboEligible);
     if (body.heroImage !== undefined) update.heroImage = body.heroImage;
+    if (Array.isArray(body.bulkTiers) && isOwnerReq(req)) update.bulkTiers = cleanTiers(body.bulkTiers);
+    if (body.preorder !== undefined && isOwnerReq(req)) Object.assign(update, cleanPreorder(body));
     if (Array.isArray(body.categorySlugs)) update.categorySlugs = body.categorySlugs;
     if (Array.isArray(body.items)) {
       update.items = ensureItemIds(body.items);

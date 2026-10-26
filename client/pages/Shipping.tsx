@@ -29,6 +29,36 @@ export default function Shipping() {
         <li>Orders outside Ilorin must be paid online before dispatch (Cash on Delivery is Ilorin only).</li>
       </ul>
 
+      <h2>Bulk orders (buy more, pay less)</h2>
+      <p>
+        Some products have a lower price for each piece when you buy more. The price list is on the product page, and the
+        total updates as you change the number of pieces. Bulk orders are paid online. Delivery in Ilorin for a bulk order
+        is a flat <strong>&#8358;2,000</strong> for the whole order, however many pieces. Outside Ilorin, a bulk order goes
+        through Jumia in the same way as any other order.
+      </p>
+
+      <h2>Pre-order items and orders sent in parts</h2>
+      <p>
+        When a product is out of stock, it may show <strong>Pre-order</strong>. We get it for you after you pay, and the
+        product page shows how many business days it takes. Pre-order items are paid online. If we cannot get the item,
+        you get your money back for it.
+      </p>
+      <p>
+        If you ask for more pieces than we have ready, your order is split. In Ilorin you choose at checkout:
+      </p>
+      <ul>
+        <li><strong>Send what is ready now</strong>: we deliver the ready pieces straight away and the rest when they arrive.
+          You pay once and delivery is charged once.</li>
+        <li><strong>Send everything together</strong>: we wait for all the pieces and deliver them in one go.</li>
+      </ul>
+      <p>
+        Outside Ilorin, everything is sent together in one parcel through Jumia once all pieces are with us. You can see
+        what is happening with each part on the <a href="/order-tracking">Order Tracking</a> page.
+      </p>
+      <p>
+        Not sure how to go about it? Ask our AI chat, or talk to a person at our customer service.
+      </p>
+
       <h2>Order Processing</h2>
       <p>
         Orders are processed Monday–Saturday. Orders placed before 1:00 PM are usually dispatched the same day.

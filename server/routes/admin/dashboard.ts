@@ -13,6 +13,7 @@
 
 import { Router, Request, Response } from "express";
 import { Order } from "../../models/Order";
+import { PACK_NOW, WAITING_GOODS } from "../../services/packFilters";
 
 const router = Router();
 
@@ -54,6 +55,8 @@ router.get("/stats", async (_req: Request, res: Response) => {
           .lean(),
       ]);
 
+    // to pack = ready to pack now (waiting-for-goods orders are not); to get = paid pre-order orders still waiting for goods
+    const [toPack, toGet] = await Promise.all([Order.countDocuments(PACK_NOW), Order.countDocuments(WAITING_GOODS)]);
     const revenueToday = revenueAggResult[0]?.total ?? 0;
     const customers = customerAgg[0]?.uniqueCustomers ?? 0;
 
@@ -62,6 +65,8 @@ router.get("/stats", async (_req: Request, res: Response) => {
         ordersToday,
         revenueToday,
         pendingOrders,
+        toPack,
+        toGet,
         customers,
         recentOrders,
       },

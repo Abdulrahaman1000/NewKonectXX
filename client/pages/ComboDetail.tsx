@@ -39,6 +39,8 @@ import type { ComboItem, ComboItemColor } from '@/types/combo';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { toast } from 'sonner';
 import { MobileComboDetail } from '@/components/MobileComboDetail';
+import { BulkBox } from '@/components/BulkBox';
+import { PreorderNotice, usePreorder } from '@/components/PreorderNotice';
 
 const DEFAULT_ID = 'default';
 
@@ -78,7 +80,7 @@ export default function ComboDetail() {
   const isSingleProduct = (combo?.items.length ?? 0) === 1;
   const itemWord = isSingleProduct ? 'product' : 'combo';
 
-  const handleAddToCart = () => {
+  const handleAddToCart = (qty?: unknown) => {
     if (!combo) return;
     // Flatten cartSelections so backend stays simple
     const flatVariants: Record<string, string> = {};
@@ -89,7 +91,7 @@ export default function ComboDetail() {
     });
     addItem(
       combo,
-      1,
+      typeof qty === 'number' && qty >= 1 ? Math.floor(qty) : 1,
       Object.keys(flatVariants).length > 0 ? flatVariants : undefined,
     );
     toast.success(`${combo.name} added to cart`);
@@ -364,11 +366,11 @@ if (isMobile && combo) {
                   <button
                     type="button"
                     onClick={handleAddToCart}
-                    disabled={combo.stockLeft === 0}
+                    disabled={combo.stockLeft === 0 && !(combo as any).preorder}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <ShoppingBag className="w-4 h-4" />
-                    {combo.stockLeft === 0 ? 'Out of stock' : 'Add to cart'}
+                    {combo.stockLeft === 0 ? ((combo as any).preorder ? 'Pre-order now' : 'Out of stock') : 'Add to cart'}
                   </button>
                   
 <a
@@ -415,8 +417,9 @@ function SingleProductLayout({
   stockLeft: number;
   savings: { saving: number; percent: number } | null;
   whatsappLink: string;
-  onAddToCart: () => void;
+  onAddToCart: (qty?: number) => void;
 }) {
+  const pre = usePreorder();
   const hasAlts = (item.alternatives?.length ?? 0) > 0;
   const hasColors = (item.colors?.length ?? 0) > 0;
 
@@ -493,15 +496,18 @@ function SingleProductLayout({
             )}
           </div>
 
+          <PreorderNotice />
+          <BulkBox onAdd={(q) => onAddToCart(q)} />
+
           <div className="flex flex-col sm:flex-row gap-3 mt-5">
             <button
               type="button"
-              onClick={onAddToCart}
-              disabled={stockLeft === 0}
+              onClick={() => onAddToCart()}
+              disabled={stockLeft === 0 && !pre.active}
               className="btn-primary flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ShoppingBag className="w-4 h-4" />
-              {stockLeft === 0 ? 'Out of stock' : 'Add to cart'}
+              {stockLeft === 0 ? (pre.active ? 'Pre-order now' : 'Out of stock') : 'Add to cart'}
             </button>
             
 <a

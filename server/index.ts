@@ -31,6 +31,7 @@ import adminAdsRouter from "./routes/admin/ads";
 import adminWithdrawalsRouter from "./routes/admin/withdrawals";
 import adminProfitRouter from "./routes/admin/profit";
 import adminFulfilmentRouter from "./routes/admin/fulfilment";
+import adminToGetRouter from "./routes/admin/toget";
 import adminStockRouter from "./routes/admin/stock";
 import adminSummaryRouter from "./routes/admin/summary";
 import staffRouter from "./routes/admin/staff";
@@ -117,6 +118,7 @@ export function createServer() {
   app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
   app.use("/api/admin/profit", requireAuth, adminProfitRouter);
   app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
+  app.use("/api/admin/to-get", requireAuth, adminToGetRouter);
   app.use("/api/admin/stock", requireAuth, adminStockRouter);
   app.use("/api/admin/summary", requireAuth, adminSummaryRouter);
   app.use("/api/admin/staff", requireAuth, staffRouter);

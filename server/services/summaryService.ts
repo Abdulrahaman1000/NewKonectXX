@@ -12,6 +12,7 @@ import { Commission } from "../models/Commission";
 import { SummaryLog } from "../models/SummaryLog";
 import { buildReport } from "./costService";
 import { resolveCommissionStatuses } from "./referralService";
+import { PACK_NOW, WAITING_GOODS } from "./packFilters";
 
 export const SUMMARY_HOUR = 7; // Lagos time
 const LOW_AT = 3;
@@ -33,12 +34,13 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
   const start = new Date(`${ymd}T00:00:00+01:00`);
   const end = new Date(start.getTime() + 86400_000 - 1);
 
-  const [orders, toPackCount, oldestToPack, unpaidCount, stock, expenses] = await Promise.all([
+  const [orders, toPackCount, toGetCount, oldestToPack, unpaidCount, stock, expenses] = await Promise.all([
     Order.find({ status: { $in: COUNTED }, createdAt: { $gte: start, $lte: end } })
       .select("subtotal shippingFee total source items.name items.quantity items.isFreeGift")
       .lean(),
-    Order.countDocuments({ $or: [{ status: { $in: ["paid", "processing"] } }, { status: "pending", paymentMethod: "cod" }] }),
-    Order.findOne({ $or: [{ status: { $in: ["paid", "processing"] } }, { status: "pending", paymentMethod: "cod" }] })
+    Order.countDocuments(PACK_NOW),
+    Order.countDocuments(WAITING_GOODS),
+    Order.findOne(PACK_NOW)
       .sort({ createdAt: 1 })
       .select("createdAt")
       .lean(),
@@ -91,6 +93,7 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
     expenses: report.expensesTotal,
     bestSellers,
     toPack: toPackCount,
+    toGet: toGetCount,
     oldestToPackHours: oldestToPack ? Math.floor((Date.now() - new Date((oldestToPack as any).createdAt).getTime()) / 3600_000) : 0,
     unpaid: unpaidCount,
     lowStock: (stock as any[]).map((c) => ({ name: c.name, stockLeft: c.stockLeft ?? 0 })),
@@ -115,6 +118,7 @@ export function summaryHtml(s: Summary): string {
   const profit = s.profit === null ? "Add cost prices to see profit" : naira(s.profit);
   const alerts = [
     s.toPack > 0 ? `<b>${s.toPack}</b> order${s.toPack === 1 ? "" : "s"} waiting to be packed${s.oldestToPackHours >= 24 ? ` (oldest ${Math.floor(s.oldestToPackHours / 24)} day${s.oldestToPackHours >= 48 ? "s" : ""})` : ""}` : "",
+    s.toGet > 0 ? `<b>${s.toGet}</b> paid order${s.toGet === 1 ? "" : "s"} waiting for goods to be bought (To get)` : "",
     s.unpaid > 0 ? `<b>${s.unpaid}</b> unpaid order${s.unpaid === 1 ? "" : "s"} still pending` : "",
     s.commissionOwed > 0 ? `You owe partners <b>${naira(s.commissionOwed)}</b> (ready to pay)` : "",
   ].filter(Boolean).map((a) => `<li style="margin:4px 0;">${a}</li>`).join("");

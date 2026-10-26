@@ -48,6 +48,12 @@ export interface ComboPayload {
   isFeatured: boolean;
   isActive: boolean;
   customComboEligible: boolean;
+  /** bulk price levels (owner only on the server) */
+  bulkTiers?: Array<{ minQty: number; unitPrice: number }>;
+  /** pre-order switch and waiting time in business days (owner only on the server) */
+  preorder?: boolean;
+  leadDaysMin?: number;
+  leadDaysMax?: number;
   items: Array<{
     id?: string;
     name: string;

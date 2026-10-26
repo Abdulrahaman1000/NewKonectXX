@@ -34,6 +34,7 @@ import { formatNaira } from '@/lib/format';
 import { trackOrder } from '@/api/orders';
 import { initializePaystack, verifyPaystackPayment } from '@/api/payments';
 import type { Order } from '@/types/order';
+import { OrderParts } from '@/components/OrderParts';
 import { toast } from 'sonner';
 
 export default function OrderConfirmation() {
@@ -252,6 +253,8 @@ export default function OrderConfirmation() {
               {paymentStatus !== 'paid' && order.status !== 'paid' && order.status !== 'processing' && order.status !== 'shipped' && order.status !== 'delivered' && (
                 <PaymentInstructions order={order} settings={settings} />
               )}
+
+              <div className="mb-5"><OrderParts order={order} /></div>
 
               {/* Order details */}
               <div className="rounded-2xl border border-white/10 p-5 mb-5" style={{ background: 'rgba(255,255,255,0.02)' }}>

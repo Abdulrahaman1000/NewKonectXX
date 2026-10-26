@@ -19,6 +19,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { CartItem } from '@/types/order';
 import type { Combo } from '@/types/combo';
+import { priceForQty, repriceLine, tiersOf } from '@/lib/bulk';
+import { preorderFlags } from '@/lib/preorder';
 
 export interface CustomComboGroup {
   id: string;
@@ -115,6 +117,8 @@ export const useCart = create<CartStore>()(
                 ? {
                     ...i,
                     quantity: i.quantity + quantity,
+                    unitPrice: priceForQty(combo.totalPrice, tiersOf(combo), i.quantity + quantity),
+                    ...({ bulkTiers: tiersOf(combo), basePrice: combo.totalPrice, ...preorderFlags(combo) } as object),
                     selectedVariants: selectedVariants ?? i.selectedVariants,
                   }
                 : i,
@@ -128,9 +132,10 @@ export const useCart = create<CartStore>()(
                 comboId: combo.id,
                 comboName: combo.name,
                 comboSlug: combo.slug,
-                unitPrice: combo.totalPrice,
+                unitPrice: priceForQty(combo.totalPrice, tiersOf(combo), quantity),
                 originalPrice: combo.originalPrice,
                 quantity,
+                ...({ bulkTiers: tiersOf(combo), basePrice: combo.totalPrice, ...preorderFlags(combo) } as object),
                 image: combo.items[0]?.images[0]?.url ?? '',
                 selectedVariants,
               },
@@ -226,7 +231,7 @@ export const useCart = create<CartStore>()(
 
         const updatedItems = get().items.map((i) =>
           i.comboId === comboId && (comboGroupId ? i.comboGroupId === comboGroupId : !i.comboGroupId) && !i.isFreeGift
-            ? { ...i, quantity }
+            ? { ...i, quantity, unitPrice: repriceLine(i, quantity) }
             : i,
         );
 

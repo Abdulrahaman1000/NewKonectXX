@@ -42,6 +42,9 @@ export interface OrderItemSnapshot {
   selectedVariants?: Record<string, string>;   // itemId → alternativeId
   variantSummary?: string;                     // human-readable
   isFreeGift?: boolean;                        // identifies free gift items
+  preorder?: boolean;                          // pre-order line: nothing was taken from stock
+  leadDaysMin?: number;
+  leadDaysMax?: number;
 }
 
 export interface ShippingAddress {
@@ -68,6 +71,26 @@ export interface OrderDocument extends Document {
   source?: OrderSource;
   /** true when the owner recorded it by hand (WhatsApp, walk-in...) */
   manual?: boolean;
+  /** true when the order reaches a bulk price level (flat bulk delivery, paid online) */
+  isBulk?: boolean;
+  /** the order has pre-order items */
+  hasPreorder?: boolean;
+  /** paid pre-order whose goods you have not got yet: kept out of the packing queue */
+  awaitingGoods?: boolean;
+  /** "now" = the ready pieces are sent first (in parts); "together" = everything in one go; empty = not a mixed order */
+  partialChoice?: "now" | "together" | "";
+  /** only when partialChoice is "now": the parts and where each one is */
+  shipments?: Array<{
+    n: number;
+    itemIdx: number[];
+    status: "waiting" | "to_pack" | "packed" | "shipped" | "delivered";
+    trackingNumber?: string;
+    trackingProviderUrl?: string;
+    readyAt?: Date;
+    packedAt?: Date;
+    shippedAt?: Date;
+    deliveredAt?: Date;
+  }>;
   paystackRefs?: string[];
   shipping: ShippingAddress;
   phoneKey?: string;
@@ -95,6 +118,9 @@ const OrderItemSnapshotSchema = new Schema<OrderItemSnapshot>(
     selectedVariants: { type: Schema.Types.Mixed, default: {} },
     variantSummary: { type: String, default: "" },
     isFreeGift: { type: Boolean, default: false },
+    preorder: { type: Boolean, default: false },
+    leadDaysMin: { type: Number },
+    leadDaysMax: { type: Number },
   },
   { _id: false },
 );
@@ -109,6 +135,21 @@ const ShippingAddressSchema = new Schema<ShippingAddress>(
     city: { type: String, required: true },
     street: { type: String, required: true },
     landmark: { type: String },
+  },
+  { _id: false },
+);
+
+const ShipmentSchema = new Schema(
+  {
+    n: { type: Number, required: true },
+    itemIdx: { type: [Number], default: [] },
+    status: { type: String, enum: ["waiting", "to_pack", "packed", "shipped", "delivered"], default: "waiting" },
+    trackingNumber: { type: String },
+    trackingProviderUrl: { type: String },
+    readyAt: { type: Date },
+    packedAt: { type: Date },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date },
   },
   { _id: false },
 );
@@ -140,6 +181,11 @@ const OrderSchema = new Schema<OrderDocument>(
     phoneKey: { type: String },
     source: { type: String, enum: ["website", "whatsapp", "walkin", "social", "other"], default: "website", index: true },
     manual: { type: Boolean, default: false },
+    isBulk: { type: Boolean, default: false },
+    hasPreorder: { type: Boolean, default: false },
+    awaitingGoods: { type: Boolean, default: false, index: true },
+    partialChoice: { type: String, enum: ["now", "together", ""], default: "" },
+    shipments: { type: [ShipmentSchema], default: undefined },
     notes: { type: String },
     trackingNumber: { type: String },
     trackingProviderUrl: { type: String },

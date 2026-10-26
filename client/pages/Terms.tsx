@@ -55,6 +55,18 @@ export default function Terms() {
         place a new order.
       </p>
 
+      <h2>5b. Bulk prices and pre-orders</h2>
+      <p>
+        Bulk prices apply to the whole quantity you order when it reaches the level shown on the product page. Bulk and
+        pre-order items are paid online. Delivery in Ilorin for a bulk order is a flat &#8358;2,000 for the whole order.
+      </p>
+      <p>
+        A pre-order item is one we do not have in stock when you order. We get it for you after you pay and show the
+        expected time on the product page; this is an estimate. If we cannot get a pre-order item, we refund you for that
+        item. If only some pieces are in stock, an order delivered in Ilorin can be sent in parts at your choice, with
+        one payment and one delivery fee; orders outside Ilorin are sent together.
+      </p>
+
       <h2>6. Payment</h2>
       <p>
         Online payments are processed by Paystack (card, bank transfer, USSD and other methods it offers). Other

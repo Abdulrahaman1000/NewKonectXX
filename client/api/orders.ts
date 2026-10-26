@@ -26,6 +26,9 @@ export interface CreateOrderInput {
   shipping: ShippingAddress;
   paymentMethod: PaymentMethod;
   notes?: string;
+  ackPreorder?: boolean;
+  /** "now": send the ready pieces first (Ilorin only) */
+  partialChoice?: "now" | "together";
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
@@ -42,6 +45,8 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     paymentMethod: input.paymentMethod,
     ref: getReferral(),
     notes: input.notes,
+    ackPreorder: Boolean(input.ackPreorder),
+    partialChoice: input.partialChoice === "now" ? "now" : "together",
   };
 
   const res = await apiFetch<ApiResponse<BackendOrder>>("/api/orders", {
@@ -49,6 +54,34 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     body: JSON.stringify(payload),
   });
   return normalize(res.data);
+}
+
+export interface OrderPreview {
+  lines: Array<{ comboId: string; name: string; ready: number; waiting: number; leadDaysMin: number; leadDaysMax: number; short?: boolean; want?: number }>;
+  hasPre: boolean;
+  /** some pieces are ready and some must be fetched */
+  mixed: boolean;
+  /** the city is one we deliver in ourselves (Ilorin) */
+  local: boolean;
+  subtotal: number;
+  leadDaysMin: number;
+  leadDaysMax: number;
+}
+
+/** Asks the server which pieces are ready and which must be fetched. Returns null if it cannot tell. */
+export async function previewOrder(items: CartItem[], city: string): Promise<OrderPreview | null> {
+  try {
+    const res = await apiFetch<ApiResponse<OrderPreview>>("/api/orders/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        items: items.filter((i) => !i.isFreeGift).map((i) => ({ comboId: i.comboId, quantity: i.quantity })),
+        city,
+      }),
+    });
+    return res.data;
+  } catch {
+    return null;
+  }
 }
 
 export async function trackOrder(orderNumber: string, phone: string): Promise<Order | null> {

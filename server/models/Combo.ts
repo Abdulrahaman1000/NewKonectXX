@@ -45,6 +45,12 @@ export interface ComboItem {
   colors?: ComboItemColor[];
 }
 
+/** "From minQty pieces, each one costs unitPrice" (a bulk price level). */
+export interface BulkTier {
+  minQty: number;
+  unitPrice: number;
+}
+
 export interface ComboDocument extends Document {
   slug: string;
   name: string;
@@ -55,6 +61,12 @@ export interface ComboDocument extends Document {
   originalPrice: number;
   badge: string;
   stockLeft: number;
+  /** Bulk price levels, smallest quantity first. Empty = no bulk prices. */
+  bulkTiers?: BulkTier[];
+  /** Pre-order: when on and there is no stock, customers can still order and pay; you buy it after payment. */
+  preorder?: boolean;
+  leadDaysMin?: number;
+  leadDaysMax?: number;
   isFeatured: boolean;
   isActive: boolean;
   /** Whether this product can be picked by customers in the "Build Your Own Combo" picker. */
@@ -114,6 +126,14 @@ const ComboItemSchema = new Schema<ComboItem>(
   { _id: false },
 );
 
+const BulkTierSchema = new Schema<BulkTier>(
+  {
+    minQty: { type: Number, required: true, min: 2 },
+    unitPrice: { type: Number, required: true, min: 1 },
+  },
+  { _id: false },
+);
+
 const ComboSchema = new Schema<ComboDocument>(
   {
     slug: {
@@ -132,6 +152,10 @@ const ComboSchema = new Schema<ComboDocument>(
     originalPrice: { type: Number, required: true, min: 0 },
     badge: { type: String, default: "" },
     stockLeft: { type: Number, default: 0, min: 0 },
+    bulkTiers: { type: [BulkTierSchema], default: [] },
+    preorder: { type: Boolean, default: false },
+    leadDaysMin: { type: Number, default: 5, min: 1 },
+    leadDaysMax: { type: Number, default: 10, min: 1 },
     isFeatured: { type: Boolean, default: false, index: true },
     isActive: { type: Boolean, default: true, index: true },
     customComboEligible: { type: Boolean, default: false, index: true },
