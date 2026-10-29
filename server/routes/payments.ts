@@ -26,6 +26,7 @@ import {
 } from "../services/orderService";
 import { startPlanPayment, rememberInitiated, confirmPlanPayment } from "../services/installments";
 import { Order } from "../models/Order";
+import { handleWebhookCharge, isVtuReference } from "../services/vtuService"; // SC-VTU
 
 const router = Router();
 
@@ -230,6 +231,7 @@ router.post(
 
       console.log(`📥 Paystack webhook: ${eventType} (ref: ${reference})`);
 
+      if (eventType === "charge.success" && isVtuReference(reference)) { await handleWebhookCharge(reference); return res.status(200).send("OK"); } // SC-VTU
       if (eventType === "charge.success" && reference) {
         const verification = await verifyTransaction(reference);
         if (verification.status === "success") {

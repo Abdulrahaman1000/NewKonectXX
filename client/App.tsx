@@ -22,6 +22,10 @@ import ComboDetail from './pages/ComboDetail';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import OrderTracking from './pages/OrderTracking';
+import Pay from './pages/Pay'; // SC-VTU
+import PayResult from './pages/PayResult'; // SC-VTU
+import AdminVtu from './pages/AdminVtu'; // SC-VTU
+import Account from './pages/Account'; // SC-ACCT
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminLogin from './pages/AdminLogin';
@@ -101,6 +105,10 @@ const App = () => (
                   <Route path="/checkout" element={<Checkout />} />
                   <Route path="/order-confirmation/:orderNumber" element={<OrderConfirmation />} />
                   <Route path="/order-tracking" element={<OrderTracking />} />
+                  <Route path="/pay" element={<Pay />} />
+                  <Route path="/pay/result" element={<PayResult />} />
+                  <Route path="/admin/vtu" element={<AdminProtectedRoute perm="owner"><AdminVtu /></AdminProtectedRoute>} />
+                  <Route path="/account" element={<Account />} />
                   <Route path="/dashboard" element={<Dashboard />} />
 
                   {/* Admin routes */}

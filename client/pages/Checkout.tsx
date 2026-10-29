@@ -442,7 +442,7 @@ export default function Checkout() {
                   <p className="text-sm md:text-base font-black text-primary mb-1">Some items are pre-order</p>
                   <p className="text-[13px] md:text-sm text-white/75 leading-relaxed mb-3">
                     We get these items for you after you pay. They arrive in {preWindow.min} to {preWindow.max} business days after
-                    payment. If we cannot get them, you get your money back.
+                    payment. If we cannot get them, you get your money back. <strong>Pay in full to pre-order. Instalments are not available for pre-orders.</strong>
                   </p>
                   {canChoosePart && preview && (
                     <div className="mb-3">

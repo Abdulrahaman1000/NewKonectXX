@@ -130,6 +130,7 @@ export default function AdminDashboard() {
             <TileLink to="/admin/stock" Icon={ShoppingBag} label="Stock" desc="Low-stock alerts, add stock, restock history" badge={stockAlerts} badgeLabel="low" />
             <TileLink to="/admin/to-get" Icon={Package} label="To get" desc="Pre-order items to buy for paid orders" badge={(stats as any)?.toGet ?? 0} badgeLabel="to buy" />
             <TileLink to="/admin/fulfilment?tab=instalments" Icon={Package} label="Instalments" desc="Customers paying in parts: who is late, store credit" badge={(stats as any)?.instalments?.overdue ?? 0} badgeLabel="late" />
+            <TileLink to="/admin/vtu" Icon={Package} label="Airtime, data, electricity" desc="Recharge sales, profit, refunds, prices" /> {/* SC-VTU */}
             <TileLink to="/admin/chats" Icon={MessageCircle} label="Chats" desc="Customer messages — read and reply" badge={unreadChats} badgeLabel="new" />
             <TileLink to="/admin/combos" Icon={ShoppingBag} label="Products & Combos" desc="Add single products or combos, set price and cost, manage stock" highlight />
             <TileLink to="/admin/resellers" Icon={UserPlus} label="Partners" desc="Review applications, payouts and commission settings" badge={resellerCounts?.pending ?? 0} />

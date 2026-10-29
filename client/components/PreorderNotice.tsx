@@ -35,7 +35,7 @@ export function PreorderNotice({ combo }: { combo?: Combo }) {
           <p className="text-[15px] font-black text-primary">Pre-order</p>
           <p className="mt-1 text-[14px] leading-relaxed text-white/80">
             We get this item for you after you pay. It arrives in {p.min} to {p.max} business days. If we cannot get it,
-            you get your money back.
+            you get your money back. <strong>Pay in full to pre-order. Instalments are not available for pre-orders.</strong>
           </p>
           <HelpLine className="mt-3" topic="a pre-order" />
         </div>

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronDown, Menu, Search, ShoppingCart, Sparkles, X } from 'lucide-react';
+import { ChevronDown, CreditCard, Menu, Search, ShoppingCart, Sparkles, User, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useCart } from '@/stores/cart';
@@ -8,6 +8,7 @@ import { fetchCategories } from '@/api/categories';
 import { SearchBar } from '@/components/shared/SearchBar';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import Logo from '@/components/shared/Logo';
+import { showAccountLinks, useVtuEnabled } from '@/hooks/useVtuEnabled';
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
@@ -17,6 +18,7 @@ export function Header() {
   const openCart = useCart((s) => s.openCart);
   const { settings } = useSettings();
   const storeName = settings?.storeName ?? 'Smart Combo';
+  const vtuOn = useVtuEnabled();
 
   const { data: categories = [] } = useQuery({
     queryKey: ['categories'],
@@ -46,6 +48,11 @@ export function Header() {
             >
               Home
             </Link>
+            {vtuOn && (
+              <Link to="/pay" className="text-sm font-medium text-foreground/80 hover:text-primary transition-colors">
+                Pay bills
+              </Link>
+            )}
 
             <div
               className="relative"
@@ -124,6 +131,12 @@ export function Header() {
 
           <div className="hidden md:flex items-center gap-3 flex-shrink-0">
             <ThemeToggle />
+            {showAccountLinks && (
+              <Link to="/account" aria-label="My account" className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 hover:text-primary transition-colors">
+                <User className="w-4 h-4" />
+                <span className="hidden xl:inline">Account</span>
+              </Link>
+            )}
             <Link
               to="/partner"
               className="hidden xl:inline text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
@@ -215,6 +228,13 @@ export function Header() {
               </Link>
             ))}
             <Link to="/order-tracking" onClick={toggleMenu} className="block py-2 text-sm">Track Order</Link>
+            {vtuOn && (
+              <Link to="/pay" onClick={toggleMenu} className="flex items-center gap-1.5 py-2 text-sm font-bold text-primary">
+                <CreditCard className="w-3.5 h-3.5" />
+                Pay bills (airtime, data, electricity)
+              </Link>
+            )}
+            {showAccountLinks && <Link to="/account" onClick={toggleMenu} className="block py-2 text-sm">My account</Link>}
             <Link to="/contact" onClick={toggleMenu} className="block py-2 text-sm">Contact</Link>
             <Link
               to="/products?mode=combo-builder"

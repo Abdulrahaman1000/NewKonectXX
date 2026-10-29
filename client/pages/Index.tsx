@@ -60,6 +60,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { WelcomeGiftModal } from '@/components/shared/WelcomeGiftModal';
 import { Sparkles } from 'lucide-react';
+import { RechargeCard } from '@/components/RechargeCard';
 
 
 export default function Index() {
@@ -166,6 +167,7 @@ export default function Index() {
       {isMobile ? (
         <>
           <MobileHero featuredCombo={featuredCombo ?? null} combos={combos} />
+          <div className="section-padding py-3"><RechargeCard /></div>
           <MobileQuickShop
             categories={categories}
             allImage={settings.allCategoryImage}
@@ -182,6 +184,7 @@ export default function Index() {
             reviewCount={settings.trustStats.reviewCount}
           />
           <TrustBar />
+          <div className="section-padding py-4"><div className="container-premium"><RechargeCard /></div></div>
           <DesktopCategoryStrip
             categories={categories}
             allImage={settings.allCategoryImage}

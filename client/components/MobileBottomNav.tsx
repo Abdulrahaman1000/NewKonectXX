@@ -10,12 +10,13 @@
 
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, LayoutGrid, MessageCircle, ShoppingBag, Sparkles } from 'lucide-react';
+import { CreditCard, Home, LayoutGrid, MessageCircle, ShoppingBag, Sparkles } from 'lucide-react';
 import { useCart } from '@/stores/cart';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { ChatSheet } from '@/components/ChatSheet';
 import { chatUI, useChatOpen } from '@/stores/chat';
 import { useChatUnread } from '@/hooks/useChatUnread';
+import { useVtuEnabled } from '@/hooks/useVtuEnabled';
 
 const ITEM = 'relative flex-1 h-16 flex flex-col items-center justify-center gap-1 text-[11px] font-semibold';
 
@@ -30,6 +31,7 @@ export function MobileBottomNav() {
   // Cart badge. If your cart store names its list differently, change `items` here.
   const chatOpen = useChatOpen();
   const chatUnread = useChatUnread(isMobile && !chatOpen);
+  const vtuOn = useVtuEnabled();
   const count = useCart((s) => (((s as any).items?.length ?? 0) as number));
 
   const inBuilder = search.includes('mode=combo-builder');
@@ -72,6 +74,15 @@ export function MobileBottomNav() {
             Build
           </Tab>
         </Link>
+
+        {vtuOn && (
+          <Link to="/pay" className={ITEM}>
+            <Tab active={pathname.startsWith('/pay')}>
+              <CreditCard className="w-6 h-6" />
+              Pay
+            </Tab>
+          </Link>
+        )}
 
         <button type="button" onClick={openCart} className={ITEM} aria-label="Open cart">
           <Tab active={false}>
