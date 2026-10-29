@@ -24,7 +24,7 @@ import {
   sendChatMessage,
   startChat,
 } from '@/api/chat';
-import { chatUI, useChatOpen } from '@/stores/chat';
+import { chatUI, useChatOpen, useChatSeq } from '@/stores/chat';
 import { AIProductCards } from '@/components/AIProductCards';
 
 const QUICK = ['Is this available?', 'How long is delivery?', 'Can I get a discount?'];
@@ -75,8 +75,13 @@ export function ChatSheet() {
 
 function ChatPanel() {
   const { settings } = useSettings();
-  const [tab, setTab] = useState<'ai' | 'human'>('ai');
+  const [tab, setTab] = useState<'ai' | 'human'>(chatUI.tab());
   const [handoff, setHandoff] = useState('');
+  const openSeq = useChatSeq();
+  // If the panel is already open and a help line asks for a tab, switch to it
+  useEffect(() => {
+    setTab(chatUI.tab());
+  }, [openSeq]);
 
   const waNumber = settings?.contact?.whatsappNumber?.replace(/\D/g, '') ?? '';
   const whatsappLink = settings?.contact?.whatsappLink || (waNumber ? `https://wa.me/${waNumber}` : '');

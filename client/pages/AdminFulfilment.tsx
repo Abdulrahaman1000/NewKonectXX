@@ -15,6 +15,8 @@ import {
 import { formatNaira } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { ToGetPanel } from '@/components/ToGetPanel';
+import { InstalmentsPanel } from '@/components/InstalmentsPanel';
+import { getInstalmentCounts } from '@/api/instalments';
 import { getToGet } from '@/api/adminToGet';
 
 const ROUTE_LABEL: Record<FulfilRoute, string> = {
@@ -108,10 +110,12 @@ function age(iso?: string) {
 
 export default function AdminFulfilment() {
   const qc = useQueryClient();
-  type Tab = 'pack' | 'transit' | 'toget';
-  const [tab, setTab] = useState<Tab>(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'toget' ? 'toget' : 'pack',
-  );
+  type Tab = 'pack' | 'transit' | 'toget' | 'instalments';
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
+    return t === 'toget' || t === 'instalments' ? t : 'pack';
+  });
+  const { data: instCounts } = useQuery({ queryKey: ['inst-counts'], queryFn: getInstalmentCounts, retry: false });
   const { data: toGetData } = useQuery({ queryKey: ['admin-to-get'], queryFn: getToGet });
   const { data, isLoading, error } = useQuery({ queryKey: ['admin-fulfilment'], queryFn: getFulfilment });
 
@@ -150,7 +154,7 @@ export default function AdminFulfilment() {
       </div>
 
       <div className="flex gap-2 mb-6">
-        {([['pack', `To pack (${data?.toPack.length ?? 0})`], ['transit', `On the way (${data?.inTransit.length ?? 0})`], ['toget', `To get (${toGetData?.orders.length ?? 0})`]] as const).map(([k, label]) => (
+        {([['pack', `To pack (${data?.toPack.length ?? 0})`], ['transit', `On the way (${data?.inTransit.length ?? 0})`], ['toget', `To get (${toGetData?.orders.length ?? 0})`], ['instalments', `Instalments (${instCounts?.active ?? 0}${instCounts?.overdue ? ', ' + instCounts.overdue + ' late' : ''})`]] as const).map(([k, label]) => (
           <button key={k} type="button" onClick={() => setTab(k)}
             className={`px-4 py-2 rounded-full text-xs font-bold border ${tab === k ? 'bg-primary text-black border-primary' : 'border-white/15 text-white/70 hover:bg-white/5'}`}>
             {label}
@@ -160,11 +164,12 @@ export default function AdminFulfilment() {
 
       {isLoading && <p className="text-sm text-white/45 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>}
       {error && <p className="text-sm text-red-300">Could not load the queue.</p>}
-      {!isLoading && !error && tab !== 'toget' && list.length === 0 && (
+      {!isLoading && !error && tab !== 'toget' && tab !== 'instalments' && list.length === 0 && (
         <p className="text-sm text-white/45 py-10 text-center">{tab === 'pack' ? 'Nothing to pack. All caught up.' : 'Nothing is on the way right now.'}</p>
       )}
 
       {tab === 'toget' && <ToGetPanel />}
+      {tab === 'instalments' && <InstalmentsPanel />}
 
       <div className="grid gap-4 md:grid-cols-2">
         {list.map((o) => (

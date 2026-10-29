@@ -29,6 +29,7 @@ import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
 import { trackOrder } from '@/api/orders';
 import { OrderParts } from '@/components/OrderParts';
+import { InstalmentPanel } from '@/components/InstalmentPanel';
 import { formatNaira } from '@/lib/format';
 import type { Order, OrderStatus } from '@/types/order';
 import { toast } from 'sonner';
@@ -321,6 +322,8 @@ function OrderDetails({ order }: { order: Order }) {
           </div>
         )}
       </div>
+
+      <InstalmentPanel order={order} />
 
       <OrderParts order={order} />
 

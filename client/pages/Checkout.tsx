@@ -22,6 +22,8 @@ import { BULK_DELIVERY_FEE, lineIsBulk } from '@/lib/bulk';
 import { cartPreorderWindow, lineIsPreorder } from '@/lib/preorder';
 import { PartialChoice, type PartialValue } from '@/components/PartialChoice';
 import { HelpLine } from '@/components/HelpLine';
+import { InstalmentChoice, type InstValue } from '@/components/InstalmentChoice';
+import { getInstallmentQuote, type QuoteResult } from '@/api/instalments';
 import { createOrder, previewOrder, type OrderPreview } from '@/api/orders';
 import { initializePaystack } from '@/api/payments';
 import { ApiError } from '@/api/client';
@@ -60,6 +62,8 @@ export default function Checkout() {
   const [ackPre, setAckPre] = useState(false);
   const [partial, setPartial] = useState<PartialValue>('together');
   const [preview, setPreview] = useState<OrderPreview | null>(null);
+  const [quote, setQuote] = useState<QuoteResult | null>(null);
+  const [inst, setInst] = useState<InstValue>({ on: false, parts: 2, ack: false });
   const [form, setForm] = useState({
     fullName: '',
     phone: '',
@@ -111,6 +115,24 @@ export default function Checkout() {
     };
   }, [items, form.city]);
 
+  // Can this cart be paid in instalments? (the server decides: one product or combo, no pre-order or bulk, price 10,000 to 200,000)
+  useEffect(() => {
+    const lines = items.filter((i) => !i.isFreeGift);
+    if (lines.length === 0) {
+      setQuote(null);
+      return;
+    }
+    let off = false;
+    const t = setTimeout(async () => {
+      const q = await getInstallmentQuote(lines, form.city);
+      if (!off) setQuote(q);
+    }, 450);
+    return () => {
+      off = true;
+      clearTimeout(t);
+    };
+  }, [items, form.city]);
+
   // Leaving checkout forgets the credit
   useEffect(() => () => setGiftCredit(0), [setGiftCredit]);
 
@@ -152,7 +174,10 @@ export default function Checkout() {
   const canChoosePart = Boolean(preview?.mixed);
   const partialChoice: PartialValue = canChoosePart && preview?.local && isCodEligible ? partial : 'together';
   // bulk and pre-order items are paid online only
-  const onlineOnly = hasBulk || hasPre;
+  // Instalments: only when the server says the cart qualifies and the customer switched it on
+  const planOption = quote?.quote?.options.find((o) => o.parts === inst.parts) ?? quote?.quote?.options[0];
+  const usePlan = inst.on && Boolean(quote?.eligible) && Boolean(planOption) && !hasBulk && !hasPre;
+  const onlineOnly = hasBulk || hasPre || usePlan;
   const localFee = hasBulk ? BULK_DELIVERY_FEE : LOCAL_DELIVERY_FEE;
   const estimatedShipping = isCodEligible ? localFee : 0;
   useEffect(() => {
@@ -162,6 +187,7 @@ export default function Checkout() {
 
   const computedSubtotal = subtotal();
   const total = computedSubtotal + estimatedShipping;
+  const payNow = usePlan && planOption ? planOption.firstAmount : total;
 
   const handlePaymentChange = (method: PaymentMethod) => {
     if (method === 'cod' && !isCodEligible) {
@@ -198,12 +224,17 @@ export default function Checkout() {
       return;
     }
 
+    if (usePlan && !inst.ack) {
+      toast.error('Please tick the box to say you agree to the instalment rules.');
+      return;
+    }
+
     if (hasPre && !ackPre) {
       toast.error('Please tick the box to say you understand some items are pre-order.');
       return;
     }
 
-    if (giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
+    if (!usePlan && giftUnlocked && !pickedGift && gifts && gifts.length > 0) {
       toast.error('Please choose your free gift first');
       giftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -213,7 +244,8 @@ export default function Checkout() {
     try {
       // 1. Create the order in our DB
       const order = await createOrder({
-        items,
+        items: usePlan ? items.filter((i) => !i.isFreeGift) : items,
+        installment: usePlan && planOption ? { pay: true, payments: planOption.parts, ack: inst.ack } : undefined,
         shipping: {
           fullName: form.fullName.trim(),
           phone: form.phone.trim(),
@@ -430,6 +462,10 @@ export default function Checkout() {
                 </div>
               )}
 
+              {quote?.eligible && !hasPre && !hasBulk && (
+                <InstalmentChoice quote={quote} value={inst} onChange={setInst} local={isCodEligible} cityKnown={form.city.trim() !== ''} />
+              )}
+
               <Section title="Payment method">
                 <div className="space-y-2">
                   <PaymentOption
@@ -565,6 +601,11 @@ export default function Checkout() {
                 <span className="text-sm text-white/70 font-bold">Total</span>
                 <span className="text-lg text-primary font-black tabular-nums">{formatNaira(total)}</span>
               </div>
+              {usePlan && planOption && (
+                <p className="mt-2 text-[11px] leading-relaxed text-white/60 text-right">
+                  You pay {formatNaira(planOption.firstAmount)} now. The other {formatNaira(total - planOption.firstAmount)} is due within {quote?.quote?.days} days.
+                </p>
+              )}
 
               <button
                 type="submit"
@@ -574,7 +615,7 @@ export default function Checkout() {
                 {submitting ? (
                   <><Loader2 className="w-4 h-4 animate-spin" />Placing order...</>
                 ) : paymentMethod === 'paystack' ? (
-                  <><CreditCard className="w-4 h-4" />Pay {formatNaira(total)} now</>
+                  <><CreditCard className="w-4 h-4" />Pay {formatNaira(payNow)} now{usePlan ? ' (part 1)' : ''}</>
                 ) : (
                   <>Place order — {formatNaira(total)}</>
                 )}

@@ -29,6 +29,8 @@ export interface CreateOrderInput {
   ackPreorder?: boolean;
   /** "now": send the ready pieces first (Ilorin only) */
   partialChoice?: "now" | "together";
+  /** pay in instalments: how many payments, and that the customer ticked the rules box */
+  installment?: { pay: true; payments: number; ack: boolean };
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
@@ -47,6 +49,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     notes: input.notes,
     ackPreorder: Boolean(input.ackPreorder),
     partialChoice: input.partialChoice === "now" ? "now" : "together",
+    installment: input.installment,
   };
 
   const res = await apiFetch<ApiResponse<BackendOrder>>("/api/orders", {

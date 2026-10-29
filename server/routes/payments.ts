@@ -22,7 +22,9 @@ import {
   findByOrderNumber,
   markOrderPaid,
   paymentMatchesOrder,
+  OrderError,
 } from "../services/orderService";
+import { startPlanPayment, rememberInitiated, confirmPlanPayment } from "../services/installments";
 import { Order } from "../models/Order";
 
 const router = Router();
@@ -76,15 +78,18 @@ router.post("/initialize", async (req: Request, res: Response) => {
       });
     }
 
+    // Instalment order: the amount is checked against the plan rules (not the full total)
+    const planAmount: number | null = (order as any).plan ? await startPlanPayment(order, req.body?.amount) : null;
     const reference = `${order.orderNumber}-${Date.now()}`;
     const callbackUrl = `${config.siteUrl}/order-confirmation/${order.orderNumber}?ref=${reference}`;
 
     // Remember the reference BEFORE the customer pays, so an unpaid order can be re-checked later
     await Order.updateOne({ _id: order._id }, { $addToSet: { paystackRefs: reference } });
+    if (planAmount !== null) await rememberInitiated(order.orderNumber, reference, planAmount);
 
     const init = await initializeTransaction({
       email: order.shipping.email,
-      amountKobo: order.total * 100,
+      amountKobo: (planAmount ?? order.total) * 100,
       reference,
       callbackUrl,
       metadata: {
@@ -104,6 +109,9 @@ router.post("/initialize", async (req: Request, res: Response) => {
       return res.status(err.status).json({
         error: { code: "PAYSTACK_ERROR", message: err.message },
       });
+    }
+    if (err instanceof OrderError) {
+      return res.status(err.status).json({ error: { code: err.code, message: err.message } });
     }
     console.error("POST /api/payments/initialize failed:", err);
     return res.status(500).json({
@@ -142,6 +150,24 @@ router.get("/verify/:reference", async (req: Request, res: Response) => {
         error: {
           code: "NOT_FOUND",
           message: "Payment succeeded but order not found",
+        },
+      });
+    }
+    if ((existing as any).plan) {
+      const r = await confirmPlanPayment(existing, verification, reference);
+      return res.json({
+        data: {
+          // paid = this payment went through (the plan may still have a balance); complete = nothing left to pay
+          paid: r.ok,
+          complete: r.complete,
+          partial: r.ok && !r.complete,
+          ok: r.ok,
+          status: r.ok ? undefined : r.reason,
+          reason: r.reason,
+          orderNumber: existing.orderNumber,
+          amountPaid: r.amount,
+          paidTotal: r.paidTotal,
+          balance: r.balance,
         },
       });
     }
@@ -209,7 +235,10 @@ router.post(
         if (verification.status === "success") {
           const orderNumber = String(verification.metadata?.orderNumber ?? "");
           const existing = orderNumber ? await findByOrderNumber(orderNumber) : null;
-          if (existing && paymentMatchesOrder(existing, verification, reference)) {
+          if (existing && (existing as any).plan) {
+            const r = await confirmPlanPayment(existing, verification, reference);
+            console.log(`Instalment payment ${orderNumber}: ok=${r.ok} complete=${r.complete} ${r.reason ?? ""}`);
+          } else if (existing && paymentMatchesOrder(existing, verification, reference)) {
             await markOrderPaid(orderNumber, reference);
             console.log(`✅ Marked order paid via webhook: ${orderNumber}`);
           } else {

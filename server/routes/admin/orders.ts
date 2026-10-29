@@ -22,6 +22,7 @@ import {
   OrderError,
 } from "../../services/orderService";
 import { attachReferral } from "../../services/referralService";
+import { listPlans, planCounts, adminGiveDays, lapsePlan, listCredits, useCredit, recheckPlanPayments } from "../../services/installments";
 
 const router = Router();
 
@@ -148,6 +149,71 @@ router.post("/manual", async (req: Request, res: Response) => {
 });
 
 // GET /api/admin/orders/:id
+// ---- SC-INST: instalment plans and store credit (must stay above "/:id") ----
+router.get("/installments", async (req: Request, res: Response) => {
+  try {
+    const f = String(req.query.filter ?? "all");
+    const ok = ["all", "awaiting_first", "active", "due_soon", "overdue", "ready_to_lapse", "paid", "lapsed"];
+    return res.json({ data: await listPlans((ok.includes(f) ? f : "all") as any) });
+  } catch (err) {
+    console.error("GET /api/admin/orders/installments failed:", err);
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not load instalment plans" } });
+  }
+});
+router.get("/installments-counts", async (_req: Request, res: Response) => {
+  try {
+    return res.json({ data: await planCounts() });
+  } catch (err) {
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not load counts" } });
+  }
+});
+router.post("/installments/:orderNumber/check", async (req: Request, res: Response) => {
+  try {
+    return res.json({ data: await recheckPlanPayments(String(req.params.orderNumber), { sinceHours: 24 * 60, maxRefs: 10 }) });
+  } catch (err) {
+    console.error("check plan payments failed:", err);
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not check with Paystack" } });
+  }
+});
+router.post("/installments/:orderNumber/days", async (req: Request, res: Response) => {
+  try {
+    const u: any = (req as any).user;
+    const o = await adminGiveDays(String(req.params.orderNumber), Number(req.body?.days), u?.email || u?.name);
+    return res.json({ data: { deadline: o.plan.deadline } });
+  } catch (err: any) {
+    if (err instanceof OrderError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    console.error("give days failed:", err);
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not add the days" } });
+  }
+});
+router.post("/installments/:orderNumber/lapse", async (req: Request, res: Response) => {
+  try {
+    const u: any = (req as any).user;
+    const r = await lapsePlan(String(req.params.orderNumber), u?.email || u?.name);
+    return res.json({ data: { status: r.order?.status, creditAmount: r.credit?.amount ?? 0 } });
+  } catch (err: any) {
+    if (err instanceof OrderError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    console.error("lapse plan failed:", err);
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not close the plan" } });
+  }
+});
+router.get("/credits", async (_req: Request, res: Response) => {
+  try {
+    return res.json({ data: await listCredits() });
+  } catch (err) {
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not load credits" } });
+  }
+});
+router.post("/credits/:id/use", async (req: Request, res: Response) => {
+  try {
+    const c: any = await useCredit(String(req.params.id), Number(req.body?.amount), String(req.body?.note ?? "").slice(0, 200));
+    return res.json({ data: { remaining: c.amount - c.usedAmount } });
+  } catch (err: any) {
+    if (err instanceof OrderError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    return res.status(500).json({ error: { code: "SERVER_ERROR", message: "Could not use the credit" } });
+  }
+});
+
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const order = await Order.findById(req.params.id).lean();

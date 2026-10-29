@@ -37,6 +37,12 @@ interface OrderEmailContext {
   };
   paymentMethod: string;
   trackingUrl?: string;
+  /** set when the order has pre-order items: business days after payment, and whether the ready pieces go first */
+  preorder?: { min: number; max: number; inParts: boolean };
+  /** set when this email is about one part of an order sent in parts, e.g. "Part 1 of 2" */
+  partLabel?: string;
+  /** how the order travels: we deliver in Ilorin, Jumia elsewhere, or the customer collects it */
+  deliveryRoute?: "local" | "jumia" | "pickup";
 }
 
 const formatNGN = (amount: number) =>
@@ -152,6 +158,32 @@ function orderSummaryBlock(ctx: OrderEmailContext): string {
     ${shippingBlock(ctx.shippingAddress)}`;
 }
 
+/** Plain-words box for pre-order orders. Ends with the help line (reply, chat, customer service). */
+function preorderBlock(ctx: OrderEmailContext, when: "placed" | "paid"): string {
+  const p = ctx.preorder;
+  if (!p) return "";
+  const text =
+    when === "placed"
+      ? `Some items in this order are pre-order. We get them for you after you pay, and they arrive in ${p.min} to ${p.max} business days after payment. If we cannot get them, you get your money back for them.`
+      : p.inParts
+        ? `Your ready pieces will be sent first. The rest follow when they arrive, in ${p.min} to ${p.max} business days after payment. You get an email when each part ships.`
+        : `We are getting your pre-order items. They arrive in ${p.min} to ${p.max} business days after payment. We will pack and send your whole order as soon as they are here.`;
+  return `
+    <div style="background:#FFF8DC;border:1px solid #F5D76E;border-radius:8px;padding:14px 16px;margin:20px 0;">
+      <div style="font-size:13px;color:#1a1a1a;line-height:1.6;">${text}</div>
+      <div style="font-size:12px;color:#666;line-height:1.6;margin-top:8px;">Not sure how to go about it? Reply to this email, or chat with our AI assistant or talk to a person at our customer service on <a href="${config.siteUrl}" style="color:#1a1a1a;">${config.siteUrl}</a>.</div>
+    </div>`;
+}
+
+/** The delivery sentence in the shipped email. Ilorin is ours; elsewhere Jumia delivers and sets its own fee. */
+function deliveryLine(ctx: OrderEmailContext): string {
+  if (ctx.deliveryRoute === "jumia") {
+    return "We have handed it to Jumia. Jumia delivers it, usually 4 to 7 business days after we hand it over. Jumia sets the delivery fee and you pay it directly to Jumia.";
+  }
+  if (ctx.deliveryRoute === "pickup") return "";
+  return "We deliver it ourselves in Ilorin, usually within 2 to 3 business days.";
+}
+
 async function send(args: {
   to: string;
   subject: string;
@@ -190,7 +222,7 @@ export async function sendOrderPlaced(ctx: OrderEmailContext): Promise<void> {
   const html = wrap({
     preheader: `Order ${ctx.orderNumber} received — ${formatNGN(ctx.total)}`,
     title: "Order received",
-    body: intro + orderSummaryBlock(ctx),
+    body: intro + preorderBlock(ctx, "placed") + orderSummaryBlock(ctx),
     ctaText: ctx.trackingUrl ? "Track your order" : undefined,
     ctaUrl: ctx.trackingUrl,
   });
@@ -207,8 +239,9 @@ export async function sendPaymentConfirmed(ctx: OrderEmailContext): Promise<void
     preheader: `Payment received for order ${ctx.orderNumber}`,
     title: "🎉 Payment confirmed",
     body: `
-      <p style="font-size:14px;color:#444;line-height:1.6;">Great news, ${ctx.customerName.split(" ")[0]}! We've received your payment of <strong>${formatNGN(ctx.total)}</strong>. Your combo is now being prepared for shipment.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Great news, ${ctx.customerName.split(" ")[0]}! We've received your payment of <strong>${formatNGN(ctx.total)}</strong>. ${ctx.preorder ? "We are now getting your pre-order items." : "Your combo is now being prepared for shipment."}</p>
       <p style="font-size:14px;color:#444;line-height:1.6;">We'll send another email once your order ships.</p>
+      ${preorderBlock(ctx, "paid")}
       ${orderSummaryBlock(ctx)}
     `,
     ctaText: ctx.trackingUrl ? "Track your order" : undefined,
@@ -233,7 +266,8 @@ export async function sendOrderShipped(
     preheader: `Your order ${ctx.orderNumber} is on the way`,
     title: "📦 Your order is on the way",
     body: `
-      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${ctx.customerName.split(" ")[0]} — your combo is now in transit. Estimated delivery: 1-3 business days.</p>
+      <p style="font-size:14px;color:#444;line-height:1.6;">Hi ${ctx.customerName.split(" ")[0]} — your combo is now in transit. ${deliveryLine(ctx)}</p>
+      ${ctx.partLabel ? `<p style="font-size:14px;color:#444;line-height:1.6;"><strong>${ctx.partLabel}.</strong> The rest of your order follows when it arrives. You get another email when it ships.</p>` : ""}
       ${trackingLine}
       ${orderSummaryBlock(ctx)}
     `,
@@ -243,7 +277,7 @@ export async function sendOrderShipped(
 
   await send({
     to: ctx.customerEmail,
-    subject: `Your order ${ctx.orderNumber} has shipped`,
+    subject: ctx.partLabel ? `Your order ${ctx.orderNumber} (${ctx.partLabel}) has shipped` : `Your order ${ctx.orderNumber} has shipped`,
     html,
   });
 }
@@ -276,6 +310,7 @@ export async function sendNewOrderAdminAlert(ctx: OrderEmailContext): Promise<vo
     body: `
       <p style="font-size:14px;color:#444;line-height:1.6;">A new order just came in. Customer: <strong>${ctx.customerName}</strong> (${ctx.customerEmail})</p>
       <p style="font-size:14px;color:#444;line-height:1.6;">Payment method: <strong>${ctx.paymentMethod}</strong></p>
+      ${ctx.preorder ? `<p style="font-size:14px;color:#444;line-height:1.6;"><strong>Contains pre-order items</strong>${ctx.preorder.inParts ? " (the customer chose to have the ready pieces sent first)" : ""}. See To get in admin.</p>` : ""}
       ${orderSummaryBlock(ctx)}
     `,
     ctaText: "Open in admin",

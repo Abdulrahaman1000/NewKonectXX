@@ -60,7 +60,7 @@ export function requiredFor(method: string, path: string): string[] | null {
     case "orders":
       if (read) return ["orders.view"];
       // money-moving actions stay with the owner; recording a sale is allowed
-      if (/cancel|refund|paid|status|delete|ship|deliver|payment/.test(p)) return null;
+      if (/cancel|refund|paid|status|delete|ship|deliver|payment|installment|credit|lapse/.test(p)) return null;
       return ["sale.record"];
     case "combos":
       if (read) return ["products.edit", "sale.record", "stock.use"];

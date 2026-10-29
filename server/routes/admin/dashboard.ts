@@ -14,6 +14,7 @@
 import { Router, Request, Response } from "express";
 import { Order } from "../../models/Order";
 import { PACK_NOW, WAITING_GOODS } from "../../services/packFilters";
+import { planCounts } from "../../services/installments";
 
 const router = Router();
 
@@ -39,7 +40,8 @@ router.get("/stats", async (_req: Request, res: Response) => {
           { $group: { _id: null, total: { $sum: "$total" } } },
         ]),
 
-        Order.countDocuments({ status: "pending" }),
+        // a customer paying in instalments is not "unpaid"
+        Order.countDocuments({ status: "pending", "plan.status": { $ne: "active" } }),
 
         // Unique customers ever (by phone)
         Order.aggregate([
@@ -57,6 +59,7 @@ router.get("/stats", async (_req: Request, res: Response) => {
 
     // to pack = ready to pack now (waiting-for-goods orders are not); to get = paid pre-order orders still waiting for goods
     const [toPack, toGet] = await Promise.all([Order.countDocuments(PACK_NOW), Order.countDocuments(WAITING_GOODS)]);
+    const instalments = await planCounts().catch(() => ({ active: 0, overdue: 0, dueSoon: 0, readyToLapse: 0 }));
     const revenueToday = revenueAggResult[0]?.total ?? 0;
     const customers = customerAgg[0]?.uniqueCustomers ?? 0;
 
@@ -67,6 +70,7 @@ router.get("/stats", async (_req: Request, res: Response) => {
         pendingOrders,
         toPack,
         toGet,
+        instalments,
         customers,
         recentOrders,
       },

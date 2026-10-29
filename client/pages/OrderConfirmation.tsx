@@ -35,6 +35,7 @@ import { trackOrder } from '@/api/orders';
 import { initializePaystack, verifyPaystackPayment } from '@/api/payments';
 import type { Order } from '@/types/order';
 import { OrderParts } from '@/components/OrderParts';
+import { InstalmentPanel } from '@/components/InstalmentPanel';
 import { toast } from 'sonner';
 
 export default function OrderConfirmation() {
@@ -210,7 +211,7 @@ export default function OrderConfirmation() {
                     {retryingPayment ? (
                       <><Loader2 className="w-4 h-4 animate-spin" />Loading...</>
                     ) : (
-                      <><CreditCard className="w-4 h-4" />Pay {formatNaira(order.total)} now</>
+                      <><CreditCard className="w-4 h-4" />Pay {formatNaira((order as any).plan ? ((order as any).planView?.nextSuggested ?? (order as any).plan.firstAmount ?? order.total) : order.total)} now</>
                     )}
                   </button>
                 </div>
@@ -227,7 +228,9 @@ export default function OrderConfirmation() {
                   </h1>
                   <p className="text-white/50 text-sm max-w-md mx-auto">
                     {paymentStatus === 'paid'
-                      ? "We've received your payment. Your combo is being prepared for shipment."
+                      ? (order as any).plan && (order as any).plan.status !== 'paid'
+                        ? "We've received your payment. Pay the rest below before your deadline. We send your goods after your last payment."
+                        : "We've received your payment. Your combo is being prepared for shipment."
                       : "We've received your order and will be in touch shortly."}
                   </p>
                 </div>
@@ -253,6 +256,8 @@ export default function OrderConfirmation() {
               {paymentStatus !== 'paid' && order.status !== 'paid' && order.status !== 'processing' && order.status !== 'shipped' && order.status !== 'delivered' && (
                 <PaymentInstructions order={order} settings={settings} />
               )}
+
+              <InstalmentPanel order={order} onUpdated={setOrder} />
 
               <div className="mb-5"><OrderParts order={order} /></div>
 

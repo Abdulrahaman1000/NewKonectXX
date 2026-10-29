@@ -91,6 +91,28 @@ export interface OrderDocument extends Document {
     shippedAt?: Date;
     deliveredAt?: Date;
   }>;
+  /** pay in instalments (SC-INST): present only on instalment orders */
+  plan?: {
+    kind: "A" | "B";
+    status: "awaiting_first" | "active" | "paid" | "lapsed";
+    parts: number;
+    firstAmount: number;
+    minFirst: number;
+    maxPayments: number;
+    days: number;
+    paidTotal: number;
+    payments: Array<{ n: number; ref: string; amount: number; paidAt: Date }>;
+    initiated: Array<{ ref: string; amount: number; at: Date }>;
+    startedAt?: Date;
+    deadline?: Date;
+    extensionDays: number;
+    extendedAt?: Date;
+    completedAt?: Date;
+    lapsedAt?: Date;
+    acceptedAt?: Date;
+    acceptedIp?: string;
+    termsVersion?: string;
+  };
   paystackRefs?: string[];
   shipping: ShippingAddress;
   phoneKey?: string;
@@ -154,6 +176,34 @@ const ShipmentSchema = new Schema(
   { _id: false },
 );
 
+const InstallmentPlanSchema = new Schema(
+  {
+    kind: { type: String, enum: ["A", "B"], required: true },
+    status: { type: String, enum: ["awaiting_first", "active", "paid", "lapsed"], default: "awaiting_first", index: true },
+    parts: { type: Number, required: true },
+    firstAmount: { type: Number, required: true },
+    minFirst: { type: Number, required: true },
+    maxPayments: { type: Number, required: true },
+    days: { type: Number, required: true },
+    paidTotal: { type: Number, default: 0 },
+    payments: {
+      type: [{ n: Number, ref: String, amount: Number, paidAt: Date }],
+      default: [],
+    },
+    initiated: { type: [{ ref: String, amount: Number, at: Date }], default: [] },
+    startedAt: { type: Date },
+    deadline: { type: Date },
+    extensionDays: { type: Number, default: 0 },
+    extendedAt: { type: Date },
+    completedAt: { type: Date },
+    lapsedAt: { type: Date },
+    acceptedAt: { type: Date },
+    acceptedIp: { type: String },
+    termsVersion: { type: String },
+  },
+  { _id: false },
+);
+
 const OrderSchema = new Schema<OrderDocument>(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
@@ -186,6 +236,7 @@ const OrderSchema = new Schema<OrderDocument>(
     awaitingGoods: { type: Boolean, default: false, index: true },
     partialChoice: { type: String, enum: ["now", "together", ""], default: "" },
     shipments: { type: [ShipmentSchema], default: undefined },
+    plan: { type: InstallmentPlanSchema, default: undefined },
     notes: { type: String },
     trackingNumber: { type: String },
     trackingProviderUrl: { type: String },

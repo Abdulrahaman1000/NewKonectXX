@@ -74,6 +74,24 @@ export default function Terms() {
         payment is confirmed.
       </p>
 
+      <h2>6b. Paying in instalments</h2>
+      <p>
+        Some single products and combos can be paid for in instalments, online, when the price of the goods is from ₦10,000 to ₦200,000. For goods priced up to
+        ₦50,000 you must pay the full amount within 30 days of your first payment. For goods priced above ₦50,000 and up to ₦200,000 you must pay the full
+        amount within 60 days of your first payment. Your first payment must be at least the share shown at checkout. Instalments are not available for bulk
+        orders, pre-order items, orders with a free gift, or orders recorded by us on WhatsApp or in person.
+      </p>
+      <p>
+        We keep the item for you from your first payment and send it only after you have paid everything, including the delivery fee where it applies. Payments
+        you make are not refunded in cash if you change your mind. If you do not finish paying, we may close the plan. The item then goes back on sale and what
+        you paid is kept for you as store credit, for your phone number, for 90 days, to use on a later order with us. If we cannot supply the goods, you get a
+        full refund.
+      </p>
+      <p>
+        If you need more time, you can ask once for 3 to 7 extra days, from the last 3 days before your payment date. We may give more time if we choose. By
+        ticking the box at checkout you agree to these rules, and we keep a record of the date and time you did.
+      </p>
+
       <h2>7. Delivery</h2>
       <p>
         Orders in Ilorin are delivered by us. Orders outside Ilorin are delivered by Jumia: we hand your order to a Jumia

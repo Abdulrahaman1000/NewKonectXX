@@ -10,6 +10,7 @@ import { Sparkles, X } from 'lucide-react';
 import { ChatSheet } from '@/components/ChatSheet';
 import { chatUI, useChatOpen } from '@/stores/chat';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
+import { PlanBanner } from '@/components/PlanBanner';
 
 export function AIChatLauncher() {
   const isMobile = useMobileLayout();
@@ -23,7 +24,7 @@ export function AIChatLauncher() {
     return () => clearTimeout(t);
   }, []);
 
-  if (isMobile || pathname.startsWith('/admin')) return null;
+  if (isMobile || pathname.startsWith('/admin')) return isMobile && !pathname.startsWith('/admin') ? <PlanBanner /> : null;
 
   const toggle = () => {
     setTipSeen(true);
@@ -62,6 +63,7 @@ export function AIChatLauncher() {
         </button>
       </div>
 
+      <PlanBanner />
       <ChatSheet />
     </>
   );

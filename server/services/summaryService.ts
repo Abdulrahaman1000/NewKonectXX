@@ -13,6 +13,7 @@ import { SummaryLog } from "../models/SummaryLog";
 import { buildReport } from "./costService";
 import { resolveCommissionStatuses } from "./referralService";
 import { PACK_NOW, WAITING_GOODS } from "./packFilters";
+import { planCounts } from "./installments";
 
 export const SUMMARY_HOUR = 7; // Lagos time
 const LOW_AT = 3;
@@ -44,11 +45,12 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
       .sort({ createdAt: 1 })
       .select("createdAt")
       .lean(),
-    Order.countDocuments({ status: "pending", paymentMethod: { $ne: "cod" } }),
+    Order.countDocuments({ status: "pending", paymentMethod: { $ne: "cod" }, "plan.status": { $ne: "active" } }),
     Combo.find({ isActive: { $ne: false }, stockLeft: { $lte: LOW_AT } }).select("name stockLeft").sort({ stockLeft: 1, name: 1 }).limit(30).lean(),
     Expense.find({ date: { $gte: start, $lte: end } }).select("amount category").lean(),
   ]);
 
+  const instNow = await planCounts().catch(() => ({ overdue: 0, dueSoon: 0 }));
   const costs = orders.length ? await OrderCost.find({ orderId: { $in: orders.map((o: any) => o._id) } }).lean() : [];
   const report = buildReport(orders as any, costs as any, expenses as any);
 
@@ -94,6 +96,8 @@ export async function buildSummary(day: SummaryDay = "yesterday") {
     bestSellers,
     toPack: toPackCount,
     toGet: toGetCount,
+    instalmentsOverdue: instNow.overdue,
+    instalmentsDueSoon: instNow.dueSoon,
     oldestToPackHours: oldestToPack ? Math.floor((Date.now() - new Date((oldestToPack as any).createdAt).getTime()) / 3600_000) : 0,
     unpaid: unpaidCount,
     lowStock: (stock as any[]).map((c) => ({ name: c.name, stockLeft: c.stockLeft ?? 0 })),
@@ -119,6 +123,8 @@ export function summaryHtml(s: Summary): string {
   const alerts = [
     s.toPack > 0 ? `<b>${s.toPack}</b> order${s.toPack === 1 ? "" : "s"} waiting to be packed${s.oldestToPackHours >= 24 ? ` (oldest ${Math.floor(s.oldestToPackHours / 24)} day${s.oldestToPackHours >= 48 ? "s" : ""})` : ""}` : "",
     s.toGet > 0 ? `<b>${s.toGet}</b> paid order${s.toGet === 1 ? "" : "s"} waiting for goods to be bought (To get)` : "",
+    s.instalmentsOverdue > 0 ? `<b>${s.instalmentsOverdue}</b> instalment plan${s.instalmentsOverdue === 1 ? " is" : "s are"} past the payment date (Fulfilment > Instalments)` : "",
+    s.instalmentsDueSoon > 0 ? `<b>${s.instalmentsDueSoon}</b> instalment plan${s.instalmentsDueSoon === 1 ? "" : "s"} due in the next 3 days` : "",
     s.unpaid > 0 ? `<b>${s.unpaid}</b> unpaid order${s.unpaid === 1 ? "" : "s"} still pending` : "",
     s.commissionOwed > 0 ? `You owe partners <b>${naira(s.commissionOwed)}</b> (ready to pay)` : "",
   ].filter(Boolean).map((a) => `<li style="margin:4px 0;">${a}</li>`).join("");

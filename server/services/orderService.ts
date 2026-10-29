@@ -21,6 +21,7 @@ import { recordOrderCost } from "./costService";
 import { BULK_DELIVERY_FEE, BULK_MAX_QTY, maxQtyFor, orderHasBulk, unitPriceFor } from "./bulkPricing";
 import { planQty, isMixed, buildShipments, stepShipments, openGotIt, anyPartSent, type Step } from "./splitOrder";
 import { config } from "../config";
+import { planKindFor, quoteInstallment, INSTALLMENT_RULES } from "./installmentRules";
 import { verifyTransaction, PaystackError } from "./paystackService";
 import {
   sendOrderPlaced,
@@ -46,6 +47,8 @@ export interface CreateOrderInput {
   ackPreorder?: boolean;
   /** "now": send the ready pieces first (Ilorin only). Anything else: send everything together. */
   partialChoice?: "now" | "together";
+  /** pay in instalments: how many payments the customer chose, and that they agreed to the rules */
+  installment?: { payments: number; ack: boolean; ip?: string };
 }
 
 export class OrderError extends Error {
@@ -296,6 +299,22 @@ async function decrementStock(items: OrderItemSnapshot[]): Promise<void> {
   }
 }
 
+/** Pre-order details for the emails: undefined when the order has no pre-order pieces. */
+function preorderInfoFor(order: any): { min: number; max: number; inParts: boolean } | undefined {
+  const pre = (order.items ?? []).filter((it: any) => it.preorder);
+  if (pre.length === 0) return undefined;
+  return {
+    min: Math.min(...pre.map((it: any) => Number(it.leadDaysMin) || 5)),
+    max: Math.max(...pre.map((it: any) => Number(it.leadDaysMax) || 10)),
+    inParts: order.partialChoice === "now",
+  };
+}
+
+function deliveryRouteOf(order: any): "local" | "jumia" | "pickup" {
+  if (String(order.shipping?.street ?? "").startsWith("Pickup")) return "pickup";
+  return String(order.shipping?.city ?? "").trim().toLowerCase() === "ilorin" ? "local" : "jumia";
+}
+
 function buildEmailContext(order: any) {
   return {
     orderNumber: order.orderNumber,
@@ -303,7 +322,7 @@ function buildEmailContext(order: any) {
     customerEmail: order.shipping.email,
     total: order.total,
     items: order.items.map((it: any) => ({
-      name: it.variantSummary || it.name,
+      name: (it.variantSummary || it.name) + (it.preorder ? " (pre-order)" : ""),
       quantity: it.quantity,
       subtotal: it.subtotal,
     })),
@@ -316,6 +335,8 @@ function buildEmailContext(order: any) {
     },
     paymentMethod: order.paymentMethod,
     trackingUrl: `${config.siteUrl}/order-tracking?order=${encodeURIComponent(order.orderNumber)}`,
+    preorder: preorderInfoFor(order),
+    deliveryRoute: deliveryRouteOf(order),
   };
 }
 
@@ -359,6 +380,38 @@ export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOp
   }
   const total = subtotal + shippingFee;
 
+  // SC-INST plan: pay in instalments. Checked here, before any stock is taken.
+  let planDoc: any = undefined;
+  if (input.installment) {
+    const inst = input.installment;
+    if (manual) throw new OrderError(400, "INSTALLMENT_NOT_ALLOWED", "Instalments are only for orders placed on the website.");
+    if (input.paymentMethod !== "paystack") throw new OrderError(400, "INSTALLMENT_PAY_ONLINE", "Instalments are paid online. Please choose Pay online.");
+    if (bulk || hasPre) throw new OrderError(400, "INSTALLMENT_NOT_ALLOWED", "Instalments are not available for bulk or pre-order items.");
+    if (items.length !== 1 || items[0].isFreeGift) throw new OrderError(400, "INSTALLMENT_ONE_ITEM", "Pay in instalments is for one product or combo at a time, without a free gift.");
+    if (!planKindFor(subtotal)) throw new OrderError(400, "INSTALLMENT_RANGE", "Pay in instalments is for goods from \u20A610,000 to \u20A6200,000.");
+    if (inst.ack !== true) throw new OrderError(400, "INSTALLMENT_ACK", "Please tick the box to say you agree to the instalment rules.");
+    const quote = quoteInstallment(subtotal, total);
+    const parts = Math.floor(Number(inst.payments));
+    const opt = quote?.options.find((o) => o.parts === parts);
+    if (!quote || !opt) throw new OrderError(400, "INSTALLMENT_PARTS", "Please choose how many payments you want.");
+    planDoc = {
+      kind: quote.kind,
+      status: "awaiting_first",
+      parts,
+      firstAmount: opt.firstAmount,
+      minFirst: quote.minFirst,
+      maxPayments: quote.maxPayments,
+      days: quote.days,
+      paidTotal: 0,
+      payments: [],
+      initiated: [],
+      extensionDays: 0,
+      acceptedAt: new Date(),
+      acceptedIp: String(inst.ip ?? "").slice(0, 64),
+      termsVersion: INSTALLMENT_RULES.termsVersion,
+    };
+  }
+
   // Some pieces ready and some to get: in Ilorin the customer may choose to have the ready pieces sent first.
   // Everywhere else (Jumia) and for hand-recorded sales, everything is sent together.
   const mixed = isMixed(items);
@@ -393,6 +446,7 @@ export async function createOrder(input: CreateOrderInput, manual?: ManualSaleOp
       awaitingGoods: hasPre,
       partialChoice,
       ...(partialChoice === "now" ? { shipments: buildShipments(items) } : {}),
+      ...(planDoc ? { plan: planDoc } : {}),
       status: initialStatus,
       paymentMethod: input.paymentMethod,
       shipping: input.shipping,
@@ -527,7 +581,7 @@ export async function stepPart(
     const part = (r.shipments.find((s) => s.n === n) ?? { itemIdx: [] as number[] }) as { itemIdx: number[] };
     const partItems = ctx.items.filter((_: any, i: number) => part.itemIdx.includes(i));
     if (step === "ship") {
-      sendOrderShipped({ ...ctx, items: partItems, trackingNumber: opts.trackingNumber, trackingProviderUrl: opts.trackingProviderUrl }).catch(() => {});
+      sendOrderShipped({ ...ctx, items: partItems, partLabel: `Part ${n} of ${r.shipments.length}`, trackingNumber: opts.trackingNumber, trackingProviderUrl: opts.trackingProviderUrl }).catch(() => {});
     }
     if (r.allDelivered) sendOrderDelivered(ctx).catch(() => {});
     return { order: saved };
@@ -536,11 +590,13 @@ export async function stepPart(
 }
 
 export async function findByNumberAndPhone(orderNumber: string, phone: string) {
-  const order = await Order.findOne({
-    orderNumber: orderNumber.trim().toUpperCase(),
-    "shipping.phone": phone.trim(),
-  }).lean();
-  return order;
+  const order: any = await Order.findOne({ orderNumber: orderNumber.trim().toUpperCase() }).lean();
+  if (!order) return null;
+  // typed any format: 0803..., +234803... and 803... all match the same customer (last 10 digits)
+  const typed = normalizePhone(phone);
+  const stored = normalizePhone(order.shipping?.phone);
+  const same = (Boolean(typed) && typed === stored) || String(order.shipping?.phone ?? "") === String(phone ?? "").trim();
+  return same ? order : null;
 }
 
 export async function findByOrderNumber(orderNumber: string) {
@@ -629,6 +685,10 @@ export async function cancelOrRefundOrder(
   const number = orderNumber.trim().toUpperCase();
   const current = await Order.findOne({ orderNumber: number });
   if (!current) return null;
+  // An instalment plan with money paid is closed with "Close plan" (the money becomes store credit), not cancelled here.
+  if ((current as any).plan?.status === "active" && ((current as any).plan.paidTotal ?? 0) > 0) {
+    throw new OrderError(409, "USE_CLOSE_PLAN", "The customer has paid part of this order. Use Close plan, so the money is kept as store credit.");
+  }
 
   const wasShipped = current.status === "shipped" || current.status === "delivered" || anyPartSent((current as any).shipments);
   const shouldRestock = newStatus === "cancelled" || !wasShipped;
@@ -665,6 +725,8 @@ export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<num
   const stale = await Order.find({
     status: "pending",
     paymentMethod: { $in: ["paystack", "flutterwave"] },
+    // an instalment plan that has started is never auto-cancelled (the owner closes it by hand)
+    "plan.status": { $ne: "active" },
     createdAt: { $lt: cutoff },
   })
     .sort({ createdAt: 1 })
@@ -683,6 +745,19 @@ export async function expireStalePendingOrders(maxAgeMinutes = 180): Promise<num
         for (const ref of refs) {
           try {
             const v = await verifyTransaction(ref);
+            if ((order as any).plan) {
+              // instalment order waiting for its first payment: the first payment may have gone through unseen
+              if (v.status === "success") {
+                const { confirmPlanPayment } = await import("./installments");
+                const r = await confirmPlanPayment(order, v, ref);
+                if (r.ok) {
+                  paid = true;
+                  break;
+                }
+                unsure = true;
+              }
+              continue;
+            }
             if (paymentMatchesOrder(order, v, ref)) {
               await markOrderPaid(order.orderNumber, ref);
               paid = true;
