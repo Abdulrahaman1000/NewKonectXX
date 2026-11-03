@@ -39,11 +39,25 @@ export const getPurchase = (reference: string) => pub<{ order: VtuView }>(`/orde
 export const myPurchases = () => pub<{ orders: VtuView[] }>('/mine').then((r) => r.orders);
 
 // ---- admin ----
-export interface AdminVtuOrder extends VtuView { _id: string; cost: number; email: string; providerReference: string; refundNote: string; attempts: number; providerMessage: string; paymentReference: string }
+export interface AdminVtuOrder extends VtuView { provider?: string; providerCode?: string; _id: string; cost: number; email: string; providerReference: string; refundNote: string; attempts: number; providerMessage: string; paymentReference: string }
 export interface AdminSummary { sales: number; profit: number; count: number; processing: number; refundsNeeded: number; mismatches: number }
-export interface VtuSettings { airtimeDiscountPct: number; dataMarginPct: number; electricityFee: number; airtimeMin: number; airtimeMax: number; electricityMin: number; electricityMax: number; paused: boolean }
+export interface VtuSettings { airtimeDiscountPct: number; dataMarginPct: number; electricityFee: number; airtimeMin: number; airtimeMax: number; electricityMin: number; electricityMax: number; paused: boolean; disabledNetworks: string[]; disabledDiscos: string[] }
 export const adminVtuList = (filter: string) => apiFetch<{ summary: AdminSummary; orders: AdminVtuOrder[] }>(`/api/admin/vtu?filter=${filter}`);
 export const adminVtuSettings = () => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings').then((r) => r.settings);
 export const adminVtuSaveSettings = (s: Partial<VtuSettings>) => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings', { method: 'PUT', body: JSON.stringify(s) });
-export const adminVtuAct = (reference: string, action: 'check' | 'refund' | 'mark-refunded' | 'mark-failed') =>
+export const adminVtuAct = (reference: string, action: 'check' | 'refund' | 'mark-refunded' | 'mark-failed' | 'mark-delivered') =>
   apiFetch<{ order: AdminVtuOrder }>(`/api/admin/vtu/${encodeURIComponent(reference)}/${action}`, { method: 'POST', body: JSON.stringify({}) });
+
+// ---- admin: plans and prices (SC-VTU3) ----
+export interface AdminPlan { code: string; name: string; label: string; validity: string; category: string; cost: number; rulePrice: number; customPrice: number | null; price: number; profit: number; hidden: boolean; missing: boolean; belowCost: boolean }
+export const adminPlans = (network: string) => apiFetch<{ network: string; networkOn: boolean; plans: AdminPlan[] }>(`/api/admin/vtu/plans/${encodeURIComponent(network)}`);
+export const adminSetPlan = (code: string, patch: { customPrice?: number | null; hidden?: boolean; label?: string; network?: string }) =>
+  apiFetch<{ plan: unknown }>(`/api/admin/vtu/plan/${encodeURIComponent(code)}`, { method: 'PUT', body: JSON.stringify(patch) });
+export const adminResetPlan = (code: string) => apiFetch<{ ok: boolean }>(`/api/admin/vtu/plan/${encodeURIComponent(code)}`, { method: 'DELETE' });
+
+// ---- admin: provider switch (SC-PROV) ----
+export interface ProviderInfo { name: string; label: string; ready: boolean; testMode: boolean; hint: string }
+export interface ProviderState { active: string; chosen: string; providers: ProviderInfo[]; alert: { provider: string; code: string; message: string; at: string } | null }
+export const adminProviders = () => apiFetch<ProviderState>('/api/admin/vtu/providers');
+export const adminSetProvider = (name: string) => apiFetch<ProviderState>('/api/admin/vtu/provider', { method: 'PUT', body: JSON.stringify({ name }) });
+export const adminDismissAlert = () => apiFetch<ProviderState>('/api/admin/vtu/provider-alert', { method: 'DELETE' });

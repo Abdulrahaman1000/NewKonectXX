@@ -14,8 +14,9 @@ import crypto from "node:crypto";
 import { config } from "../config";
 import { VtuOrder } from "../models/VtuOrder";
 import { VtuSetting } from "../models/VtuSetting";
+import { VtuPlan } from "../models/VtuPlan";
 import { initializeTransaction, verifyTransaction } from "./paystackService";
-import { getProvider } from "./vtu";
+import { defaultProviderName, listProviders, providerByName } from "./vtu";
 import { NETWORKS, type BuyResult, type DataPlan, type VtuProvider } from "./vtu/provider";
 
 export class VtuError extends Error {
@@ -47,21 +48,55 @@ export async function updateSettings(patch: any) {
   num("airtimeDiscountPct", 0, 20); num("dataMarginPct", 0, 50); num("electricityFee", 0, 2000);
   num("airtimeMin", 50, 1000); num("airtimeMax", 100, 100000); num("electricityMin", 500, 50000); num("electricityMax", 1000, 500000);
   if (patch.paused !== undefined) s.paused = Boolean(patch.paused);
+  const list = (k: string) => { if (Array.isArray(patch[k])) s[k] = patch[k].map(String).slice(0, 50); };
+  list("disabledNetworks"); list("disabledDiscos");
   await s.save();
   return s;
 }
 
-export async function status() {
-  const p = getProvider();
+/** SC-PROV  The provider used for NEW purchases: the owner's choice in Admin if it is ready, else the old VTU_PROVIDER setting, else none. */
+export async function activeProvider(s?: any): Promise<VtuProvider | null> {
+  const st = s ?? (await getSettings());
+  return providerByName(st.activeProvider) ?? providerByName(defaultProviderName());
+}
+
+/** SC-PROV  Admin > VTU > Provider: what is ready, which one is in use, and any "fix your setup" warning. */
+export async function adminProviders() {
   const s = await getSettings();
+  const p = await activeProvider(s);
+  return { active: p?.name ?? "", chosen: s.activeProvider || "", providers: listProviders(), alert: s.providerAlert ?? null };
+}
+
+export async function setActiveProvider(name: string) {
+  const n = String(name ?? "").trim().toLowerCase();
+  if (!providerByName(n)) throw new VtuError(400, "That provider is not ready. Add its keys to the server settings first.");
+  await (VtuSetting as any).findOneAndUpdate({ key: "main" }, { $set: { activeProvider: n, providerAlert: null } }, { upsert: true });
+  return adminProviders();
+}
+
+export async function dismissProviderAlert() {
+  await (VtuSetting as any).findOneAndUpdate({ key: "main" }, { $set: { providerAlert: null } });
+  return adminProviders();
+}
+
+async function raiseAlert(provider: string, code: string, message: string) {
+  await (VtuSetting as any).findOneAndUpdate({ key: "main" }, { $set: { providerAlert: { provider, code, message, at: new Date().toISOString() } } }, { upsert: true });
+}
+
+export async function status() {
+  const s = await getSettings();
+  const p = await activeProvider(s);
   return { enabled: Boolean(p) && !s.paused, simulated: Boolean(p?.simulated), services: { airtime: true, data: true, electricity: true, tv: false } };
 }
 
-function need(): VtuProvider {
-  const p = getProvider();
+async function need(): Promise<VtuProvider> {
+  const p = await activeProvider();
   if (!p) throw new VtuError(503, "Recharge is not available right now. Please try again later.");
   return p;
 }
+
+/** The provider that handled (or will handle) an existing purchase. A later switch never moves it. */
+const providerOf = (o: any): VtuProvider | null => providerByName(o?.provider || defaultProviderName() || "legitdataway");
 
 export const normPhone = (v: unknown) => {
   const d = String(v ?? "").replace(/\D/g, "");
@@ -73,28 +108,45 @@ export function customerPrice(plan: DataPlan, s: any) {
   return roundUp10(plan.cost * (1 + s.dataMarginPct / 100));
 }
 
+/** The owner's own price for a plan if one is set, otherwise the percentage rule. */
+export function priceFor(plan: DataPlan, s: any, ov?: any) {
+  return ov && ov.customPrice != null ? Math.round(ov.customPrice) : customerPrice(plan, s);
+}
+
+/** The owner's saved prices for the ACTIVE provider only (plans saved before switching existed belong to Legitdataway). */
+async function overrides(network: string | undefined, provider: string): Promise<Map<string, any>> {
+  const rows: any[] = await (VtuPlan as any).find(network ? { network } : {}).lean();
+  return new Map(rows.filter((r) => (r.provider || "legitdataway") === provider).map((r) => [r.code, r]));
+}
+
 export async function catalog() {
-  const p = getProvider();
   const s = await getSettings();
+  const p = await activeProvider(s);
   return {
     enabled: Boolean(p) && !s.paused, simulated: Boolean(p?.simulated),
-    networks: NETWORKS,
+    networks: NETWORKS.filter((n) => !(s.disabledNetworks ?? []).includes(n)),
     airtime: { min: s.airtimeMin, max: s.airtimeMax },
-    electricity: { min: s.electricityMin, max: s.electricityMax, fee: s.electricityFee, discos: p ? await p.discos() : [] },
+    electricity: { min: s.electricityMin, max: s.electricityMax, fee: s.electricityFee, discos: p ? (await p.discos()).filter((d) => !(s.disabledDiscos ?? []).includes(d.code)) : [] },
   };
 }
 
 export async function dataPlans(network: string) {
-  const p = need();
+  const p = await need();
   if (!NETWORKS.includes(network as any)) throw new VtuError(400, "Choose a network.");
   const s = await getSettings();
-  const plans = await p.listDataPlans(network);
-  return plans.map((x) => ({ code: x.code, name: x.name, validity: x.validity, category: x.category, price: customerPrice(x, s) }));
+  if ((s.disabledNetworks ?? []).includes(network)) return [];
+  let plans: DataPlan[];
+  try { plans = await p.listDataPlans(network); } catch (e) { console.error("[vtu] plan list", e); throw new VtuError(503, "Data plans are not available right now. Please try again shortly."); }
+  const ov = await overrides(network, p.name);
+  return plans
+    .filter((x) => !ov.get(x.code)?.hidden)
+    .map((x) => ({ code: x.code, name: ov.get(x.code)?.label || x.name, validity: x.validity, category: x.category, price: priceFor(x, s, ov.get(x.code)) }));
 }
 
 export async function verifyMeter(disco: string, type: string, meter: string) {
-  const p = need();
-  if (!(await p.discos()).some((d) => d.code === disco)) throw new VtuError(400, "Choose your electricity company.");
+  const p = await need();
+  const s = await getSettings();
+  if (!(await p.discos()).some((d) => d.code === disco) || (s.disabledDiscos ?? []).includes(disco)) throw new VtuError(400, "Choose your electricity company.");
   if (type !== "prepaid" && type !== "postpaid") throw new VtuError(400, "Choose prepaid or postpaid.");
   return p.verifyMeter({ disco, type, meter: String(meter ?? "").replace(/\D/g, "") });
 }
@@ -106,29 +158,32 @@ export interface CreateInput {
 
 /** Validates and prices the request on the server, saves a pending order, starts Paystack. */
 export async function createOrder(i: CreateInput) {
-  const p = need();
+  const p = await need();
   const s = await getSettings();
   if (s.paused) throw new VtuError(503, "Recharge is paused for a short while. Please try again later.");
   const email = String(i.email ?? "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new VtuError(400, "Enter your email so we can send the payment receipt from Paystack.");
 
-  const base: any = { reference: VTU_PREFIX + crypto.randomBytes(5).toString("hex").toUpperCase(), service: i.service, email, userId: i.userId ?? "" };
+  const base: any = { reference: VTU_PREFIX + crypto.randomBytes(5).toString("hex").toUpperCase(), service: i.service, email, userId: i.userId ?? "", provider: p.name };
   if (i.service === "airtime" || i.service === "data") {
     const phone = normPhone(i.phone);
     if (!phone) throw new VtuError(400, "Enter the phone number that will receive it (11 digits).");
-    if (!NETWORKS.includes(i.network as any)) throw new VtuError(400, "Choose a network.");
+    if (!NETWORKS.includes(i.network as any) || (s.disabledNetworks ?? []).includes(i.network)) throw new VtuError(400, "Choose a network.");
     base.phoneNumber = phone; base.network = i.network; base.networkName = i.network;
     if (i.service === "airtime") {
       const amt = Math.round(Number(i.amount));
       if (!Number.isFinite(amt) || amt < s.airtimeMin || amt > s.airtimeMax) throw new VtuError(400, `Airtime must be between ₦${s.airtimeMin} and ₦${s.airtimeMax.toLocaleString("en-NG")}.`);
       base.amount = amt; base.faceValue = amt; base.cost = round2(amt * (1 - s.airtimeDiscountPct / 100)); base.planName = `₦${amt.toLocaleString("en-NG")} airtime`;
     } else {
-      const plan = (await p.listDataPlans(i.network!)).find((x) => x.code === i.planCode);
-      if (!plan) throw new VtuError(400, "Choose a data plan.");
-      base.planCode = plan.code; base.planName = plan.name; base.cost = plan.cost; base.amount = customerPrice(plan, s); base.faceValue = base.amount;
+      let list: DataPlan[] = [];
+      try { list = await p.listDataPlans(i.network!); } catch (e) { console.error("[vtu] plan list", e); throw new VtuError(503, "Data plans are not available right now. Please try again shortly."); }
+      const plan = list.find((x) => x.code === i.planCode);
+      const ov: any = plan ? (await overrides(i.network, p.name)).get(plan.code) : null;
+      if (!plan || ov?.hidden) throw new VtuError(400, "That plan is no longer available. Please choose your plan again.");
+      base.planCode = plan.code; base.planName = ov?.label || plan.name; base.cost = plan.cost; base.amount = priceFor(plan, s, ov); base.faceValue = base.amount;
     }
   } else if (i.service === "electricity") {
-    const disco = (await p.discos()).find((d) => d.code === i.disco);
+    const disco = (await p.discos()).find((d) => d.code === i.disco && !(s.disabledDiscos ?? []).includes(d.code));
     if (!disco) throw new VtuError(400, "Choose your electricity company.");
     const type = i.meterType === "postpaid" ? "postpaid" : i.meterType === "prepaid" ? "prepaid" : "";
     if (!type) throw new VtuError(400, "Choose prepaid or postpaid.");
@@ -138,6 +193,8 @@ export async function createOrder(i: CreateInput) {
     const amt = Math.round(Number(i.amount));
     if (!Number.isFinite(amt) || amt < s.electricityMin || amt > s.electricityMax) throw new VtuError(400, `Electricity must be between ₦${s.electricityMin.toLocaleString("en-NG")} and ₦${s.electricityMax.toLocaleString("en-NG")}.`);
     const phone = normPhone(i.phone);
+    if (p.requiresPhone && !phone) throw new VtuError(400, "Enter your phone number so the token details can be sent to you.");
+    if (v.minAmount && amt < v.minAmount) throw new VtuError(400, `The minimum for this meter is ₦${v.minAmount.toLocaleString("en-NG")}.`);
     base.network = disco.code; base.networkName = disco.name; base.phoneNumber = phone;
     base.meter = { number: meter, type, name: v.name ?? "", address: v.address ?? "" };
     base.faceValue = amt; base.cost = amt; base.amount = amt + s.electricityFee; base.planName = `${type} electricity`;
@@ -181,12 +238,20 @@ export async function confirmPayment(reference: string) {
 }
 
 const apply = async (reference: string, r: BuyResult) => {
+  const o: any = await (VtuOrder as any).findOne({ reference });
+  const code = r.code ?? "";
+  // A prepaid electricity purchase with no token yet is NOT finished: the customer would see "done" with nothing to load on the meter.
+  if (r.status === "success" && o?.service === "electricity" && o?.meter?.type === "prepaid" && !r.token) {
+    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "processing", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: "Your payment went through. The token is still being generated. We are checking." } });
+    return;
+  }
   if (r.status === "success") {
-    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "successful", providerReference: r.providerReference ?? "", providerMessage: r.message ?? "", token: r.token ?? "", units: r.units ?? "", ...(r.cost ? { cost: r.cost } : {}) } });
+    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "successful", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "", token: r.token ?? "", units: r.units ?? "", ...(r.cost ? { cost: r.cost } : {}) } });
   } else if (r.status === "failed") {
-    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "failed", providerReference: r.providerReference ?? "", providerMessage: r.message ?? "Failed", refundStatus: "required" } });
+    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "failed", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "Failed", refundStatus: "required" } });
+    if (r.setupProblem) await raiseAlert(o?.provider || "", code, `${o?.provider || "The provider"} refused a purchase (code ${code}). The customer is being refunded. Fix this before selling more.`);
   } else {
-    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "processing", providerReference: r.providerReference ?? "", providerMessage: r.message ?? "Processing" } });
+    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "processing", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "Processing" } });
   }
 };
 
@@ -198,10 +263,21 @@ export async function fulfil(reference: string) {
     { new: true },
   );
   if (claimed) {
-    const p = need();
+    const p = providerOf(claimed);
+    if (!p) {
+      // The provider this purchase belongs to is not ready (keys removed). Nothing was bought: put it back so it can be tried when it is ready.
+      await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "pending", providerMessage: "The provider is not ready. We will try again." } });
+      return (VtuOrder as any).findOne({ reference });
+    }
+    // Save the provider's own reference BEFORE buying, so we can always ask about this exact purchase later.
+    let requestId: string = claimed.providerRequestId || "";
+    if (!requestId && p.makeRequestId) {
+      requestId = p.makeRequestId(reference);
+      await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { providerRequestId: requestId } });
+    }
     try {
       const r = await p.buy({
-        reference, service: claimed.service, network: claimed.network, phone: claimed.phoneNumber, planCode: claimed.planCode,
+        reference, requestId: requestId || undefined, service: claimed.service, network: claimed.network, phone: claimed.phoneNumber, planCode: claimed.planCode,
         amount: claimed.faceValue, meter: claimed.meter?.number ? { number: claimed.meter.number, type: claimed.meter.type } : undefined,
       });
       await apply(reference, r);
@@ -220,12 +296,18 @@ export async function checkStatus(reference: string) {
   const o: any = await (VtuOrder as any).findOne({ reference });
   if (!o) throw new VtuError(404, "We could not find that purchase.");
   if (o.paymentStatus === "pending") return confirmPayment(reference);
+  if (o.paymentStatus === "paid" && o.fulfilmentStatus === "pending") return fulfil(reference); // was put back because its provider was not ready
   if (o.paymentStatus === "paid" && o.fulfilmentStatus === "processing") {
-    const r = await need().query(reference);
+    const p = providerOf(o);
+    if (!p) throw new VtuError(503, `The provider for this purchase (${o.provider || "unknown"}) is not ready. Add its keys, then check again.`);
+    let r;
+    try { r = await p.query(reference, o.providerRequestId || undefined); } catch (e) { console.error("[vtu] status check", e); return (VtuOrder as any).findOne({ reference }); } // no answer: stay processing
     if (r.status === "not_found") {
-      await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { providerMessage: "The provider has no record of this purchase yet. Ask the admin to check." } });
+      // A purchase being sent right now is not in the provider's records yet. Only after two quiet minutes does "no record" mean something.
+      const quietMs = Date.now() - new Date(o.updatedAt ?? 0).getTime();
+      if (quietMs > 120_000) await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { providerMessage: "The provider has no record of this purchase yet. Ask the admin to check." } });
     } else {
-      await apply(reference, r);
+      await apply(reference, r as BuyResult);
       const after: any = await (VtuOrder as any).findOne({ reference });
       if (after.refundStatus === "required") await refund(reference);
     }
@@ -297,4 +379,60 @@ export async function handleWebhookCharge(reference: string) {
     if (e instanceof VtuError) { console.error(`[vtu] webhook for ${reference}: ${e.message}`); return; }
     throw e; // a real failure: let Paystack send it again
   }
+}
+
+
+// ---------------- Admin: plans and prices (SC-VTU3) ----------------
+
+/** Every plan the provider offers for a network, with the owner's settings on top. Plans we saved that the provider no longer has show as "missing". */
+export async function adminPlans(network: string) {
+  if (!NETWORKS.includes(network as any)) throw new VtuError(400, "Choose a network.");
+  const s = await getSettings();
+  const p = await activeProvider(s);
+  const ov = await overrides(network, p?.name ?? "");
+  let live: DataPlan[] = [];
+  if (p) { try { live = await p.listDataPlans(network); } catch (e: any) { throw new VtuError(502, `${p.name} did not give its plan list: ${e?.message ?? "no answer"}. Check the keys and try again.`); } }
+  const seen = new Set<string>();
+  const rows = live.map((x) => {
+    seen.add(x.code);
+    const o = ov.get(x.code);
+    const rule = customerPrice(x, s);
+    const price = priceFor(x, s, o);
+    return { code: x.code, name: x.name, label: o?.label ?? "", validity: x.validity, category: x.category, cost: x.cost, rulePrice: rule, customPrice: o?.customPrice ?? null, price, profit: price - x.cost, hidden: Boolean(o?.hidden), missing: false, belowCost: price < x.cost };
+  });
+  for (const [code, o] of ov) if (!seen.has(code)) rows.push({ code, name: o.label || code, label: o.label ?? "", validity: "", category: "weekly", cost: 0, rulePrice: 0, customPrice: o.customPrice ?? null, price: o.customPrice ?? 0, profit: 0, hidden: true, missing: true, belowCost: false });
+  return { network, networkOn: !(s.disabledNetworks ?? []).includes(network), plans: rows };
+}
+
+export async function setPlan(code: string, patch: any, networkHint?: string) {
+  const network = NETWORKS.includes(networkHint as any) ? String(networkHint) : String(code).split("-")[0];
+  if (!NETWORKS.includes(network as any)) throw new VtuError(400, "Unknown plan.");
+  const p = await activeProvider();
+  const set: any = { network, provider: p?.name ?? "" };
+  if (patch.customPrice !== undefined) {
+    if (patch.customPrice === null || patch.customPrice === "") set.customPrice = null;
+    else {
+      const v = Math.round(Number(patch.customPrice));
+      if (!Number.isFinite(v) || v < 10 || v > 500000) throw new VtuError(400, "Price must be between ₦10 and ₦500,000.");
+      set.customPrice = v;
+    }
+  }
+  if (patch.hidden !== undefined) set.hidden = Boolean(patch.hidden);
+  if (patch.label !== undefined) set.label = String(patch.label ?? "").trim().slice(0, 60);
+  const row = await (VtuPlan as any).findOneAndUpdate({ code }, { $set: set }, { new: true, upsert: true });
+  return row;
+}
+
+export async function resetPlan(code: string) {
+  await (VtuPlan as any).deleteMany({ code });
+}
+
+
+/** Admin: the owner saw on the provider's dashboard that this purchase WAS delivered, so close it as successful (no refund). */
+export async function markDelivered(reference: string, note?: string) {
+  const o: any = await (VtuOrder as any).findOneAndUpdate(
+    { reference, paymentStatus: "paid", fulfilmentStatus: "processing" },
+    { $set: { fulfilmentStatus: "successful", providerMessage: note ? `Confirmed delivered by admin: ${note}` : "Confirmed delivered by admin." } }, { new: true });
+  if (!o) throw new VtuError(409, "Only a purchase that is still processing can be marked delivered.");
+  return o;
 }

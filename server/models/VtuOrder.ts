@@ -12,7 +12,7 @@ const VtuOrderSchema = new Schema(
     planCode: { type: String, default: "" },
     planName: { type: String, default: "" },
     phoneNumber: { type: String, default: "" },
-    meter: { number: String, type: String, name: String, address: String },
+    meter: { number: String, type: { type: String }, name: String, address: String }, // "type" must be written like this, or Mongoose reads meter as plain text
     amount: { type: Number, required: true }, // what the customer pays, naira
     faceValue: { type: Number, default: 0 }, // airtime or electricity amount delivered
     cost: { type: Number, default: 0 }, // what the provider charges us, naira
@@ -20,6 +20,9 @@ const VtuOrderSchema = new Schema(
     paymentReference: { type: String, default: "" },
     paidAt: { type: Date },
     fulfilmentStatus: { type: String, enum: ["pending", "processing", "successful", "failed"], default: "pending" },
+    provider: { type: String, default: "" }, // SC-PROV which provider handles THIS purchase (set when the order is made; later switches do not change it)
+    providerRequestId: { type: String, default: "" }, // SC-PROV the reference sent to the provider when it needs its own format (VTpass)
+    providerCode: { type: String, default: "" }, // SC-PROV the provider's own result code, for the admin
     providerReference: { type: String, default: "" },
     providerMessage: { type: String, default: "" },
     token: { type: String, default: "" }, // electricity token

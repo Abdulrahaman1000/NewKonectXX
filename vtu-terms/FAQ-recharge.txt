@@ -1,0 +1,16 @@
+FAQ answers for Admin > FAQs (paste each as a new FAQ; the live FAQs are stored in the database)
+
+Q: Do I need an account or a wallet to buy airtime, data or electricity?
+A: No. Open Pay bills, choose what you want, enter the phone number or meter, and pay for that purchase with Paystack. There is no wallet to fund and no sign-up. If you sign in with your email, your purchases are saved in your account so you can buy again quickly.
+
+Q: I paid but did not get my airtime or data. What do I do?
+A: Wait a few minutes and keep the result page open: it updates by itself. We check with our supplier and, if the purchase was not delivered, you are refunded automatically to the card or account you paid with. Do not pay again. If you are still waiting after 30 minutes, tap Chat and give us your reference (it starts with SC-VTU).
+
+Q: I entered the wrong number. Can I get my money back?
+A: No. Airtime, data and electricity that has been delivered to the number or meter you entered cannot be taken back. Please check the network, phone number or meter number before you pay.
+
+Q: How long does a refund take?
+A: A failed purchase is refunded through Paystack. It can take a few working days to show in your account, depending on your bank.
+
+Q: Where do I find my electricity token?
+A: On the result page right after payment, with a Copy button. Keep your reference too. If you lose the page, tap Chat and send us your reference.

@@ -12,6 +12,10 @@ const VtuSettingSchema = new Schema(
     electricityMin: { type: Number, default: 1000 },
     electricityMax: { type: Number, default: 100000 },
     paused: { type: Boolean, default: false }, // owner's emergency switch
+    disabledNetworks: { type: [String], default: [] }, // SC-VTU3
+    disabledDiscos: { type: [String], default: [] },
+    activeProvider: { type: String, default: "" }, // SC-PROV chosen in Admin > VTU > Provider ("" = use the old VTU_PROVIDER setting)
+    providerAlert: { type: Schema.Types.Mixed, default: null }, // SC-PROV last "fix your provider setup" warning: { provider, code, message, at }
   },
   { timestamps: true },
 );
