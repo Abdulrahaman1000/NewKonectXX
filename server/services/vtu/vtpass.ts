@@ -20,7 +20,7 @@
  * "pending", 099, 089, 044, and "request id already exists" (014) are held as PENDING and checked again, never bought again.
  * Only a clear refusal is "failed" (the customer is refunded).
  */
-import type { BuyRequest, BuyResult, DataPlan, Disco, QueryResult, VtuProvider } from "./provider";
+import type { BuyRequest, BuyResult, CardCheck, DataPlan, Disco, ExamPin, ExamProduct, ExamType, QueryResult, TvBouquet, TvOperator, VtuProvider } from "./provider";
 
 const env = (k: string) => String(process.env[k] ?? "").trim();
 export const vtpassConfigured = () => Boolean(env("VTPASS_API_KEY") && env("VTPASS_PUBLIC_KEY") && env("VTPASS_SECRET_KEY"));
@@ -38,6 +38,14 @@ const DISCOS: Array<Disco & { id: string }> = [
   { code: "EEDC", name: "Enugu Electric", id: "enugu-electric" }, { code: "BEDC", name: "Benin Electric", id: "benin-electric" },
   { code: "ABA", name: "Aba Power", id: "aba-electric" }, { code: "YEDC", name: "Yola Electric", id: "yola-electric" },
 ];
+
+// SC-TV  Cable TV and exam pins (read in the VTpass docs 4 Nov 2026). Whitelist these products on your VTpass account first (sandbox AND live).
+//   TV:   GET service-variations?serviceID=dstv|gotv  ->  POST merchant-verify {billersCode, serviceID}  ->  POST pay {request_id, serviceID, billersCode, variation_code, phone, subscription_type:"change", quantity:1}
+//         sandbox smartcard 1212121212 verifies and pays; 201000000000 pending; any other fails.
+//   Exam: GET service-variations?serviceID=waec  ->  POST pay {request_id, serviceID:"waec", variation_code, quantity, phone}; the pins come back in "cards": [{Serial, Pin}].
+const TV_OPERATORS: TvOperator[] = [{ code: "dstv", name: "DStv" }, { code: "gotv", name: "GOtv" }];
+const EXAMS: Array<ExamType & { id: string }> = [{ code: "waec", name: "WAEC result checker", id: "waec" }];
+const MAX_TV = 500000;
 
 // Result codes. See "Response codes" in the VTpass documentation.
 const PENDING_CODES = new Set(["099", "089", "044", "014", "083"]); // 083 system error: we cannot tell if it was charged, so hold it
@@ -69,6 +77,15 @@ const days = (name: string) => {
 const validityText = (name: string) => { const m = String(name).match(/(\d+)\s*(hrs?|hours?|days?|weeks?|months?|years?|yrs?)\b/i); return m ? `${m[1]} ${m[2].toLowerCase()}` : ""; };
 const category = (name: string): DataPlan["category"] => { const d = days(name); return d <= 3 ? "daily" : d <= 14 ? "weekly" : "monthly"; };
 const MAX_PLAN = 100000; // plans dearer than this are not offered (4.5TB yearly bundles and the like)
+
+/** Exam pins: VTpass sends "cards": [{Serial, Pin}] and also a text "Serial No:..., pin: ...". Read the list first, the text second. */
+const pinsOf = (j: any): ExamPin[] => {
+  const cards: any[] = Array.isArray(j?.cards) ? j.cards : Array.isArray(j?.content?.cards) ? j.content.cards : [];
+  const out: ExamPin[] = cards.map((c) => ({ serial: String(c?.Serial ?? c?.serial ?? "").trim() || undefined, pin: String(c?.Pin ?? c?.pin ?? "").trim() })).filter((x) => x.pin);
+  if (out.length) return out;
+  const text = String(j?.purchased_code ?? "");
+  return [...text.matchAll(/serial\s*no\s*:?\s*([^,;|]+?)\s*[,;|]\s*pin\s*:?\s*([A-Za-z0-9]+)/gi)].map((m) => ({ serial: m[1].trim(), pin: m[2].trim() }));
+};
 
 export class VtpassProvider implements VtuProvider {
   name = "vtpass";
@@ -108,7 +125,8 @@ export class VtpassProvider implements VtuProvider {
         const total = num(tx?.total_amount);
         const token = cleanToken(j?.token ?? tx?.extras ?? j?.purchased_code);
         const units = j?.units ? (/^[\d.]+$/.test(String(j.units)) ? `${j.units} kWh` : String(j.units)) : undefined;
-        return { status: "success", code, providerReference, message: description, token: token || undefined, units, cost: total > 0 && (face <= 0 || total < face * 2 + 500) ? total : undefined };
+        const pins = pinsOf(j);
+        return { status: "success", code, providerReference, message: description, token: token || undefined, units, pins: pins.length ? pins : undefined, cost: total > 0 && (face <= 0 || total < face * 2 + 500) ? total : undefined };
       }
       if (st === "failed" || st === "reversed" || st === "rejected") return { status: "failed", code, providerReference, message: description || "The provider could not complete the purchase." };
       return { status: "pending", code, providerReference, message: description || "Processing." }; // initiated, pending, or no status yet
@@ -165,6 +183,56 @@ export class VtpassProvider implements VtuProvider {
     }
   }
 
+  // ---- SC-TV cable TV ----
+  tvOperators(): TvOperator[] { return TV_OPERATORS; }
+
+  private varCache = new Map<string, { at: number; list: Array<{ code: string; name: string; cost: number }> }>();
+  /** A VTpass variation list (bouquets or exam products), cached 10 minutes. Duplicate codes: the first wins. */
+  private async variations(serviceID: string, max: number): Promise<Array<{ code: string; name: string; cost: number }>> {
+    const hit = this.varCache.get(serviceID);
+    if (hit && Date.now() - hit.at < 600_000) return hit.list;
+    const res = await this.fetchFn(`${base()}/service-variations?serviceID=${serviceID}`, { headers: { "api-key": env("VTPASS_API_KEY"), "public-key": env("VTPASS_PUBLIC_KEY") }, signal: AbortSignal.timeout(20000) });
+    const j: any = await res.json().catch(() => null);
+    const raw: any[] = j?.content?.variations ?? j?.content?.varations ?? [];
+    if (!Array.isArray(raw) || raw.length === 0) { if (hit) return hit.list; throw new Error("VTpass returned no products"); }
+    const seen = new Set<string>(); const list: Array<{ code: string; name: string; cost: number }> = [];
+    for (const v of raw) {
+      const code = String(v?.variation_code ?? "").trim(); const cost = num(v?.variation_amount); const name = String(v?.name ?? "").trim();
+      if (!code || !name || !cost || cost > max || seen.has(code)) continue;
+      seen.add(code); list.push({ code, name, cost });
+    }
+    this.varCache.set(serviceID, { at: Date.now(), list });
+    return list;
+  }
+
+  async tvBouquets(operator: string): Promise<TvBouquet[]> {
+    if (!TV_OPERATORS.some((o) => o.code === operator)) return [];
+    return this.variations(operator, MAX_TV);
+  }
+
+  async verifyCard(p: { operator: string; card: string }): Promise<CardCheck> {
+    if (!TV_OPERATORS.some((o) => o.code === p.operator)) return { ok: false, message: "Choose your TV company." };
+    if (!/^\d{8,13}$/.test(p.card)) return { ok: false, message: "The smartcard or IUC number should be 8 to 13 digits." };
+    try {
+      const j = await this.post("/merchant-verify", { billersCode: p.card, serviceID: p.operator }, 25000);
+      const c = j?.content ?? {};
+      const name = String(c?.Customer_Name ?? "").trim();
+      if (String(j?.code) === "000" && name && !c?.error && c?.WrongBillersCode !== true) {
+        return { ok: true, name, status: String(c?.Status ?? "").trim() || undefined, dueDate: String(c?.Due_Date ?? "").trim() || undefined };
+      }
+      return { ok: false, message: "We could not find that smartcard. Check the number and the TV company." };
+    } catch {
+      return { ok: false, message: "We could not check the smartcard right now. Please try again in a moment." };
+    }
+  }
+
+  // ---- SC-TV exam pins ----
+  examTypes(): ExamType[] { return EXAMS.map(({ code, name }) => ({ code, name })); }
+  async examProducts(exam: string): Promise<ExamProduct[]> {
+    const e = EXAMS.find((x) => x.code === exam);
+    return e ? this.variations(e.id, 100000) : [];
+  }
+
   /** Sends one purchase. Network trouble throws (the caller keeps the purchase "processing"); a clear answer is returned. */
   async buy(req: BuyRequest): Promise<BuyResult> {
     const request_id = req.requestId || this.makeRequestId(req.reference);
@@ -177,6 +245,18 @@ export class VtpassProvider implements VtuProvider {
       const serviceID = AIRTIME_ID[req.network] ? `${AIRTIME_ID[req.network]}-data` : "";
       if (!serviceID || !req.planCode) return { status: "failed", message: "Unknown data plan." };
       return this.interpret(await this.post("/pay", { request_id, serviceID, billersCode: req.phone, variation_code: req.planCode, phone: req.phone }), req.amount);
+    }
+    if (req.service === "tv") {
+      if (!TV_OPERATORS.some((o) => o.code === req.network) || !req.card || !req.planCode) return { status: "failed", message: "Unknown TV bouquet." };
+      if (!req.phone) return { status: "failed", message: "A phone number is needed for TV." };
+      // No "amount": VTpass then uses the bouquet's own price. subscription_type "change" covers a new subscriber, a renewal of the same bouquet and a change of bouquet.
+      return this.interpret(await this.post("/pay", { request_id, serviceID: req.network, billersCode: req.card, variation_code: req.planCode, phone: req.phone, subscription_type: "change", quantity: 1 }), req.amount);
+    }
+    if (req.service === "exam") {
+      const e = EXAMS.find((x) => x.code === req.network);
+      if (!e || !req.planCode) return { status: "failed", message: "Unknown exam product." };
+      if (!req.phone) return { status: "failed", message: "A phone number is needed for exam pins." };
+      return this.interpret(await this.post("/pay", { request_id, serviceID: e.id, variation_code: req.planCode, quantity: Math.max(1, Math.round(req.quantity ?? 1)), phone: req.phone }), req.amount);
     }
     const d = DISCOS.find((x) => x.code === req.network);
     if (!d || !req.meter) return { status: "failed", message: "Unknown electricity company." };

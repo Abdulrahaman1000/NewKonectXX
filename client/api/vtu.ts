@@ -4,18 +4,24 @@ import { getCustomerToken } from '@/lib/customerSession';
 
 const BASE = (import.meta as any).env?.VITE_API_URL ?? '';
 
-export type Service = 'airtime' | 'data' | 'electricity';
+export type Service = 'airtime' | 'data' | 'electricity' | 'tv' | 'exam';
 export interface Catalog {
   enabled: boolean; simulated: boolean; networks: string[];
   airtime: { min: number; max: number };
   electricity: { min: number; max: number; fee: number; discos: { code: string; name: string }[] };
+  /** null when the chosen provider does not sell it */
+  tv: { fee: number; operators: { code: string; name: string }[] } | null;
+  exam: { fee: number; maxQuantity: number; types: { code: string; name: string }[] } | null;
 }
+export interface Bouquet { code: string; name: string; price: number }
+export interface ExamProduct { code: string; name: string; price: number }
 export interface Plan { code: string; name: string; validity: string; category: 'daily' | 'weekly' | 'monthly'; price: number }
 export interface VtuView {
   reference: string; service: Service; network: string; planName: string; phone: string;
   meter: { number: string; type: string; name: string } | null; amount: number;
   paymentStatus: 'pending' | 'paid' | 'mismatch' | 'failed'; fulfilmentStatus: 'pending' | 'processing' | 'successful' | 'failed';
   token: string; units: string; message: string; refundStatus: string; createdAt: string;
+  card?: { number: string; name: string; status: string; due: string } | null; pins?: { serial: string; pin: string }[]; quantity?: number;
 }
 
 async function pub<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
@@ -33,6 +39,10 @@ export const getCatalog = () => pub<Catalog>('/catalog');
 export const getPlans = (network: string) => pub<{ plans: Plan[] }>(`/plans/${encodeURIComponent(network)}`).then((r) => r.plans);
 export const checkMeter = (disco: string, meterType: string, meter: string) =>
   pub<{ ok: boolean; name?: string; address?: string; message?: string }>('/verify-meter', 'POST', { disco, meterType, meter });
+export const getBouquets = (operator: string) => pub<{ bouquets: Bouquet[] }>(`/tv/${encodeURIComponent(operator)}`).then((r) => r.bouquets);
+export const checkCard = (operator: string, card: string) =>
+  pub<{ ok: boolean; name?: string; status?: string; dueDate?: string; message?: string }>('/verify-card', 'POST', { operator, card });
+export const getExamProducts = (exam: string) => pub<{ products: ExamProduct[] }>(`/exams/${encodeURIComponent(exam)}`).then((r) => r.products);
 export const startPurchase = (b: Record<string, unknown>) => pub<{ reference: string; amount: number; authorizationUrl: string }>('/orders', 'POST', b);
 export const getPurchase = (reference: string) => pub<{ order: VtuView }>(`/orders/${encodeURIComponent(reference)}`).then((r) => r.order);
 
@@ -41,7 +51,7 @@ export const myPurchases = () => pub<{ orders: VtuView[] }>('/mine').then((r) =>
 // ---- admin ----
 export interface AdminVtuOrder extends VtuView { provider?: string; providerCode?: string; _id: string; cost: number; email: string; providerReference: string; refundNote: string; attempts: number; providerMessage: string; paymentReference: string }
 export interface AdminSummary { sales: number; profit: number; count: number; processing: number; refundsNeeded: number; mismatches: number }
-export interface VtuSettings { airtimeDiscountPct: number; dataMarginPct: number; electricityFee: number; airtimeMin: number; airtimeMax: number; electricityMin: number; electricityMax: number; paused: boolean; disabledNetworks: string[]; disabledDiscos: string[] }
+export interface VtuSettings { airtimeDiscountPct: number; dataMarginPct: number; electricityFee: number; tvFee: number; examFee: number; airtimeMin: number; airtimeMax: number; electricityMin: number; electricityMax: number; paused: boolean; disabledNetworks: string[]; disabledDiscos: string[] }
 export const adminVtuList = (filter: string) => apiFetch<{ summary: AdminSummary; orders: AdminVtuOrder[] }>(`/api/admin/vtu?filter=${filter}`);
 export const adminVtuSettings = () => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings').then((r) => r.settings);
 export const adminVtuSaveSettings = (s: Partial<VtuSettings>) => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings', { method: 'PUT', body: JSON.stringify(s) });

@@ -21,6 +21,7 @@ export default function PayResult() {
   const [o, setO] = useState<VtuView | null>(null);
   const [err, setErr] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedPin, setCopiedPin] = useState<number | null>(null);
   const tries = useRef(0);
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export default function PayResult() {
     : o.paymentStatus === 'pending' ? 'wait'
     : 'wait';
   const stillWorking = o && o.paymentStatus === 'paid' && o.fulfilmentStatus !== 'successful' && o.fulfilmentStatus !== 'failed';
-  const what = o ? (o.service === 'electricity' ? `${o.network} electricity` : `${o.network} ${o.planName}`) : '';
+  const what = o ? (o.service === 'electricity' ? `${o.network} electricity` : o.service === 'tv' || o.service === 'exam' ? o.planName : `${o.network} ${o.planName}`) : '';
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -76,7 +77,7 @@ export default function PayResult() {
                 <ServiceBadge k={o.service} size={40} solid />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-black text-white leading-tight">{what}</p>
-                  <p className="text-xs text-white/55 mt-0.5 break-all">{o.meter ? `Meter ${o.meter.number}` : o.phone ? `To ${o.phone}` : ''}</p>
+                  <p className="text-xs text-white/55 mt-0.5 break-words">{o.meter ? `Meter ${o.meter.number}` : o.card ? `Smartcard ${o.card.number}${o.card.name ? ` · ${o.card.name}` : ''}` : o.service === 'exam' ? o.network : o.phone ? `To ${o.phone}` : ''}</p>
                 </div>
                 {state !== 'ok' && <p className="text-sm font-bold text-white tabular-nums">{naira(o.amount)}</p>}
               </div>
@@ -85,7 +86,7 @@ export default function PayResult() {
             {state === 'ok' && o?.token && (
               <div className="mt-4 rounded-2xl border border-primary/40 p-4 text-left" style={{ background: 'rgba(255,200,40,0.08)' }}>
                 <p className="text-[13px] font-bold text-white/70">Your electricity token</p>
-                <p className="text-[26px] leading-tight font-black tracking-[0.08em] text-primary break-all my-2 tabular-nums">{groups(o.token)}</p>
+                <p className="text-[26px] leading-tight font-black tracking-[0.06em] text-primary break-words my-2 tabular-nums">{groups(o.token)}</p>
                 {o.units && <p className="text-xs text-white/60">{o.units}</p>}
                 <button type="button" className="mt-3 w-full min-h-[48px] rounded-xl bg-primary text-black font-black text-sm inline-flex items-center justify-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
                   onClick={() => { navigator.clipboard?.writeText(o.token).then(() => setCopied(true)).catch(() => {}); }}>
@@ -93,7 +94,24 @@ export default function PayResult() {
                 </button>
               </div>
             )}
-            {state === 'ok' && !o?.token && <p className="text-sm text-white/70 mt-4">It has been sent. It can take a minute to show on the phone.</p>}
+            {state === 'ok' && o?.pins && o.pins.length > 0 && (
+              <div className="mt-4 space-y-3 text-left">
+                {o.pins.map((p, i) => (
+                  <div key={i} className="rounded-2xl border border-primary/40 p-4" style={{ background: 'rgba(255,200,40,0.08)' }}>
+                    <p className="text-[13px] font-bold text-white/70">{o.pins!.length > 1 ? `Pin ${i + 1} of ${o.pins!.length}` : 'Your pin'}</p>
+                    {p.serial && <p className="text-xs text-white/60 mt-1">Serial number <span className="font-bold text-white tabular-nums">{p.serial}</span></p>}
+                    <p className="text-[26px] leading-tight font-black tracking-[0.06em] text-primary break-words my-2 tabular-nums">{p.pin}</p>
+                    <button type="button" className="w-full min-h-[48px] rounded-xl bg-primary text-black font-black text-sm inline-flex items-center justify-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                      onClick={() => { navigator.clipboard?.writeText(p.pin).then(() => setCopiedPin(i)).catch(() => {}); }}>
+                      {copiedPin === i ? <Check className="w-4 h-4" strokeWidth={3} /> : <Copy className="w-4 h-4" />} {copiedPin === i ? 'Copied' : 'Copy pin'}
+                    </button>
+                  </div>
+                ))}
+                <p className="text-xs text-white/55">Save your pin now. Anyone who has it can use it.</p>
+              </div>
+            )}
+            {state === 'ok' && o?.service === 'tv' && <p className="text-sm text-white/70 mt-4">Your subscription has been sent to the smartcard. It can take a few minutes to show on your decoder.</p>}
+            {state === 'ok' && !o?.token && !o?.pins?.length && o?.service !== 'tv' && <p className="text-sm text-white/70 mt-4">It has been sent. It can take a minute to show on the phone.</p>}
             {state === 'fail' && <p className="text-sm text-white/75 mt-4">{REFUND[o?.refundStatus ?? 'required'] ?? REFUND.required}</p>}
             {state === 'unpaid' && <p className="text-sm text-white/75 mt-4">No money was taken. You can try again.</p>}
             {state === 'check' && <p className="text-sm text-white/75 mt-4">The amount paid did not match this purchase. We will sort it out and contact you.</p>}

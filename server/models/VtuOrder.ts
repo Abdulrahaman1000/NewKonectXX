@@ -1,4 +1,4 @@
-/** SC-VTU  One airtime, data or electricity purchase. The payment reference and the provider reference are kept apart on purpose. */
+/** SC-VTU  One airtime, data, electricity, TV or exam-pin purchase. The payment reference and the provider reference are kept apart on purpose. */
 import mongoose, { Schema } from "mongoose";
 
 const VtuOrderSchema = new Schema(
@@ -6,13 +6,16 @@ const VtuOrderSchema = new Schema(
     reference: { type: String, required: true, unique: true },
     userId: { type: String, default: "" },
     email: { type: String, default: "" },
-    service: { type: String, enum: ["airtime", "data", "electricity", "tv"], required: true },
+    service: { type: String, enum: ["airtime", "data", "electricity", "tv", "exam"], required: true },
     network: { type: String, required: true }, // MTN / Airtel / Glo / 9mobile, or the electricity company code
     networkName: { type: String, default: "" },
     planCode: { type: String, default: "" },
     planName: { type: String, default: "" },
     phoneNumber: { type: String, default: "" },
     meter: { number: String, type: { type: String }, name: String, address: String }, // "type" must be written like this, or Mongoose reads meter as plain text
+    card: { number: String, name: String, status: String, due: String }, // SC-TV the decoder smartcard / IUC checked before payment
+    quantity: { type: Number, default: 1 }, // SC-TV exam: how many pins
+    pins: { type: [{ _id: false, serial: String, pin: String }], default: [] }, // SC-TV exam pins that were delivered
     amount: { type: Number, required: true }, // what the customer pays, naira
     faceValue: { type: Number, default: 0 }, // airtime or electricity amount delivered
     cost: { type: Number, default: 0 }, // what the provider charges us, naira

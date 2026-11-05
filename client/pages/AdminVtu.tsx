@@ -30,6 +30,8 @@ function Row({ o, onAct, busy }: { o: AdminVtuOrder; onAct: (a: any) => void; bu
       {(o.providerMessage || o.refundNote) && <p className="text-[11px] text-white/45">{o.providerMessage} {o.refundNote}</p>}
       <p className="text-[10px] text-white/35 break-all">{o.reference}{o.provider ? ` · via ${o.provider}` : ''}{o.providerCode ? ` · code ${o.providerCode}` : ''}{o.providerReference ? ` · provider ref ${o.providerReference}` : ''}</p>
       <div className="flex flex-wrap gap-2 pt-1">
+        {/* SC-RETRY */}
+        {o.paymentStatus === 'paid' && o.fulfilmentStatus === 'pending' && <button className={btn} disabled={busy} onClick={() => onAct({ r: o.reference, a: 'check' })}>Send now</button>}
         {(o.paymentStatus === 'pending' || o.fulfilmentStatus === 'processing') && <button className={btn} disabled={busy} onClick={() => onAct({ r: o.reference, a: 'check' })}>Check status</button>}
         {o.paymentStatus === 'paid' && o.fulfilmentStatus === 'processing' && <button className={btn} disabled={busy} onClick={() => window.confirm('Only do this if the provider confirms it was NOT delivered. The customer will be refunded.') && onAct({ r: o.reference, a: 'mark-failed' })}>Mark failed and refund</button>}
         {o.paymentStatus === 'paid' && o.fulfilmentStatus === 'processing' && <button className={btn} disabled={busy} onClick={() => window.confirm('Only do this if the provider dashboard shows this purchase was DELIVERED.') && onAct({ r: o.reference, a: 'mark-delivered' })}>Mark delivered</button>}
@@ -235,6 +237,8 @@ export default function AdminVtu() {
             <label>Airtime discount from provider (%)<br />{num('airtimeDiscountPct')}</label>
             <label>Added to data price (%)<br />{num('dataMarginPct')}</label>
             <label>Electricity fee (₦)<br />{num('electricityFee')}</label>
+            <label>TV fee (₦) {/* SC-TV */}<br />{num('tvFee')}</label>
+            <label>Exam pin fee (₦)<br />{num('examFee')}</label>
             <span />
             <label>Airtime min (₦)<br />{num('airtimeMin')}</label>
             <label>Airtime max (₦)<br />{num('airtimeMax')}</label>
