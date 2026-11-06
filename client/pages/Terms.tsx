@@ -95,7 +95,7 @@ export default function Terms() {
       <h2>6c. Airtime, data and electricity</h2>
       <p>
         You can buy airtime, data bundles and electricity on our Pay page. You pay for each purchase online, through Paystack, and we then send it to the phone
-        number or meter you gave us. We do not keep a wallet or balance for you. The price you see before you pay is the price you are charged.
+        number or meter you gave us. If you are signed in you can also pay from your Smart Combo wallet (see 6d). The price you see before you pay is the price you are charged.
       </p>
       <p>
         You are responsible for the network, phone number, meter number, meter type and amount you enter. Please check them before you pay. Airtime, data and
@@ -103,7 +103,7 @@ export default function Terms() {
         or the wrong network.
       </p>
       <p>
-        If a purchase fails and nothing is delivered, we refund the full amount to the card or account you paid with. Refunds go through Paystack and can take a
+        If a purchase fails and nothing is delivered, we refund the full amount to the card or account you paid with (or back to your wallet, if you paid from it). Refunds go through Paystack and can take a
         few working days to reach you. If a purchase is slow, please wait and do not pay again: we check its status with our supplier, and if it was not
         delivered it is refunded. Delivery times depend on the network or electricity company and are not guaranteed. Electricity tokens are shown on the
         result page once the purchase is successful; keep your token and reference.
@@ -113,7 +113,18 @@ export default function Terms() {
         We may pause or stop any of these services at any time, for example when our supplier or a network is not available.
       </p>
 
-      <h2>7. Delivery</h2>
+      <h2>6d. Wallet</h2>
+<p>If you are signed in, you can add money to a Smart Combo wallet and use it to pay for airtime, data, electricity, cable TV and exam pins on Smart Combo. Using the wallet is optional. You can always pay directly with Paystack instead, without an account.</p>
+<ul>
+<li>You add money through Paystack. The smallest top-up is ₦100. We set no largest top-up.</li>
+<li>Wallet money can only be spent on Smart Combo. It cannot be withdrawn, cashed out, or sent to another person or account.</li>
+<li>The wallet is not a bank account. It earns no interest and it is not covered by any deposit insurance.</li>
+<li>If a purchase paid from your wallet fails, the full amount goes back to your wallet.</li>
+<li>Referral earnings, bonuses and corrections from us are added to your wallet. They show in your wallet history, and referral earnings are labelled "Referral earnings".</li>
+<li>If you think a top-up or a charge is wrong, contact us with the reference. We will check it and put it right.</li>
+<li>We may update how the wallet works. If we ever close it, we will tell you first and give you time to spend what is in it.</li>
+</ul>
+<h2>7. Delivery</h2>
       <p>
         Orders in Ilorin are delivered by us. Orders outside Ilorin are delivered by Jumia: we hand your order to a Jumia
         office and Jumia delivers it to you. Jumia sets that delivery fee and you pay it directly to Jumia. Delivery times are estimates, not guarantees. We are not responsible for delays caused by Jumia, other couriers,

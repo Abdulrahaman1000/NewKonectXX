@@ -5,12 +5,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, BadgeCheck, Check, CreditCard, Loader2, Lock, Mail, Minus, Plus, RotateCcw, ShieldCheck, Smartphone, Timer, Zap, type LucideIcon } from 'lucide-react';
+import { AlertCircle, BadgeCheck, Check, CreditCard, Loader2, Lock, Mail, Minus, Plus, RotateCcw, ShieldCheck, Smartphone, Timer, Zap, Wallet, type LucideIcon } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
 import { NetworkDot, SERVICES, ServiceBadge, naira, serviceLook } from '@/components/vtu/brand';
+import { PaySheet } from '@/components/vtu/PaySheet';
+import { getWallet, hasCustomerToken } from '@/api/wallet';
+import { Link } from 'react-router-dom';
+import { savePayDraft, setReturnTo, takePayDraft } from '@/lib/customerSession';
 import { checkCard, checkMeter, getBouquets, getCatalog, getExamProducts, getPlans, startPurchase, type Plan, type Service } from '@/api/vtu';
 
 const store = {
@@ -80,6 +84,23 @@ export default function Pay() {
   const [productCode, setProductCode] = useState('');
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const signedIn = hasCustomerToken();
+  const walletQ = useQuery({ queryKey: ['wallet'], queryFn: getWallet, enabled: signedIn, retry: false });
+
+  // Put back a form that was saved while the customer signed in or topped up the wallet.
+  useEffect(() => {
+    const d = takePayDraft(); if (!d) return;
+    if (d.tab) setTab(d.tab); if (d.network) setNetwork(d.network); if (d.phone) setPhone(d.phone); if (d.email) setEmail(d.email);
+    if (d.amount) setAmount(Number(d.amount)); if (d.cat) setCat(d.cat); if (d.planCode) setPlanCode(d.planCode);
+    if (d.disco) setDisco(d.disco); if (d.meterType) setMeterType(d.meterType); if (d.meter) setMeter(d.meter);
+    if (d.operator) setOperator(d.operator); if (d.card) setCard(d.card); if (d.bouquetCode) setBouquetCode(d.bouquetCode);
+    if (d.exam) setExam(d.exam); if (d.productCode) setProductCode(d.productCode); if (d.qty) setQty(Number(d.qty));
+  }, []);
+  const leaveForWallet = () => {
+    savePayDraft({ tab, network, phone, email, amount, cat, planCode, disco, meterType, meter, operator, card, bouquetCode, exam, productCode, qty });
+    setReturnTo('/pay');
+  };
   const [err, setErr] = useState('');
 
   const { data: catalog, isLoading } = useQuery({ queryKey: ['vtu-catalog'], queryFn: getCatalog, retry: false });
@@ -168,7 +189,7 @@ export default function Pay() {
     return '';
   })();
 
-  const pay = async () => {
+  const pay = async (via: 'card' | 'wallet' = 'card') => {
     setBusy(true); setErr('');
     try {
       if (tab === 'electricity' && !meterInfo) throw new Error('Please verify the meter first.');
@@ -178,9 +199,10 @@ export default function Pay() {
         tab === 'tv' ? { service: 'tv', network: operator, card, planCode: bouquetCode, phone, email }
         : tab === 'exam' ? { service: 'exam', network: exam, planCode: productCode, quantity: qty, phone, email }
         : { service: tab, network, phone, email, amount: amount || undefined, planCode: planCode || undefined, disco, meterType, meter };
+      if (via === 'wallet') body.payWith = 'wallet';
       const r = await startPurchase(body);
-      window.location.href = r.authorizationUrl;
-    } catch (e: any) { setErr(e.message); setBusy(false); }
+      window.location.href = r.paidFromWallet ? `/pay/result?reference=${encodeURIComponent(r.reference)}` : r.authorizationUrl;
+    } catch (e: any) { setErr(e.message); setBusy(false); setSheet(false); }
   };
 
   const off = !isLoading && !catalog?.enabled;
@@ -189,7 +211,7 @@ export default function Pay() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <SEO title="Recharge & pay bills | Smart Combo" description="Buy airtime, data and electricity. Pay for each purchase, no wallet needed." />
+      <SEO title="Recharge & pay bills | Smart Combo" description="Buy airtime, data, electricity, TV and exam pins. Pay direct or from your Smart Combo wallet." />
       <Header />
       <CartDrawer />
       <main className="flex-1 section-padding py-8 md:py-12">
@@ -197,11 +219,29 @@ export default function Pay() {
           <div className="flex items-start justify-between gap-3 mb-5">
             <div>
               <h1 className="text-[28px] leading-tight font-black text-white">Pay bills</h1>
-              <p className="text-sm text-white/60 mt-1">Airtime, data, electricity, TV and exam pins. Pay for each purchase, no wallet or sign-up.</p>
+              <p className="text-sm text-white/60 mt-1">Airtime, data, electricity, TV and exam pins. Pay direct with no account, or use your wallet.</p>
             </div>
             {catalog?.simulated && <span className="shrink-0 mt-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[11px] font-bold text-amber-200">Test mode</span>}
           </div>
           {catalog?.simulated && <p className="-mt-2 mb-5 text-xs text-amber-200/80">Nothing real is sent and no airtime is delivered.</p>}
+
+          {/* wallet balance, always in view */}
+          {signedIn ? (
+            <Link to="/wallet" onClick={leaveForWallet} className={`mb-5 flex items-center gap-3 rounded-2xl border px-4 min-h-[56px] ${FOCUS}`} style={{ borderColor: 'rgba(255,200,40,0.4)', background: 'rgba(255,200,40,0.08)' }}>
+              <Wallet className="w-5 h-5 text-primary shrink-0" />
+              <span className="flex-1 min-w-0">
+                <span className="block text-[12px] text-white/60 leading-tight">Wallet balance</span>
+                <span className="block text-[17px] font-black text-primary tabular-nums leading-tight">{walletQ.data ? naira(walletQ.data.balance) : walletQ.isLoading ? '…' : '₦0'}</span>
+              </span>
+              <span className="text-[13px] font-black text-white">Add money ›</span>
+            </Link>
+          ) : (
+            <Link to="/account" onClick={() => setReturnTo('/pay')} className={`mb-5 flex items-center gap-3 rounded-2xl border border-white/15 px-4 min-h-[56px] ${FOCUS}`} style={surface}>
+              <Wallet className="w-5 h-5 text-primary shrink-0" />
+              <span className="flex-1 text-[13px] text-white/75 leading-snug">Have a wallet? Sign in to see your balance.</span>
+              <span className="text-[13px] font-black text-primary">Sign in ›</span>
+            </Link>
+          )}
 
           {isLoading && <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" /></div>}
           {off && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/75" style={surface}>Recharge is coming soon. Please check back shortly.</p>}
@@ -532,18 +572,18 @@ export default function Pay() {
               )}
 
               <div>
-                <button type="button" onClick={pay} disabled={busy || !!missing}
+                <button type="button" onClick={() => { setErr(''); setSheet(true); }} disabled={busy || !!missing}
                   className={`w-full h-14 rounded-2xl bg-primary text-black font-black text-[17px] inline-flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:cursor-not-allowed motion-safe:transition-transform active:scale-[0.99] ${FOCUS}`}>
                   {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-[18px] h-[18px]" strokeWidth={2.6} />}
                   {total && !missing ? `Pay ${naira(total)}` : 'Pay now'}
                 </button>
                 <p className="text-center text-[13px] mt-2 min-h-[20px]" style={{ color: missing ? look.tint : 'rgba(255,255,255,0.45)' }}>
-                  {missing || 'You will pay on Paystack, then come straight back here.'}
+                  {missing || 'Next, choose to pay direct or from your wallet.'}
                 </p>
               </div>
 
               <ul className="grid grid-cols-3 gap-2 pt-1">
-                {([[ShieldCheck, 'Paid securely on Paystack'], [RotateCcw, 'Refunded if it fails'], [Timer, 'Usually done in a minute']] as Array<[LucideIcon, string]>).map(([Icon, text]) => (
+                {([[ShieldCheck, 'Secure payment'], [RotateCcw, 'Refunded if it fails'], [Timer, 'Usually done in a minute']] as Array<[LucideIcon, string]>).map(([Icon, text]) => (
                   <li key={text} className="flex flex-col items-center text-center gap-1.5 rounded-xl border border-white/10 px-2 py-3" style={surface}>
                     <Icon className="w-[18px] h-[18px] text-white/60" />
                     <span className="text-[11.5px] leading-snug text-white/60">{text}</span>
@@ -554,6 +594,9 @@ export default function Pay() {
           )}
         </div>
       </main>
+      <PaySheet open={sheet} onClose={() => setSheet(false)} total={total || 0} busy={busy} signedIn={signedIn}
+        balance={walletQ.data ? walletQ.data.balance : null} balanceLoading={walletQ.isLoading}
+        onCard={() => pay('card')} onWallet={() => pay('wallet')} onLeave={leaveForWallet} />
       <Footer />
     </div>
   );

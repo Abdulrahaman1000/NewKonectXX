@@ -66,6 +66,8 @@ import AdminAudit from './pages/AdminAudit';
 import AdminExpenses from './pages/AdminExpenses';
 import AdminReports from './pages/AdminReports';
 import { captureReferral } from "@/lib/referral";
+import Wallet from '@/pages/Wallet'; // SC-WAL
+import AdminWallet from '@/pages/AdminWallet'; // SC-WAL
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -107,7 +109,9 @@ const App = () => (
                   <Route path="/order-tracking" element={<OrderTracking />} />
                   <Route path="/pay" element={<Pay />} />
                   <Route path="/pay/result" element={<PayResult />} />
+                  <Route path="/wallet" element={<Wallet />} />
                   <Route path="/admin/vtu" element={<AdminProtectedRoute perm="owner"><AdminVtu /></AdminProtectedRoute>} />
+                  <Route path="/admin/wallet" element={<AdminProtectedRoute perm="owner"><AdminWallet /></AdminProtectedRoute>} /> {/* SC-WAL */}
                   <Route path="/account" element={<Account />} />
                   <Route path="/dashboard" element={<Dashboard />} />
 

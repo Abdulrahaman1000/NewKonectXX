@@ -112,14 +112,16 @@ export default function PayResult() {
             )}
             {state === 'ok' && o?.service === 'tv' && <p className="text-sm text-white/70 mt-4">Your subscription has been sent to the smartcard. It can take a few minutes to show on your decoder.</p>}
             {state === 'ok' && !o?.token && !o?.pins?.length && o?.service !== 'tv' && <p className="text-sm text-white/70 mt-4">It has been sent. It can take a minute to show on the phone.</p>}
-            {state === 'fail' && <p className="text-sm text-white/75 mt-4">{REFUND[o?.refundStatus ?? 'required'] ?? REFUND.required}</p>}
+            {state === 'fail' && <p className="text-sm text-white/75 mt-4">{o?.payMethod === 'wallet' ? (o.refundStatus === 'refunded' ? 'Your money has been returned to your wallet.' : 'We are returning your money to your wallet.') : (REFUND[o?.refundStatus ?? 'required'] ?? REFUND.required)}</p>}
             {state === 'unpaid' && <p className="text-sm text-white/75 mt-4">No money was taken. You can try again.</p>}
+            {o?.payMethod === 'wallet' && (state === 'ok' || stillWorking) && <p className="text-xs text-white/55 mt-3">Paid from your wallet.</p>}
             {state === 'check' && <p className="text-sm text-white/75 mt-4">The amount paid did not match this purchase. We will sort it out and contact you.</p>}
             {stillWorking && <p className="text-xs text-white/55 mt-4">This can take up to a minute. You can keep this page open.</p>}
             {err && !o && <p className="text-sm text-red-300 mt-4">{err}</p>}
             {o && <p className="text-[11px] text-white/40 mt-5 break-all">Reference: {o.reference}</p>}
           </div>
           <div className="mt-5 flex gap-2">
+            {o?.payMethod === 'wallet' && <Link to="/wallet" className="min-h-[52px] px-4 rounded-2xl border border-white/20 text-white font-bold inline-flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-primary/70">Wallet</Link>}
             <Link to="/pay" className="flex-1 min-h-[52px] rounded-2xl bg-primary text-black font-black inline-flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-white/70">Buy again</Link>
             <Link to="/" className="flex-1 min-h-[52px] rounded-2xl border border-white/20 text-white font-bold inline-flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-primary/70">Home</Link>
           </div>

@@ -47,7 +47,7 @@ router.post("/orders", limit("create", 25, 3_600_000), async (req, res) => {
     const b = req.body ?? {};
     res.json(await createOrder({
       service: String(b.service ?? ""), network: b.network, phone: b.phone, planCode: b.planCode, amount: b.amount,
-      disco: b.disco, meterType: b.meterType, meter: b.meter, card: b.card, quantity: b.quantity, email: b.email || c?.email, userId: c ? String(c._id) : "",
+      disco: b.disco, meterType: b.meterType, meter: b.meter, card: b.card, quantity: b.quantity, payWith: b.payWith, email: b.email || c?.email, userId: c ? String(c._id) : "",
     }));
   } catch (e) { fail(res, e); }
 });

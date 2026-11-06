@@ -20,7 +20,7 @@ export interface VtuView {
   reference: string; service: Service; network: string; planName: string; phone: string;
   meter: { number: string; type: string; name: string } | null; amount: number;
   paymentStatus: 'pending' | 'paid' | 'mismatch' | 'failed'; fulfilmentStatus: 'pending' | 'processing' | 'successful' | 'failed';
-  token: string; units: string; message: string; refundStatus: string; createdAt: string;
+  token: string; units: string; message: string; refundStatus: string; createdAt: string; payMethod?: 'paystack' | 'wallet';
   card?: { number: string; name: string; status: string; due: string } | null; pins?: { serial: string; pin: string }[]; quantity?: number;
 }
 
@@ -43,7 +43,7 @@ export const getBouquets = (operator: string) => pub<{ bouquets: Bouquet[] }>(`/
 export const checkCard = (operator: string, card: string) =>
   pub<{ ok: boolean; name?: string; status?: string; dueDate?: string; message?: string }>('/verify-card', 'POST', { operator, card });
 export const getExamProducts = (exam: string) => pub<{ products: ExamProduct[] }>(`/exams/${encodeURIComponent(exam)}`).then((r) => r.products);
-export const startPurchase = (b: Record<string, unknown>) => pub<{ reference: string; amount: number; authorizationUrl: string }>('/orders', 'POST', b);
+export const startPurchase = (b: Record<string, unknown>) => pub<{ reference: string; amount: number; authorizationUrl: string; paidFromWallet?: boolean }>('/orders', 'POST', b);
 export const getPurchase = (reference: string) => pub<{ order: VtuView }>(`/orders/${encodeURIComponent(reference)}`).then((r) => r.order);
 
 export const myPurchases = () => pub<{ orders: VtuView[] }>('/mine').then((r) => r.orders);

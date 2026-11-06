@@ -3,8 +3,8 @@
  * One page, four steps: email -> code -> (first time) name and phone -> orders.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Loader2, LogOut, Mail, Package } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, LogOut, Mail, Package, Wallet } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/shared/CartDrawer';
@@ -14,7 +14,8 @@ import {
   type AccountOrder, type Customer,
 } from '@/api/account';
 import { myPurchases, type VtuView } from '@/api/vtu';
-import { clearCustomerToken, getCustomerToken, setCustomerToken } from '@/lib/customerSession';
+import { clearCustomerToken, getCustomerToken, setCustomerToken, takeReturnTo } from '@/lib/customerSession';
+import { getWallet } from '@/api/wallet'; // SC-NAV
 
 const naira = (n: number) => '₦' + Math.round(n).toLocaleString('en-NG');
 const inputCls = 'w-full min-h-[48px] rounded-xl bg-white/5 border border-white/15 px-4 text-white placeholder-white/35 outline-none focus:border-primary';
@@ -23,6 +24,8 @@ const btnCls = 'w-full min-h-[48px] rounded-xl bg-primary text-black font-black 
 type Step = 'loading' | 'email' | 'code' | 'profile' | 'home';
 
 export default function Account() {
+  const navigate = useNavigate(); // SC-NAV
+  const [walletBal, setWalletBal] = useState<number | null>(null);
   const [step, setStep] = useState<Step>('loading');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -40,6 +43,7 @@ export default function Account() {
     setCustomer(c);
     if (c.needsProfile) { setName(c.name); setPhone(c.phone); setStep('profile'); return; }
     setStep('home');
+    getWallet().then((w) => setWalletBal(w.balance)).catch(() => { /* wallet card shows without a balance */ });
     try { setOrders((await fetchMyOrders()).orders); } catch { /* shown empty */ }
     try { setRecharges(await myPurchases()); } catch { /* recharge may be switched off */ }
   }, []);
@@ -58,9 +62,10 @@ export default function Account() {
   const checkCode = () => run(async () => {
     const r = await verifyCode(email.trim(), code);
     setCustomerToken(r.token);
+    if (!r.customer.needsProfile) { navigate(takeReturnTo() || '/pay', { replace: true }); return; } // SC-NAV back to where they were
     await enter(r.customer);
   });
-  const saveMe = () => run(async () => { const r = await saveProfile(name, phone); await enter(r.customer); });
+  const saveMe = () => run(async () => { await saveProfile(name, phone); navigate(takeReturnTo() || '/pay', { replace: true }); }); // SC-NAV
   const addOne = () => run(async () => {
     await addOrder(addNum, addPhone);
     setAddNum(''); setAddPhone('');
@@ -118,6 +123,12 @@ export default function Account() {
                 </div>
                 <button onClick={signOut} className="min-h-[44px] px-3 inline-flex items-center gap-1 text-xs text-white/60 hover:text-primary"><LogOut className="w-4 h-4" /> Sign out</button>
               </div>
+
+              <Link to="/wallet" className="flex items-center gap-3 rounded-2xl border px-4 min-h-[60px]" style={{ borderColor: 'rgba(255,200,40,0.4)', background: 'rgba(255,200,40,0.08)' }}>
+                <Wallet className="w-5 h-5 text-primary shrink-0" />
+                <span className="flex-1"><span className="block text-xs text-white/60">My wallet</span><span className="block text-lg font-black text-primary tabular-nums">{walletBal === null ? 'View' : naira(walletBal)}</span></span>
+                <span className="text-sm font-black text-white">Add money ›</span>
+              </Link>
 
               <section>
                 <h2 className="text-sm font-black text-white mb-2">Your orders</h2>

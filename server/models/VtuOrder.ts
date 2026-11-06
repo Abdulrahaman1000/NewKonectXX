@@ -19,6 +19,7 @@ const VtuOrderSchema = new Schema(
     amount: { type: Number, required: true }, // what the customer pays, naira
     faceValue: { type: Number, default: 0 }, // airtime or electricity amount delivered
     cost: { type: Number, default: 0 }, // what the provider charges us, naira
+    payMethod: { type: String, enum: ["paystack", "wallet"], default: "paystack" }, // SC-WALLET how this purchase was paid
     paymentStatus: { type: String, enum: ["pending", "paid", "mismatch", "failed"], default: "pending" },
     paymentReference: { type: String, default: "" },
     paidAt: { type: Date },

@@ -16,6 +16,7 @@ import { VtuOrder } from "../models/VtuOrder";
 import { VtuSetting } from "../models/VtuSetting";
 import { VtuPlan } from "../models/VtuPlan";
 import { initializeTransaction, verifyTransaction } from "./paystackService";
+import { credit as walletCredit, debit as walletDebit, hasRef as walletHasRef, toKobo } from "./walletService"; // SC-WALLET
 import { defaultProviderName, listProviders, providerByName } from "./vtu";
 import { NETWORKS, type BuyResult, type DataPlan, type VtuProvider } from "./vtu/provider";
 
@@ -181,6 +182,7 @@ export interface CreateInput {
   service: string; network?: string; phone?: string; planCode?: string; amount?: number;
   disco?: string; meterType?: string; meter?: string; email?: string; userId?: string;
   card?: string; quantity?: number; // SC-TV
+  payWith?: string; // SC-WALLET "wallet" = pay from the signed-in customer's wallet; anything else = Paystack
 }
 
 /** Validates and prices the request on the server, saves a pending order, starts Paystack. */
@@ -191,7 +193,9 @@ export async function createOrder(i: CreateInput) {
   const email = String(i.email ?? "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new VtuError(400, "Enter your email so we can send the payment receipt from Paystack.");
 
-  const base: any = { reference: VTU_PREFIX + crypto.randomBytes(5).toString("hex").toUpperCase(), service: i.service, email, userId: i.userId ?? "", provider: p.name };
+  const fromWallet = i.payWith === "wallet";
+  if (fromWallet && !i.userId) throw new VtuError(401, "Please sign in to pay from your wallet.");
+  const base: any = { reference: VTU_PREFIX + crypto.randomBytes(5).toString("hex").toUpperCase(), service: i.service, email, userId: i.userId ?? "", provider: p.name, payMethod: fromWallet ? "wallet" : "paystack" };
   if (i.service === "airtime" || i.service === "data") {
     const phone = normPhone(i.phone);
     if (!phone) throw new VtuError(400, "Enter the phone number that will receive it (11 digits).");
@@ -260,13 +264,24 @@ export async function createOrder(i: CreateInput) {
   }
 
   const order: any = await (VtuOrder as any).create(base);
+  if (fromWallet) {
+    // SC-WALLET Take the money from the wallet (one atomic step that also refuses if the balance is too low), then buy.
+    const d = await walletDebit(String(i.userId), toKobo(order.amount), "SPEND:" + order.reference, "spend", `${order.planName || order.service}`, order.reference);
+    if (!d.ok) {
+      await (VtuOrder as any).findOneAndUpdate({ reference: order.reference }, { $set: { paymentStatus: "failed", providerMessage: "Wallet balance too low" } });
+      throw new VtuError(402, `Your wallet balance (₦${Math.round(d.balance / 100).toLocaleString("en-NG")}) is not enough for ₦${order.amount.toLocaleString("en-NG")}. Please fund your wallet.`);
+    }
+    await (VtuOrder as any).findOneAndUpdate({ reference: order.reference, paymentStatus: "pending" }, { $set: { paymentStatus: "paid", paymentReference: "wallet", paidAt: new Date() } });
+    try { await fulfil(order.reference); } catch (e) { console.error("[vtu] wallet purchase will be retried by the status check", e); } // already paid: the result page keeps checking
+    return { reference: order.reference, amount: order.amount, authorizationUrl: "", paidFromWallet: true };
+  }
   try {
     const init = await initializeTransaction({
       email, amountKobo: Math.round(order.amount * 100), reference: order.reference,
       callbackUrl: `${config.siteUrl}/pay/result?reference=${order.reference}`,
       metadata: { vtu: true, reference: order.reference, service: order.service },
     });
-    return { reference: order.reference, amount: order.amount, authorizationUrl: init.authorization_url };
+    return { reference: order.reference, amount: order.amount, authorizationUrl: init.authorization_url, paidFromWallet: false };
   } catch (e: any) {
     await (VtuOrder as any).findOneAndUpdate({ reference: order.reference }, { $set: { paymentStatus: "failed", providerMessage: "Could not start payment" } });
     throw new VtuError(502, "We could not start the payment. Please try again.");
@@ -277,7 +292,11 @@ export async function createOrder(i: CreateInput) {
 export async function confirmPayment(reference: string) {
   const order: any = await (VtuOrder as any).findOne({ reference });
   if (!order) throw new VtuError(404, "We could not find that purchase.");
-  if (order.paymentStatus === "pending") {
+  if (order.paymentStatus === "pending" && order.payMethod === "wallet") {
+    // SC-WALLET The wallet was charged but the page never got to mark it paid (a crash in between): finish it. If it was not charged, it was never paid.
+    if (await walletHasRef(String(order.userId), "SPEND:" + reference)) await (VtuOrder as any).findOneAndUpdate({ reference, paymentStatus: "pending" }, { $set: { paymentStatus: "paid", paymentReference: "wallet", paidAt: new Date() } });
+    else if (Date.now() - new Date(order.createdAt ?? 0).getTime() > 120_000) await (VtuOrder as any).findOneAndUpdate({ reference, paymentStatus: "pending" }, { $set: { paymentStatus: "failed", providerMessage: "Wallet was not charged" } });
+  } else if (order.paymentStatus === "pending") {
     const v = await verifyTransaction(reference);
     if (v.status === "success") {
       const right = Math.round(order.amount * 100) === Number(v.amount) && (!v.currency || v.currency === "NGN") && v.reference === reference;
@@ -400,6 +419,16 @@ export async function refund(reference: string) {
     { new: true },
   );
   if (!claimed) return (VtuOrder as any).findOne({ reference });
+  if (claimed.payMethod === "wallet") {
+    // SC-WALLET Paid from the wallet: the money goes back to the wallet (once: the reference is applied one time only).
+    try {
+      await walletCredit(String(claimed.userId), toKobo(claimed.amount), "REFUND:" + reference, "refund", `Refund: ${claimed.planName || claimed.service}`, reference);
+      await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { refundStatus: "refunded", refundNote: "Returned to the customer's wallet." } });
+    } catch (e: any) {
+      await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { refundStatus: "failed", refundNote: `Could not return the money to the wallet: ${e?.message ?? "unknown"}. Press Retry refund.` } });
+    }
+    return (VtuOrder as any).findOne({ reference });
+  }
   let r: { ok: boolean; message?: string };
   try { r = await refundHook.call(reference); } catch (e: any) { r = { ok: false, message: e?.message }; }
   if (!r.ok) await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { refundStatus: "failed", refundNote: `Refund did not go through: ${r.message ?? "unknown"}. Refund by hand in Paystack, then press Mark refunded.` } });
@@ -433,7 +462,7 @@ export function publicView(o: any) {
     token: done && o.service !== "tv" && o.service !== "exam" ? o.token : "", units: done ? o.units : "", message: o.providerMessage,
     card: o.card?.number ? { number: o.card.number, name: o.card.name, status: o.card.status, due: o.card.due } : null,
     pins: done && o.service === "exam" ? (o.pins ?? []).map((x: any) => ({ serial: x.serial ?? "", pin: x.pin })) : [], quantity: o.quantity || 1,
-    refundStatus: o.refundStatus, createdAt: o.createdAt,
+    refundStatus: o.refundStatus, payMethod: o.payMethod || "paystack", createdAt: o.createdAt,
   };
 }
 

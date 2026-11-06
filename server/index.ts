@@ -15,6 +15,8 @@ import aiRouter from "./routes/ai";
 import resellersRouter from "./routes/resellers";
 import partnerRouter from "./routes/partner";
 import vtuRouter from "./routes/vtu"; // SC-VTU
+import walletRouter from "./routes/wallet"; // SC-WAL
+import adminWalletRouter from "./routes/admin/wallet"; // SC-WAL
 import adminVtuRouter from "./routes/admin/vtu"; // SC-VTU
 import accountRouter from "./routes/account"; // SC-ACCT
 import giftRoutes from "./routes/admin/giftRoutes";
@@ -98,6 +100,7 @@ export function createServer() {
   app.use("/api/resellers", resellersRouter);
   app.use("/api/partner", partnerRouter);
   app.use("/api/vtu", vtuRouter); // SC-VTU
+app.use("/api/wallet", walletRouter); // SC-WAL
   app.use("/api/account", accountRouter); // SC-ACCT
 
   // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.
@@ -124,6 +127,7 @@ export function createServer() {
   app.use("/api/admin/profit", requireAuth, adminProfitRouter);
   app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
   app.use("/api/admin/vtu", requireAuth, adminVtuRouter); // SC-VTU
+app.use("/api/admin/wallet", requireAuth, adminWalletRouter); // SC-WAL
   app.use("/api/admin/to-get", requireAuth, adminToGetRouter);
   app.use("/api/admin/stock", requireAuth, adminStockRouter);
   app.use("/api/admin/summary", requireAuth, adminSummaryRouter);

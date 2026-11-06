@@ -27,6 +27,7 @@ import {
 import { startPlanPayment, rememberInitiated, confirmPlanPayment } from "../services/installments";
 import { Order } from "../models/Order";
 import { handleWebhookCharge, isVtuReference } from "../services/vtuService"; // SC-VTU
+import { handleWebhookCharge as handleWalletCharge, isWalletReference } from "../services/walletService"; // SC-WAL
 
 const router = Router();
 
@@ -232,6 +233,10 @@ router.post(
       console.log(`📥 Paystack webhook: ${eventType} (ref: ${reference})`);
 
       if (eventType === "charge.success" && isVtuReference(reference)) { await handleWebhookCharge(reference); return res.status(200).send("OK"); } // SC-VTU
+  // SC-WAL wallet top-ups (a safety net: the customer's return page also confirms them)
+  if (eventType === "charge.success" && reference && isWalletReference(String(reference))) {
+    try { await handleWalletCharge(String(reference)); } catch (e) { console.error("[wallet] webhook", e); }
+  }
       if (eventType === "charge.success" && reference) {
         const verification = await verifyTransaction(reference);
         if (verification.status === "success") {
