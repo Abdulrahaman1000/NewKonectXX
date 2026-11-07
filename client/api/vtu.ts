@@ -10,8 +10,8 @@ export interface Catalog {
   airtime: { min: number; max: number };
   electricity: { min: number; max: number; fee: number; discos: { code: string; name: string }[] };
   /** null when the chosen provider does not sell it */
-  tv: { fee: number; operators: { code: string; name: string }[] } | null;
-  exam: { fee: number; maxQuantity: number; types: { code: string; name: string }[] } | null;
+  tv: { fee: number; operators: { code: string; name: string; idType?: 'card' | 'phone' }[] } | null;
+  exam: { fee: number; maxQuantity: number; types: { code: string; name: string; needsProfile?: boolean; single?: boolean; noFee?: boolean }[] } | null;
 }
 export interface Bouquet { code: string; name: string; price: number }
 export interface ExamProduct { code: string; name: string; price: number }
@@ -42,6 +42,8 @@ export const checkMeter = (disco: string, meterType: string, meter: string) =>
 export const getBouquets = (operator: string) => pub<{ bouquets: Bouquet[] }>(`/tv/${encodeURIComponent(operator)}`).then((r) => r.bouquets);
 export const checkCard = (operator: string, card: string) =>
   pub<{ ok: boolean; name?: string; status?: string; dueDate?: string; message?: string }>('/verify-card', 'POST', { operator, card });
+export const checkProfile = (exam: string, product: string, profile: string) =>
+  pub<{ ok: boolean; name?: string; message?: string }>('/verify-profile', 'POST', { exam, product, profile });
 export const getExamProducts = (exam: string) => pub<{ products: ExamProduct[] }>(`/exams/${encodeURIComponent(exam)}`).then((r) => r.products);
 export const startPurchase = (b: Record<string, unknown>) => pub<{ reference: string; amount: number; authorizationUrl: string; paidFromWallet?: boolean }>('/orders', 'POST', b);
 export const getPurchase = (reference: string) => pub<{ order: VtuView }>(`/orders/${encodeURIComponent(reference)}`).then((r) => r.order);

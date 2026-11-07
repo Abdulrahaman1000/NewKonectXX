@@ -4,7 +4,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { VtuOrder } from "../models/VtuOrder";
 import { customerFromToken } from "../services/customerAuth";
-import { VtuError, catalog, checkStatus, confirmPayment, createOrder, dataPlans, examProducts, publicView, status, tvBouquets, verifyCard, verifyMeter } from "../services/vtuService";
+import { VtuError, catalog, checkStatus, confirmPayment, createOrder, dataPlans, examProducts, publicView, status, tvBouquets, verifyCard, verifyMeter, verifyProfile } from "../services/vtuService";
 
 const router = Router();
 const buckets = new Map<string, { n: number; t: number }>();
@@ -36,6 +36,9 @@ router.get("/tv/:operator", limit("tv", 200, 3_600_000), async (req, res) => {
 });
 router.post("/verify-card", limit("card", 40, 3_600_000), async (req, res) => {
   try { res.json(await verifyCard(String(req.body?.operator ?? ""), String(req.body?.card ?? ""))); } catch (e) { fail(res, e); }
+});
+router.post("/verify-profile", limit("profile", 40, 3_600_000), async (req, res) => { // SC-TV2 JAMB profile check
+  try { res.json(await verifyProfile(String(req.body?.exam ?? ""), String(req.body?.product ?? ""), String(req.body?.profile ?? ""))); } catch (e) { fail(res, e); }
 });
 router.get("/exams/:exam", limit("exam", 200, 3_600_000), async (req, res) => {
   try { res.json({ products: await examProducts(req.params.exam) }); } catch (e) { fail(res, e); }

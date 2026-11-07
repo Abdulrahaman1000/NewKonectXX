@@ -178,6 +178,13 @@ export async function examProducts(exam: string) {
   catch (e) { console.error("[vtu] exam list", e); throw new VtuError(503, "Exam pins are not available right now. Please try again shortly."); }
 }
 
+/** SC-TV2 JAMB: check the candidate's profile ID for one pin. */
+export async function verifyProfile(exam: string, product: string, profile: string) {
+  const p = await need();
+  if (!p.examTypes || !p.verifyProfile || !p.examTypes().some((e) => e.code === exam && e.needsProfile)) throw new VtuError(400, "No profile check for this exam.");
+  return p.verifyProfile({ exam, product: String(product ?? ""), profile: String(profile ?? "").replace(/\D/g, "") });
+}
+
 export interface CreateInput {
   service: string; network?: string; phone?: string; planCode?: string; amount?: number;
   disco?: string; meterType?: string; meter?: string; email?: string; userId?: string;
@@ -251,14 +258,21 @@ export async function createOrder(i: CreateInput) {
     if (!et) throw new VtuError(400, "Choose an exam.");
     const phone = normPhone(i.phone);
     if (!phone) throw new VtuError(400, "Enter your phone number (11 digits).");
-    const q = Math.round(Number(i.quantity ?? 1));
+    const q = et.single ? 1 : Math.round(Number(i.quantity ?? 1));
     if (!Number.isFinite(q) || q < 1 || q > MAX_PINS) throw new VtuError(400, `Choose between 1 and ${MAX_PINS} pins.`);
     let list: Array<{ code: string; name: string; cost: number }> = [];
     try { list = await p.examProducts(et.code); } catch (e) { console.error("[vtu] exam list", e); throw new VtuError(503, "Exam pins are not available right now. Please try again shortly."); }
     const x = list.find((y) => y.code === i.planCode);
     if (!x) throw new VtuError(400, "That product is no longer available. Please choose again.");
+    if (et.needsProfile) { // JAMB: check the profile ID first
+      if (!p.verifyProfile) throw new VtuError(400, "That service is not available yet.");
+      const profile = String(i.card ?? "").replace(/\D/g, "");
+      const v = await p.verifyProfile({ exam: et.code, product: x.code, profile });
+      if (!v.ok) throw new VtuError(400, v.message || "We could not verify that JAMB profile ID.");
+      base.card = { number: profile, name: v.name ?? "", status: "", due: "" };
+    }
     base.network = et.code; base.networkName = et.name; base.phoneNumber = phone; base.planCode = x.code; base.quantity = q;
-    base.planName = q > 1 ? `${x.name} × ${q}` : x.name; base.cost = x.cost * q; base.faceValue = x.cost * q; base.amount = Math.round(x.cost * q + s.examFee);
+    base.planName = q > 1 ? `${x.name} × ${q}` : x.name; base.cost = x.cost * q; base.faceValue = x.cost * q; base.amount = Math.round(x.cost * q + (et.noFee ? 0 : s.examFee));
   } else {
     throw new VtuError(400, "That service is not available yet.");
   }
@@ -322,13 +336,14 @@ const apply = async (reference: string, r: BuyResult) => {
     return;
   }
   // SC-TV Exam pins paid for but not shown yet are not finished either: the customer would see "done" with no pin.
-  if (r.status === "success" && o?.service === "exam" && !r.pins?.length) {
+  const hasPins = o?.service === "exam" || (o?.service === "tv" && o?.network === "showmax"); // SC-TV2 these deliver a pin or voucher code
+  if (r.status === "success" && hasPins && !r.pins?.length) {
     await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "processing", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: "Your payment went through. Your pin is still being generated. We are checking." } });
     return;
   }
   if (r.status === "success") {
     const plain = o?.service === "tv" || o?.service === "exam"; // no electricity token for these
-    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "successful", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "", token: plain ? "" : r.token ?? "", units: plain ? "" : r.units ?? "", ...(o?.service === "exam" ? { pins: r.pins ?? [] } : {}), ...(r.cost ? { cost: r.cost } : {}) } });
+    await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "successful", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "", token: plain ? "" : r.token ?? "", units: plain ? "" : r.units ?? "", ...(hasPins ? { pins: r.pins ?? [] } : {}), ...(r.cost ? { cost: r.cost } : {}) } });
   } else if (r.status === "failed") {
     await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "failed", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "Failed", refundStatus: "required" } });
     if (r.setupProblem) await raiseAlert(o?.provider || "", code, `${o?.provider || "The provider"} refused a purchase (code ${code}). The customer is being refunded. Fix this before selling more.`);
@@ -461,7 +476,7 @@ export function publicView(o: any) {
     amount: o.amount, paymentStatus: o.paymentStatus, fulfilmentStatus: o.fulfilmentStatus,
     token: done && o.service !== "tv" && o.service !== "exam" ? o.token : "", units: done ? o.units : "", message: o.providerMessage,
     card: o.card?.number ? { number: o.card.number, name: o.card.name, status: o.card.status, due: o.card.due } : null,
-    pins: done && o.service === "exam" ? (o.pins ?? []).map((x: any) => ({ serial: x.serial ?? "", pin: x.pin })) : [], quantity: o.quantity || 1,
+    pins: done && (o.service === "exam" || (o.service === "tv" && o.network === "showmax")) ? (o.pins ?? []).map((x: any) => ({ serial: x.serial ?? "", pin: x.pin })) : [], quantity: o.quantity || 1,
     refundStatus: o.refundStatus, payMethod: o.payMethod || "paystack", createdAt: o.createdAt,
   };
 }

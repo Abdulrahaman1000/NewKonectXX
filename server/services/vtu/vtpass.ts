@@ -43,8 +43,19 @@ const DISCOS: Array<Disco & { id: string }> = [
 //   TV:   GET service-variations?serviceID=dstv|gotv  ->  POST merchant-verify {billersCode, serviceID}  ->  POST pay {request_id, serviceID, billersCode, variation_code, phone, subscription_type:"change", quantity:1}
 //         sandbox smartcard 1212121212 verifies and pays; 201000000000 pending; any other fails.
 //   Exam: GET service-variations?serviceID=waec  ->  POST pay {request_id, serviceID:"waec", variation_code, quantity, phone}; the pins come back in "cards": [{Serial, Pin}].
-const TV_OPERATORS: TvOperator[] = [{ code: "dstv", name: "DStv" }, { code: "gotv", name: "GOtv" }];
-const EXAMS: Array<ExamType & { id: string }> = [{ code: "waec", name: "WAEC result checker", id: "waec" }];
+//   StarTimes: same as DStv/GOtv but no subscription_type. Sandbox smartcard 1212121212.
+//   Showmax:   no card check. billersCode is the buyer's phone number; the voucher code comes back in "Voucher". Sandbox number 08011111111.
+//   WAEC registration (serviceID waec-registration): pay {request_id, serviceID, variation_code, quantity, phone}; the pin comes back in "tokens".
+//   JAMB (serviceID jamb): POST merchant-verify {billersCode: profile id, serviceID:"jamb", type: variation_code}, then pay {request_id, serviceID, variation_code, billersCode, phone}; the pin is in "Pin" as "Pin : 123". Sandbox profile 0123456789. JAMB sets the price: no fee is added.
+const TV_OPERATORS: TvOperator[] = [
+  { code: "dstv", name: "DStv", idType: "card" }, { code: "gotv", name: "GOtv", idType: "card" },
+  { code: "startimes", name: "StarTimes", idType: "card" }, { code: "showmax", name: "Showmax", idType: "phone" },
+];
+const EXAMS: Array<ExamType & { id: string }> = [
+  { code: "waec", name: "WAEC result checker", id: "waec" },
+  { code: "waec-registration", name: "WAEC registration pin", id: "waec-registration" },
+  { code: "jamb", name: "JAMB pin", id: "jamb", needsProfile: true, single: true, noFee: true },
+];
 const MAX_TV = 500000;
 
 // Result codes. See "Response codes" in the VTpass documentation.
@@ -84,7 +95,15 @@ const pinsOf = (j: any): ExamPin[] => {
   const out: ExamPin[] = cards.map((c) => ({ serial: String(c?.Serial ?? c?.serial ?? "").trim() || undefined, pin: String(c?.Pin ?? c?.pin ?? "").trim() })).filter((x) => x.pin);
   if (out.length) return out;
   const text = String(j?.purchased_code ?? "");
-  return [...text.matchAll(/serial\s*no\s*:?\s*([^,;|]+?)\s*[,;|]\s*pin\s*:?\s*([A-Za-z0-9]+)/gi)].map((m) => ({ serial: m[1].trim(), pin: m[2].trim() }));
+  const serialPin = [...text.matchAll(/serial\s*no\s*:?\s*([^,;|]+?)\s*[,;|]\s*pin\s*:?\s*([A-Za-z0-9]+)/gi)].map((m) => ({ serial: m[1].trim(), pin: m[2].trim() }));
+  if (serialPin.length) return serialPin;
+  // WAEC registration: "tokens": ["0100..."]. Showmax: "Voucher": ["SHM..."].
+  const lists = [j?.tokens, j?.content?.tokens, j?.Voucher, j?.content?.Voucher].filter(Array.isArray) as any[][];
+  const fromLists = lists.flat().map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (fromLists.length) return [...new Set(fromLists)].map((pin) => ({ pin }));
+  // JAMB: "Pin : 123456". Others: "Token: 123456".
+  const one = String(j?.Pin ?? j?.pin ?? text).match(/(?:pin|token)\s*:?\s*([A-Za-z0-9-]{5,})/i);
+  return one ? [{ pin: one[1] }] : [];
 };
 
 export class VtpassProvider implements VtuProvider {
@@ -212,6 +231,7 @@ export class VtpassProvider implements VtuProvider {
 
   async verifyCard(p: { operator: string; card: string }): Promise<CardCheck> {
     if (!TV_OPERATORS.some((o) => o.code === p.operator)) return { ok: false, message: "Choose your TV company." };
+    if (p.operator === "showmax") return /^0\d{10}$/.test(p.card) ? { ok: true } : { ok: false, message: "Enter the phone number for your Showmax account (11 digits)." }; // VTpass has no check for Showmax
     if (!/^\d{8,13}$/.test(p.card)) return { ok: false, message: "The smartcard or IUC number should be 8 to 13 digits." };
     try {
       const j = await this.post("/merchant-verify", { billersCode: p.card, serviceID: p.operator }, 25000);
@@ -227,7 +247,20 @@ export class VtpassProvider implements VtuProvider {
   }
 
   // ---- SC-TV exam pins ----
-  examTypes(): ExamType[] { return EXAMS.map(({ code, name }) => ({ code, name })); }
+  examTypes(): ExamType[] { return EXAMS.map(({ code, name, needsProfile, single, noFee }) => ({ code, name, needsProfile, single, noFee })); }
+  /** JAMB: check the profile ID and get the candidate's name. */
+  async verifyProfile(p: { exam: string; product: string; profile: string }): Promise<CardCheck> {
+    const e = EXAMS.find((x) => x.code === p.exam);
+    if (!e || !e.needsProfile) return { ok: false, message: "No profile check for this exam." };
+    if (!/^\d{8,15}$/.test(p.profile)) return { ok: false, message: "Enter the JAMB profile ID (digits only)." };
+    if (!p.product) return { ok: false, message: "Choose the pin first." };
+    try {
+      const j = await this.post("/merchant-verify", { billersCode: p.profile, serviceID: e.id, type: p.product }, 25000);
+      const c = j?.content ?? {}; const name = String(c?.Customer_Name ?? "").trim();
+      if (String(j?.code) === "000" && name && !c?.error) return { ok: true, name };
+      return { ok: false, message: "We could not find that JAMB profile ID. Check the number." };
+    } catch { return { ok: false, message: "We could not check the profile right now. Please try again in a moment." }; }
+  }
   async examProducts(exam: string): Promise<ExamProduct[]> {
     const e = EXAMS.find((x) => x.code === exam);
     return e ? this.variations(e.id, 100000) : [];
@@ -250,12 +283,18 @@ export class VtpassProvider implements VtuProvider {
       if (!TV_OPERATORS.some((o) => o.code === req.network) || !req.card || !req.planCode) return { status: "failed", message: "Unknown TV bouquet." };
       if (!req.phone) return { status: "failed", message: "A phone number is needed for TV." };
       // No "amount": VTpass then uses the bouquet's own price. subscription_type "change" covers a new subscriber, a renewal of the same bouquet and a change of bouquet.
+      if (req.network === "showmax") return this.interpret(await this.post("/pay", { request_id, serviceID: "showmax", billersCode: req.card, variation_code: req.planCode, phone: req.phone }), req.amount);
+      if (req.network === "startimes") return this.interpret(await this.post("/pay", { request_id, serviceID: "startimes", billersCode: req.card, variation_code: req.planCode, phone: req.phone }), req.amount);
       return this.interpret(await this.post("/pay", { request_id, serviceID: req.network, billersCode: req.card, variation_code: req.planCode, phone: req.phone, subscription_type: "change", quantity: 1 }), req.amount);
     }
     if (req.service === "exam") {
       const e = EXAMS.find((x) => x.code === req.network);
       if (!e || !req.planCode) return { status: "failed", message: "Unknown exam product." };
       if (!req.phone) return { status: "failed", message: "A phone number is needed for exam pins." };
+      if (e.needsProfile) {
+        if (!req.card) return { status: "failed", message: "A JAMB profile ID is needed." };
+        return this.interpret(await this.post("/pay", { request_id, serviceID: e.id, variation_code: req.planCode, billersCode: req.card, phone: req.phone }), req.amount);
+      }
       return this.interpret(await this.post("/pay", { request_id, serviceID: e.id, variation_code: req.planCode, quantity: Math.max(1, Math.round(req.quantity ?? 1)), phone: req.phone }), req.amount);
     }
     const d = DISCOS.find((x) => x.code === req.network);

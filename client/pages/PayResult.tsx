@@ -77,7 +77,7 @@ export default function PayResult() {
                 <ServiceBadge k={o.service} size={40} solid />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-black text-white leading-tight">{what}</p>
-                  <p className="text-xs text-white/55 mt-0.5 break-words">{o.meter ? `Meter ${o.meter.number}` : o.card ? `Smartcard ${o.card.number}${o.card.name ? ` · ${o.card.name}` : ''}` : o.service === 'exam' ? o.network : o.phone ? `To ${o.phone}` : ''}</p>
+                  <p className="text-xs text-white/55 mt-0.5 break-words">{o.meter ? `Meter ${o.meter.number}` : o.card ? (o.service === 'tv' && o.network === 'Showmax' ? `Showmax account ${o.card.number}` : o.service === 'exam' ? `JAMB profile ${o.card.number}${o.card.name ? ` · ${o.card.name}` : ''}` : `Smartcard ${o.card.number}${o.card.name ? ` · ${o.card.name}` : ''}`) : o.service === 'exam' ? o.network : o.phone ? `To ${o.phone}` : ''}</p>
                 </div>
                 {state !== 'ok' && <p className="text-sm font-bold text-white tabular-nums">{naira(o.amount)}</p>}
               </div>
@@ -98,19 +98,19 @@ export default function PayResult() {
               <div className="mt-4 space-y-3 text-left">
                 {o.pins.map((p, i) => (
                   <div key={i} className="rounded-2xl border border-primary/40 p-4" style={{ background: 'rgba(255,200,40,0.08)' }}>
-                    <p className="text-[13px] font-bold text-white/70">{o.pins!.length > 1 ? `Pin ${i + 1} of ${o.pins!.length}` : 'Your pin'}</p>
+                    <p className="text-[13px] font-bold text-white/70">{o.service === 'tv' ? 'Your Showmax code' : o.pins!.length > 1 ? `Pin ${i + 1} of ${o.pins!.length}` : 'Your pin'}</p>
                     {p.serial && <p className="text-xs text-white/60 mt-1">Serial number <span className="font-bold text-white tabular-nums">{p.serial}</span></p>}
                     <p className="text-[26px] leading-tight font-black tracking-[0.06em] text-primary break-words my-2 tabular-nums">{p.pin}</p>
                     <button type="button" className="w-full min-h-[48px] rounded-xl bg-primary text-black font-black text-sm inline-flex items-center justify-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
                       onClick={() => { navigator.clipboard?.writeText(p.pin).then(() => setCopiedPin(i)).catch(() => {}); }}>
-                      {copiedPin === i ? <Check className="w-4 h-4" strokeWidth={3} /> : <Copy className="w-4 h-4" />} {copiedPin === i ? 'Copied' : 'Copy pin'}
+                      {copiedPin === i ? <Check className="w-4 h-4" strokeWidth={3} /> : <Copy className="w-4 h-4" />} {copiedPin === i ? 'Copied' : o.service === 'tv' ? 'Copy code' : 'Copy pin'}
                     </button>
                   </div>
                 ))}
-                <p className="text-xs text-white/55">Save your pin now. Anyone who has it can use it.</p>
+                <p className="text-xs text-white/55">{o.service === 'tv' ? 'Use this code to activate your Showmax subscription. Save it now. Anyone who has it can use it.' : 'Save your pin now. Anyone who has it can use it.'}</p>
               </div>
             )}
-            {state === 'ok' && o?.service === 'tv' && <p className="text-sm text-white/70 mt-4">Your subscription has been sent to the smartcard. It can take a few minutes to show on your decoder.</p>}
+            {state === 'ok' && o?.service === 'tv' && o.network !== 'Showmax' && <p className="text-sm text-white/70 mt-4">Your subscription has been sent to the smartcard. It can take a few minutes to show on your decoder.</p>}
             {state === 'ok' && !o?.token && !o?.pins?.length && o?.service !== 'tv' && <p className="text-sm text-white/70 mt-4">It has been sent. It can take a minute to show on the phone.</p>}
             {state === 'fail' && <p className="text-sm text-white/75 mt-4">{o?.payMethod === 'wallet' ? (o.refundStatus === 'refunded' ? 'Your money has been returned to your wallet.' : 'We are returning your money to your wallet.') : (REFUND[o?.refundStatus ?? 'required'] ?? REFUND.required)}</p>}
             {state === 'unpaid' && <p className="text-sm text-white/75 mt-4">No money was taken. You can try again.</p>}

@@ -9,9 +9,9 @@ export const NETWORKS: Network[] = ["MTN", "Airtel", "Glo", "9mobile"];
 
 export interface DataPlan { code: string; name: string; validity: string; category: "daily" | "weekly" | "monthly"; cost: number }
 export interface Disco { code: string; name: string }
-export interface TvOperator { code: string; name: string } // code is the provider's own id for the decoder company (dstv, gotv)
+export interface TvOperator { code: string; name: string; idType?: "card" | "phone" } // code is the provider's own id for the decoder company (dstv, gotv)
 export interface TvBouquet { code: string; name: string; cost: number }
-export interface ExamType { code: string; name: string }
+export interface ExamType { code: string; name: string; needsProfile?: boolean; single?: boolean; noFee?: boolean } // needsProfile: the buyer's ID must be checked first (JAMB). single: one per order. noFee: the owner's exam fee is not added (JAMB prices are fixed by JAMB).
 export interface ExamProduct { code: string; name: string; cost: number }
 export interface CardCheck { ok: boolean; name?: string; status?: string; dueDate?: string; message?: string }
 export interface ExamPin { serial?: string; pin: string }
@@ -52,6 +52,7 @@ export interface VtuProvider {
   verifyCard?(p: { operator: string; card: string }): Promise<CardCheck>;
   examTypes?(): ExamType[];
   examProducts?(exam: string): Promise<ExamProduct[]>;
+  verifyProfile?(p: { exam: string; product: string; profile: string }): Promise<CardCheck>;
   buy(req: BuyRequest): Promise<BuyResult>;
   query(reference: string, requestId?: string): Promise<QueryResult>;
 }

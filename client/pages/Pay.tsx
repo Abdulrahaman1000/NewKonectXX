@@ -15,7 +15,7 @@ import { PaySheet } from '@/components/vtu/PaySheet';
 import { getWallet, hasCustomerToken } from '@/api/wallet';
 import { Link } from 'react-router-dom';
 import { savePayDraft, setReturnTo, takePayDraft } from '@/lib/customerSession';
-import { checkCard, checkMeter, getBouquets, getCatalog, getExamProducts, getPlans, startPurchase, type Plan, type Service } from '@/api/vtu';
+import { checkProfile, checkCard, checkMeter, getBouquets, getCatalog, getExamProducts, getPlans, startPurchase, type Plan, type Service } from '@/api/vtu';
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
@@ -123,7 +123,6 @@ export default function Pay() {
   useEffect(() => { if (catalog?.tv && !operator) setOperator(catalog.tv.operators[0]?.code ?? ''); }, [catalog, operator]);
   useEffect(() => { if (catalog?.exam && !exam) setExam(catalog.exam.types[0]?.code ?? ''); }, [catalog, exam]);
   useEffect(() => { setBouquetCode(''); }, [operator, tab]);
-  useEffect(() => { setCardInfo(null); }, [operator, card]);
   useEffect(() => { setProductCode(''); setQty(1); }, [exam, tab]);
   useEffect(() => { if (tab === 'exam' && products.length === 1 && !productCode) setProductCode(products[0].code); }, [tab, products, productCode]);
   useEffect(() => { setMeterInfo(null); }, [disco, meterType, meter]);
@@ -138,8 +137,14 @@ export default function Pay() {
 
   const fee = catalog?.electricity.fee ?? 0;
   const examFee = catalog?.exam?.fee ?? 0;
-  const base = tab === 'data' ? plan?.price ?? 0 : tab === 'tv' ? bouquet?.price ?? 0 : tab === 'exam' ? (product?.price ?? 0) * qty : amount ? Number(amount) : 0;
-  const extraFee = tab === 'electricity' ? fee : tab === 'exam' ? examFee : 0; // TV prices already include the TV fee
+  const opInfo = catalog?.tv?.operators.find((o) => o.code === operator);
+  const isPhoneId = opInfo?.idType === 'phone'; // Showmax: the id is the phone number, nothing to look up
+  const examInfo = catalog?.exam?.types.find((t) => t.code === exam);
+  const needsProfile = !!examInfo?.needsProfile; // JAMB: check the profile ID first
+  const single = !!examInfo?.single;
+  useEffect(() => { setCardInfo(tab === 'tv' && isPhoneId && /^0\d{10}$/.test(card) ? {} : null); }, [operator, card, exam, productCode, tab, isPhoneId]);
+  const base = tab === 'data' ? plan?.price ?? 0 : tab === 'tv' ? bouquet?.price ?? 0 : tab === 'exam' ? (product?.price ?? 0) * (single ? 1 : qty) : amount ? Number(amount) : 0;
+  const extraFee = tab === 'electricity' ? fee : tab === 'exam' ? (examInfo?.noFee ? 0 : examFee) : 0; // TV prices already include the TV fee
   const total = base ? base + extraFee : 0;
   const operatorName = catalog?.tv?.operators.find((o) => o.code === operator)?.name ?? '';
   const examName = catalog?.exam?.types.find((t) => t.code === exam)?.name ?? '';
@@ -163,6 +168,15 @@ export default function Pay() {
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
+  const verifyProfileNow = async () => {
+    setBusy(true); setErr('');
+    try {
+      const r = await checkProfile(exam, productCode, card);
+      if (!r.ok) throw new Error(r.message || 'We could not verify that JAMB profile ID.');
+      setCardInfo({ name: r.name });
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
   // What is still missing, in the order the person fills it in. Empty means ready to pay.
   const missing = (() => {
     const phoneOk = phone.replace(/\D/g, '').length >= 11;
@@ -176,13 +190,14 @@ export default function Pay() {
       if (!phoneOk) return 'Enter a phone number for the token details';
     }
     if (tab === 'tv') {
-      if (card.length < 8) return 'Enter the smartcard number';
-      if (!cardInfo) return 'Verify the smartcard';
+      if (isPhoneId) { if (!cardInfo) return 'Enter the phone number on your Showmax account'; }
+      else { if (card.length < 8) return 'Enter the smartcard number'; if (!cardInfo) return 'Verify the smartcard'; }
       if (!bouquet) return 'Choose a bouquet';
-      if (!phoneOk) return 'Enter your phone number';
+      if (!isPhoneId && !phoneOk) return 'Enter your phone number';
     }
     if (tab === 'exam') {
       if (!product) return 'Choose a product';
+      if (needsProfile) { if (card.length < 8) return 'Enter the JAMB profile ID'; if (!cardInfo) return 'Verify the profile ID'; }
       if (!phoneOk) return 'Enter your phone number';
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return 'Enter your email for the receipt';
@@ -193,11 +208,12 @@ export default function Pay() {
     setBusy(true); setErr('');
     try {
       if (tab === 'electricity' && !meterInfo) throw new Error('Please verify the meter first.');
-      if (tab === 'tv' && !cardInfo) throw new Error('Please verify the smartcard first.');
+      if (tab === 'tv' && !cardInfo) throw new Error(isPhoneId ? 'Enter the phone number on your Showmax account.' : 'Please verify the smartcard first.');
+      if (tab === 'exam' && needsProfile && !cardInfo) throw new Error('Please verify the JAMB profile ID first.');
       store.set('sc_vtu_phone', phone); store.set('sc_vtu_email', email);
       const body: Record<string, unknown> =
-        tab === 'tv' ? { service: 'tv', network: operator, card, planCode: bouquetCode, phone, email }
-        : tab === 'exam' ? { service: 'exam', network: exam, planCode: productCode, quantity: qty, phone, email }
+        tab === 'tv' ? { service: 'tv', network: operator, card, planCode: bouquetCode, phone: isPhoneId ? card : phone, email }
+        : tab === 'exam' ? { service: 'exam', network: exam, planCode: productCode, quantity: single ? 1 : qty, phone, email, ...(needsProfile ? { card } : {}) }
         : { service: tab, network, phone, email, amount: amount || undefined, planCode: planCode || undefined, disco, meterType, meter };
       if (via === 'wallet') body.payWith = 'wallet';
       const r = await startPurchase(body);
@@ -408,7 +424,7 @@ export default function Pay() {
                         {catalog.tv.operators.map((o) => {
                           const on = operator === o.code;
                           return (
-                            <button key={o.code} type="button" aria-pressed={on} onClick={() => setOperator(o.code)}
+                            <button key={o.code} type="button" aria-pressed={on} onClick={() => { if ((o.idType ?? 'card') !== (opInfo?.idType ?? 'card')) setCard(''); setOperator(o.code); }}
                               className={`relative flex items-center gap-3 rounded-xl border px-3 min-h-[60px] motion-safe:transition-colors ${FOCUS} ${on ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5 hover:border-white/25'}`}>
                               <NetworkDot name={o.name} size={38} />
                               <span className={`text-[14px] font-bold ${on ? 'text-primary' : 'text-white/85'}`}>{o.name}</span>
@@ -418,6 +434,15 @@ export default function Pay() {
                         })}
                       </div>
                     </div>
+                    {isPhoneId ? (
+                      <div>
+                        <Label>Phone number on your Showmax account</Label>
+                        <Field icon={Smartphone}>
+                          <input className={inputBase + ' pl-11 tabular-nums'} type="tel" inputMode="numeric" placeholder="0803 111 2222" value={card} onChange={(e) => setCard(e.target.value.replace(/\D/g, '').slice(0, 11))} />
+                        </Field>
+                        <p className="text-xs text-white/45 mt-2">Your Showmax voucher code appears on the next page right after payment.</p>
+                      </div>
+                    ) : (
                     <div>
                       <Label>Smartcard or IUC number</Label>
                       <div className="relative">
@@ -437,6 +462,7 @@ export default function Pay() {
                         </div>
                       )}
                     </div>
+                    )}
                     <div>
                       <Label>Choose a bouquet</Label>
                       {bouquetsQ.isLoading && <div className="py-6 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary" /></div>}
@@ -456,12 +482,14 @@ export default function Pay() {
                       </div>
                       {catalog.tv.fee > 0 && bouquets.length > 0 && <p className="text-xs text-white/45 mt-2">Prices include a {naira(catalog.tv.fee)} service fee.</p>}
                     </div>
+                    {!isPhoneId && (
                     <div>
                       <Label>Phone number</Label>
                       <Field icon={Smartphone}>
                         <input className={inputBase + ' pl-11'} type="tel" inputMode="tel" autoComplete="tel" placeholder="0803 111 2222" value={phone} onChange={(e) => setPhone(e.target.value)} />
                       </Field>
                     </div>
+                    )}
                   </section>
                 )}
 
@@ -473,7 +501,7 @@ export default function Pay() {
                         {catalog.exam.types.map((t) => {
                           const on = exam === t.code;
                           return (
-                            <button key={t.code} type="button" aria-pressed={on} onClick={() => setExam(t.code)}
+                            <button key={t.code} type="button" aria-pressed={on} onClick={() => { if (!!t.needsProfile !== needsProfile) setCard(''); setExam(t.code); }}
                               className={`relative flex items-center gap-3 rounded-xl border px-3 min-h-[60px] motion-safe:transition-colors ${FOCUS} ${on ? 'border-primary bg-primary/10' : 'border-white/10 bg-white/5 hover:border-white/25'}`}>
                               <NetworkDot name={t.name} size={38} />
                               <span className={`text-[13.5px] leading-tight text-left font-bold ${on ? 'text-primary' : 'text-white/85'}`}>{t.name}</span>
@@ -501,6 +529,27 @@ export default function Pay() {
                         })}
                       </div>
                     </div>
+                    {needsProfile && (
+                      <div>
+                        <Label>JAMB profile ID</Label>
+                        <div className="relative">
+                          <input className={inputBase + ' pl-4 pr-[104px] tabular-nums'} inputMode="numeric" placeholder="Profile ID" value={card} onChange={(e) => setCard(e.target.value.replace(/\D/g, ''))} />
+                          <button type="button" disabled={busy || card.length < 8 || !productCode || !!cardInfo} onClick={verifyProfileNow}
+                            className={`absolute right-1.5 top-1.5 h-[40px] px-4 rounded-lg bg-primary text-black text-sm font-black disabled:opacity-35 ${FOCUS}`}>
+                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : cardInfo ? 'Verified' : 'Verify'}
+                          </button>
+                        </div>
+                        {!productCode && <p className="text-xs text-white/45 mt-2">Choose the pin above first.</p>}
+                        {cardInfo && (
+                          <div className="mt-2.5 flex items-start gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3">
+                            <BadgeCheck className="w-5 h-5 mt-0.5 shrink-0 text-emerald-300" />
+                            <p className="text-sm font-bold text-white break-words">{cardInfo.name}</p>
+                          </div>
+                        )}
+                        <p className="text-xs text-white/45 mt-2">JAMB sets this price. No service fee is added.</p>
+                      </div>
+                    )}
+                    {!single && (
                     <div>
                       <Label>How many pins</Label>
                       <div className="flex items-center gap-3">
@@ -512,6 +561,7 @@ export default function Pay() {
                         <span className="text-xs text-white/45">Up to {catalog.exam.maxQuantity || 5} at a time</span>
                       </div>
                     </div>
+                    )}
                     <div>
                       <Label>Phone number</Label>
                       <Field icon={Smartphone}>
@@ -538,13 +588,13 @@ export default function Pay() {
                     <p className="text-[15px] font-black text-white leading-tight">
                       {tab === 'airtime' ? `${network} airtime` : tab === 'data' ? (plan ? `${size ? `${size.n} ${size.u}` : plainName(plan.name)} ${network} data` : `${network} data`)
                         : tab === 'tv' ? (bouquet?.name ?? `${operatorName || 'TV'} subscription`)
-                        : tab === 'exam' ? `${product?.name || examName || 'Exam pin'}${qty > 1 ? ` × ${qty}` : ''}`
+                        : tab === 'exam' ? `${product?.name || examName || 'Exam pin'}${!single && qty > 1 ? ` × ${qty}` : ''}`
                         : `${discoName || 'Electricity'} ${meterType}`}
                     </p>
                     <p className="text-xs text-white/55 mt-1 break-words">
                       {tab === 'electricity' ? (meter ? `Meter ${meter}` : 'Meter not entered yet')
-                        : tab === 'tv' ? (card ? `Smartcard ${card}${cardInfo?.name ? ` · ${cardInfo.name}` : ''}` : 'Smartcard not entered yet')
-                        : tab === 'exam' ? (examName || 'Exam pin')
+                        : tab === 'tv' ? (isPhoneId ? (card ? `Showmax account ${card}` : 'Phone number not entered yet') : card ? `Smartcard ${card}${cardInfo?.name ? ` · ${cardInfo.name}` : ''}` : 'Smartcard not entered yet')
+                        : tab === 'exam' ? (needsProfile && card ? `Profile ${card}${cardInfo?.name ? ` · ${cardInfo.name}` : ''}` : examName || 'Exam pin')
                         : phone ? `To ${phone}` : 'Phone number not entered yet'}
                       {tab === 'data' && plan && validityOf(plan) ? ` · ${validityOf(plan)}` : ''}
                     </p>
