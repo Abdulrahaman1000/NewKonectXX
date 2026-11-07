@@ -10,7 +10,8 @@
 
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { CreditCard, Home, LayoutGrid, MessageCircle, ShoppingBag, Sparkles } from 'lucide-react';
+import { CreditCard, Home, LayoutGrid, MessageCircle, ShoppingBag, Sparkles, Wallet } from 'lucide-react';
+import { useWalletBalance } from '@/hooks/useWalletBalance'; // SC-NAV
 import { useCart } from '@/stores/cart';
 import { useMobileLayout } from '@/hooks/useMobileLayout';
 import { ChatSheet } from '@/components/ChatSheet';
@@ -18,6 +19,7 @@ import { chatUI, useChatOpen } from '@/stores/chat';
 import { useChatUnread } from '@/hooks/useChatUnread';
 import { useVtuEnabled } from '@/hooks/useVtuEnabled';
 
+const compact = (n: number) => (n >= 1_000_000 ? `${Math.round(n / 100_000) / 10}m` : n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(Math.round(n))); // SC-NAV
 const ITEM = 'relative flex-1 h-16 flex flex-col items-center justify-center gap-1 text-[11px] font-semibold';
 
 function Tab({ active, children }: { active: boolean; children: ReactNode }) {
@@ -32,6 +34,7 @@ export function MobileBottomNav() {
   const chatOpen = useChatOpen();
   const chatUnread = useChatUnread(isMobile && !chatOpen);
   const vtuOn = useVtuEnabled();
+  const { balance: walletBal } = useWalletBalance(); // SC-NAV
   const count = useCart((s) => (((s as any).items?.length ?? 0) as number));
 
   const inBuilder = search.includes('mode=combo-builder');
@@ -84,19 +87,33 @@ export function MobileBottomNav() {
           </Link>
         )}
 
-        <button type="button" onClick={openCart} className={ITEM} aria-label="Open cart">
-          <Tab active={false}>
-            <span className="relative">
-              <ShoppingBag className="w-6 h-6" />
-              {count > 0 && (
-                <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black flex items-center justify-center">
-                  {count > 9 ? '9+' : count}
-                </span>
-              )}
-            </span>
-            Cart
-          </Tab>
-        </button>
+        {vtuOn ? (
+          <Link to="/wallet" className={ITEM} aria-label="Wallet"> {/* SC-NAV */}
+            <Tab active={pathname.startsWith('/wallet')}>
+              <span className="relative">
+                <Wallet className="w-6 h-6" />
+                {walletBal !== null && walletBal > 0 && (
+                  <span className="absolute -top-2 -right-4 px-1.5 h-[16px] rounded-full bg-primary text-black text-[9px] font-black flex items-center justify-center tabular-nums">{compact(walletBal)}</span>
+                )}
+              </span>
+              Wallet
+            </Tab>
+          </Link>
+        ) : (
+          <button type="button" onClick={openCart} className={ITEM} aria-label="Open cart">
+            <Tab active={false}>
+              <span className="relative">
+                <ShoppingBag className="w-6 h-6" />
+                {count > 0 && (
+                  <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black flex items-center justify-center">
+                    {count > 9 ? '9+' : count}
+                  </span>
+                )}
+              </span>
+              Cart
+            </Tab>
+          </button>
+        )}
 
         <button type="button" onClick={chatUI.open} className={ITEM} aria-label="Open chat">
           <Tab active={false}>
