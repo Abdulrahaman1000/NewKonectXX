@@ -242,6 +242,7 @@ export default function Pay() {
               <span className="text-[13px] font-black text-primary">Sign in ›</span>
             </Link>
           )}
+          {signedIn && <div className="-mt-3 mb-5 text-right"><Link to="/spending" className={`inline-flex items-center min-h-[44px] px-1 text-[13px] font-bold text-white/70 hover:text-primary ${FOCUS}`}>My spending ›</Link></div>}
 
           {isLoading && <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" /></div>}
           {off && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/75" style={surface}>Recharge is coming soon. Please check back shortly.</p>}

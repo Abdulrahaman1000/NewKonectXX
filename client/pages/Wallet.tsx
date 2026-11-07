@@ -141,6 +141,7 @@ export default function Wallet() {
                   : history.length === 0 ? <p className="text-sm text-white/50 mt-3">Nothing yet. Add money to get started.</p>
                   : <ul className="divide-y divide-white/10 mt-1">{history.map((e) => <Row key={e.ref + e.at} e={e} />)}</ul>}
               </div>
+              <Link to="/spending" className={`flex items-center justify-between rounded-2xl border border-white/10 px-4 min-h-[52px] text-sm font-bold text-white ${FOCUS}`} style={{ background: 'rgba(255,255,255,0.04)' }}>My spending <span className="text-primary">See where your money goes ›</span></Link>
               <p className="text-[12px] text-white/40 leading-relaxed">By using the wallet you agree to our <Link to="/terms" className="underline">Terms</Link>. Wallet money is not a bank deposit and earns no interest.</p>
             </div>
           )}

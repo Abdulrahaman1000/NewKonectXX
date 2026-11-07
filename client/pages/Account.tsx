@@ -130,6 +130,8 @@ export default function Account() {
                 <span className="text-sm font-black text-white">Add money ›</span>
               </Link>
 
+              <Link to="/spending" className="flex items-center justify-between rounded-2xl border border-white/10 px-4 min-h-[52px] text-sm font-bold text-white" style={{ background: 'rgba(255,255,255,0.04)' }}>My spending <span className="text-primary">See where your money goes ›</span></Link> {/* SC-SPEND */}
+
               <section>
                 <h2 className="text-sm font-black text-white mb-2">Your orders</h2>
                 {orders.length === 0 ? (

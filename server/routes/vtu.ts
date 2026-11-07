@@ -56,7 +56,7 @@ router.post("/orders", limit("create", 25, 3_600_000), async (req, res) => {
 router.get("/mine", async (req, res) => {
   const c: any = await customerFromToken(bearer(req));
   if (!c) return res.status(401).json({ error: { message: "Please sign in." } });
-  const rows = await (VtuOrder as any).find({ $or: [{ userId: String(c._id) }, { email: c.email }] }).sort({ createdAt: -1 }).limit(50).lean();
+  const rows = await (VtuOrder as any).find({ $or: [{ userId: String(c._id) }, { email: c.email }] }).sort({ createdAt: -1 }).limit(Math.min(500, Math.max(1, Number(req.query.limit) || 50))).lean(); // SC-SPEND
   res.json({ orders: rows.map(publicView) });
 });
 
