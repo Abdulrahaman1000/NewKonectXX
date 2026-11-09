@@ -79,6 +79,23 @@ router.patch("/", async (req: Request, res: Response) => {
       if (typeof body.video.duration === "string") update["video.duration"] = body.video.duration;
     }
 
+    // SC-TOUR  Welcome tour video. A changed address bumps the version so everyone sees the new video once.
+    if (body.welcomeVideo && typeof body.welcomeVideo === "object") {
+      const w = body.welcomeVideo;
+      const cur: any = await SiteSettings.findOne({}).lean();
+      const was = cur?.welcomeVideo ?? {};
+      if (w.enabled !== undefined) update["welcomeVideo.enabled"] = Boolean(w.enabled);
+      if (typeof w.poster === "string") update["welcomeVideo.poster"] = w.poster.trim().slice(0, 500);
+      if (typeof w.title === "string") update["welcomeVideo.title"] = w.title.trim().slice(0, 120);
+      if (typeof w.caption === "string") update["welcomeVideo.caption"] = w.caption.trim().slice(0, 300);
+      if (typeof w.url === "string") {
+        const url = w.url.trim().slice(0, 500);
+        if (url && !/^https:\/\//i.test(url)) return res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "The video address must start with https://" } });
+        update["welcomeVideo.url"] = url;
+        if (url !== String(was.url ?? "")) update["welcomeVideo.version"] = (Number(was.version) || 0) + 1;
+      }
+    }
+
     if (body.trustStats && typeof body.trustStats === "object") {
       if (body.trustStats.rating !== undefined) {
         const r = Math.max(0, Math.min(5, Number(body.trustStats.rating) || 0));

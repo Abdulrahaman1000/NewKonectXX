@@ -57,6 +57,7 @@ export interface SiteSettingsDocument extends Document {
     codCities: string[];
     freeShippingThreshold: number;
   };
+  welcomeVideo?: { enabled: boolean; url: string; poster: string; title: string; caption: string; version: number }; // SC-TOUR
   updatedAt: Date;
 }
 
@@ -96,6 +97,15 @@ const SiteSettingsSchema = new Schema<SiteSettingsDocument>(
       thumbnail: { type: String, default: "" },
       title: { type: String, default: "" },
       duration: { type: String, default: "" },
+    },
+
+    welcomeVideo: { // SC-TOUR the welcome tour video popup
+      enabled: { type: Boolean, default: false },
+      url: { type: String, default: "" },
+      poster: { type: String, default: "" },
+      title: { type: String, default: "" },
+      caption: { type: String, default: "" },
+      version: { type: Number, default: 0 },
     },
 
     trustStats: {

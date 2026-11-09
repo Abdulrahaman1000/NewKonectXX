@@ -5,7 +5,7 @@ import { CreditCard, Loader2, Wallet, X } from 'lucide-react';
 import { naira } from '@/components/vtu/brand';
 
 interface Props {
-  open: boolean; onClose: () => void; total: number; busy: boolean;
+  open: boolean; onClose: () => void; total: number; busy: boolean; busyVia?: 'card' | 'wallet' | null;
   signedIn: boolean; balance: number | null; balanceLoading: boolean;
   onCard: () => void; onWallet: () => void;
   /** called just before leaving for sign-in or funding, so the form can be saved */
@@ -13,7 +13,7 @@ interface Props {
 }
 const FOCUS = 'outline-none focus-visible:ring-2 focus-visible:ring-white/70';
 
-export function PaySheet({ open, onClose, total, busy, signedIn, balance, balanceLoading, onCard, onWallet, onLeave }: Props) {
+export function PaySheet({ open, onClose, total, busy, busyVia, signedIn, balance, balanceLoading, onCard, onWallet, onLeave }: Props) {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -51,7 +51,7 @@ export function PaySheet({ open, onClose, total, busy, signedIn, balance, balanc
               <span className="block text-[15px] font-black text-white">Pay direct</span>
               <span className="block text-[13px] text-white/60 leading-snug mt-0.5">Card, bank transfer or USSD on Paystack. No account needed.</span>
             </span>
-            {busy && <Loader2 className="w-5 h-5 animate-spin text-white/60" />}
+            {busy && busyVia !== 'wallet' && <Loader2 className="w-5 h-5 animate-spin text-white/60" />}
           </button>
 
           {/* Option 2: wallet */}
@@ -70,7 +70,7 @@ export function PaySheet({ open, onClose, total, busy, signedIn, balance, balanc
             {signedIn && enough && (
               <button type="button" disabled={busy} onClick={onWallet}
                 className={`mt-3 w-full min-h-[52px] rounded-xl bg-primary text-black font-black text-[15px] inline-flex items-center justify-center gap-2 disabled:opacity-50 ${FOCUS}`}>
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" strokeWidth={2.6} />} Pay {naira(total)} from wallet
+                {busy && busyVia !== 'card' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" strokeWidth={2.6} />} Pay {naira(total)} from wallet
               </button>
             )}
             {signedIn && !enough && !balanceLoading && balance !== null && (

@@ -22,7 +22,19 @@ const FILTERS: Record<string, any> = {
 router.get("/", async (req, res) => {
   try {
     const f = FILTERS[String(req.query.filter ?? "all")] ?? {};
-    const rows: any[] = await (VtuOrder as any).find(f).sort({ createdAt: -1 }).limit(200).lean();
+    // SC-SRCH  Search all purchases by reference, phone, email, meter, smartcard, token or provider reference.
+    const q = String(req.query.q ?? "").trim().slice(0, 60);
+    let where: any = f;
+    if (q.length >= 3) {
+      const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const digits = q.replace(/\D/g, "");
+      const phoneTail = digits.length >= 7 ? digits.slice(-10) : "";
+      const rx = new RegExp(esc, "i");
+      const ors: any[] = ["reference", "email", "phoneNumber", "meter.number", "card.number", "providerReference", "providerRequestId", "paymentReference", "token", "userId"].map((k) => ({ [k]: rx }));
+      if (phoneTail) ors.push({ phoneNumber: new RegExp(phoneTail + "$") });
+      where = { $or: ors };
+    }
+    const rows: any[] = await (VtuOrder as any).find(where).sort({ createdAt: -1 }).limit(200).lean();
     const all: any[] = await (VtuOrder as any).find({}).lean();
     const sold = all.filter((o) => o.fulfilmentStatus === "successful");
     const summary = {

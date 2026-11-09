@@ -15,6 +15,7 @@ import { formatNaira } from '@/lib/format';
 import { fetchCombos } from '@/api/combos';
 import { useSettings } from '@/contexts/SettingsContext';
 import { cldUrl } from '@/lib/cloudinary';
+import { useTourOpen } from '@/lib/tourState'; // SC-TOUR
 
 type Tab = 'gift' | 'combo';
 
@@ -76,6 +77,7 @@ function AutoImageSlider({
 
 export function WelcomeGiftModal() {
   const [isOpen, setIsOpen] = useState(false);
+  const tourOpen = useTourOpen(); // SC-TOUR the welcome tour video goes first
   const [activeTab, setActiveTab] = useState<Tab>('gift');
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -140,7 +142,7 @@ export function WelcomeGiftModal() {
     timeoutRef.current = setTimeout(() => setIsOpen(true), REAPPEAR_AFTER_MS);
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || tourOpen) return null;
 
   const fallbackGiftImages = gifts
     .flatMap((g) => (g.images && g.images.length > 0 ? g.images : [g.image]))

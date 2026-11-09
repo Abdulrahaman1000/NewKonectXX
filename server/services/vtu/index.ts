@@ -25,8 +25,8 @@ const INFO: Record<ProviderName, { label: string; configured: () => boolean; hin
     label: "VTpass", configured: () => vtpassConfigured() && (!vtpassSandbox() || testModeAllowed()),
     hint: "Needs VTPASS_API_KEY, VTPASS_PUBLIC_KEY and VTPASS_SECRET_KEY in the server settings. VTPASS_ENV=live for real sales.",
   },
-  legitdataway: { label: "Legitdataway", configured: () => Boolean(env("LEGIT_TOKEN") || (env("LEGIT_USERNAME") && env("LEGIT_PASSWORD"))), hint: "Needs LEGIT_TOKEN in the server settings." },
-  simulator: { label: "Simulator (testing only)", configured: () => testModeAllowed(), hint: "Pretend provider. Hidden on the live site." },
+  legitdataway: { label: "Legitdataway", configured: () => env("ENABLE_LEGITDATAWAY") === "yes" && Boolean(env("LEGIT_TOKEN") || (env("LEGIT_USERNAME") && env("LEGIT_PASSWORD"))), hint: "Needs LEGIT_TOKEN in the server settings." },
+  simulator: { label: "Simulator (testing only)", configured: () => env("ENABLE_SIMULATOR") === "yes" && testModeAllowed(), hint: "Pretend provider. Hidden on the live site." },
 };
 
 const made: Partial<Record<ProviderName, VtuProvider>> = {};

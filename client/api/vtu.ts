@@ -54,7 +54,7 @@ export const myPurchases = () => pub<{ orders: VtuView[] }>('/mine').then((r) =>
 export interface AdminVtuOrder extends VtuView { provider?: string; providerCode?: string; _id: string; cost: number; email: string; providerReference: string; refundNote: string; attempts: number; providerMessage: string; paymentReference: string }
 export interface AdminSummary { sales: number; profit: number; count: number; processing: number; refundsNeeded: number; mismatches: number }
 export interface VtuSettings { airtimeDiscountPct: number; dataMarginPct: number; electricityFee: number; tvFee: number; examFee: number; airtimeMin: number; airtimeMax: number; electricityMin: number; electricityMax: number; paused: boolean; disabledNetworks: string[]; disabledDiscos: string[] }
-export const adminVtuList = (filter: string) => apiFetch<{ summary: AdminSummary; orders: AdminVtuOrder[] }>(`/api/admin/vtu?filter=${filter}`);
+export const adminVtuList = (filter: string, q = '') => apiFetch<{ summary: AdminSummary; orders: AdminVtuOrder[] }>(`/api/admin/vtu?filter=${filter}${q ? `&q=${encodeURIComponent(q)}` : ''}`); // SC-SRCH;
 export const adminVtuSettings = () => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings').then((r) => r.settings);
 export const adminVtuSaveSettings = (s: Partial<VtuSettings>) => apiFetch<{ settings: VtuSettings }>('/api/admin/vtu/settings', { method: 'PUT', body: JSON.stringify(s) });
 export const adminVtuAct = (reference: string, action: 'check' | 'refund' | 'mark-refunded' | 'mark-failed' | 'mark-delivered') =>

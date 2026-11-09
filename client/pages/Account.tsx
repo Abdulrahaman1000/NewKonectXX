@@ -16,6 +16,8 @@ import {
 import { myPurchases, type VtuView } from '@/api/vtu';
 import { clearCustomerToken, getCustomerToken, setCustomerToken, takeReturnTo } from '@/lib/customerSession';
 import { getWallet } from '@/api/wallet'; // SC-NAV
+import { DueReminders } from '@/components/DueReminders'; // SC-REM
+import { openTour } from '@/lib/tourState'; // SC-TOUR
 
 const naira = (n: number) => '₦' + Math.round(n).toLocaleString('en-NG');
 const inputCls = 'w-full min-h-[48px] rounded-xl bg-white/5 border border-white/15 px-4 text-white placeholder-white/35 outline-none focus:border-primary';
@@ -130,6 +132,9 @@ export default function Account() {
                 <span className="text-sm font-black text-white">Add money ›</span>
               </Link>
 
+              <button type="button" onClick={openTour} className="flex w-full items-center justify-between rounded-2xl border border-white/10 px-4 min-h-[52px] text-sm font-bold text-white" style={{ background: 'rgba(255,255,255,0.04)' }}>Watch the Smart Combo tour <span className="text-primary">Play ›</span></button> {/* SC-TOUR */}
+              <DueReminders /> {/* SC-REM */}
+              <Link to="/reminders" className="flex items-center justify-between rounded-2xl border border-white/10 px-4 min-h-[52px] text-sm font-bold text-white" style={{ background: 'rgba(255,255,255,0.04)' }}>My reminders <span className="text-primary">Renewals and wallet alert ›</span></Link> {/* SC-REM */}
               <Link to="/spending" className="flex items-center justify-between rounded-2xl border border-white/10 px-4 min-h-[52px] text-sm font-bold text-white" style={{ background: 'rgba(255,255,255,0.04)' }}>My spending <span className="text-primary">See where your money goes ›</span></Link> {/* SC-SPEND */}
 
               <section>

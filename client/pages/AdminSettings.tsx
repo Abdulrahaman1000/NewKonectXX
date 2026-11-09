@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, Save, X } from 'lucide-react';
 import { AdminFrame } from '@/components/admin/AdminFrame';
 import { ImageUploader } from '@/components/admin/ImageUploader';
+import { VideoUploader } from '@/components/admin/VideoUploader'; // SC-TOUR
 import { SEO } from '@/components/shared/SEO';
 import { cldUrl } from '@/lib/cloudinary';
 import {
@@ -92,6 +93,7 @@ export default function AdminSettings() {
       promo: form.promo,
       contact: form.contact,
       video: form.video,
+      welcomeVideo: form.welcomeVideo ?? { enabled: false, url: '', poster: '', title: '', caption: '' }, // SC-TOUR
       trustStats: form.trustStats,
       bankAccount: form.bankAccount,
       shipping: { ...form.shipping, codCities },
@@ -382,6 +384,26 @@ export default function AdminSettings() {
               />
             </Field>
           </div>
+        </Section>
+
+        {/* SC-TOUR Welcome tour video */}
+        <Section title="Welcome tour video" subtitle="A popup with your video, shown once to every new visitor on any page. After you upload a NEW video it shows again to everyone once. Click Save settings when done.">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!form.welcomeVideo?.enabled} onChange={(e) => set('welcomeVideo.enabled', e.target.checked)} className="w-4 h-4" />
+            <span className="text-sm text-white">Show the welcome tour to new visitors</span>
+          </label>
+          <Field label="Video" hint="Upload a video file (MP4, up to 100 MB, 720p is plenty) or paste a YouTube link. The link must start with https://">
+            <input type="text" value={form.welcomeVideo?.url ?? ''} onChange={(e) => set('welcomeVideo.url', e.target.value)} className={inputCls} placeholder="https://www.youtube.com/watch?v=..." />
+          </Field>
+          <VideoUploader onChange={(url) => set('welcomeVideo.url', url)} />
+          <div>
+            <span className="block text-[11px] font-bold text-white/60 uppercase tracking-wider mb-1.5">Cover picture (optional)</span>
+            <div className="w-40"><ImageUploader value={form.welcomeVideo?.poster ?? ''} onChange={(url) => set('welcomeVideo.poster', url)} aspect="square" maxSizeMB={5} /></div>
+            <p className="text-[10px] text-white/40 mt-1">The picture people see before they tap play. If empty, an uploaded video uses its first frame.</p>
+          </div>
+          <Field label="Title"><input type="text" value={form.welcomeVideo?.title ?? ''} onChange={(e) => set('welcomeVideo.title', e.target.value)} className={inputCls} placeholder="Welcome to Smart Combo" maxLength={120} /></Field>
+          <Field label="Short text under the video"><input type="text" value={form.welcomeVideo?.caption ?? ''} onChange={(e) => set('welcomeVideo.caption', e.target.value)} className={inputCls} placeholder="Watch 2 minutes: shop combos, pay bills, use your wallet." maxLength={300} /></Field>
+          <p className="text-[11px] text-white/45">To see it yourself any time, open your site with <b>/?tour=1</b> at the end of the address.</p>
         </Section>
 
         {/* Video */}

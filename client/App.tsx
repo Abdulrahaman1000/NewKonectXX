@@ -50,6 +50,7 @@ import NotFound from './pages/NotFound';
 import { AIChatLauncher } from '@/components/AIChatLauncher';
 import AdminGiftBankPage from './pages/AdminGiftBankPage';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { WelcomeVideoModal } from '@/components/shared/WelcomeVideoModal'; // SC-TOUR
 import AdminResellers from './pages/AdminResellers';
 import PartnerPortal from './pages/PartnerPortal';
 import AdminAds from './pages/AdminAds';
@@ -69,6 +70,7 @@ import { captureReferral } from "@/lib/referral";
 import Wallet from '@/pages/Wallet'; // SC-WAL
 import AdminWallet from '@/pages/AdminWallet'; // SC-WAL
 import Spending from '@/pages/Spending'; // SC-SPEND
+import Reminders from '@/pages/Reminders'; // SC-REM
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -112,6 +114,7 @@ const App = () => (
                   <Route path="/pay/result" element={<PayResult />} />
                   <Route path="/wallet" element={<Wallet />} />
                   <Route path="/spending" element={<Spending />} /> {/* SC-SPEND */}
+                  <Route path="/reminders" element={<Reminders />} /> {/* SC-REM */}
                   <Route path="/admin/vtu" element={<AdminProtectedRoute perm="owner"><AdminVtu /></AdminProtectedRoute>} />
                   <Route path="/admin/wallet" element={<AdminProtectedRoute perm="owner"><AdminWallet /></AdminProtectedRoute>} /> {/* SC-WAL */}
                   <Route path="/account" element={<Account />} />
@@ -167,6 +170,7 @@ const App = () => (
                 <CustomerOnly>
                   <MobileBottomNav />
                   <AIChatLauncher />
+                  <WelcomeVideoModal /> {/* SC-TOUR */}
                 </CustomerOnly>
               </BrowserRouter>
               </ConfirmProvider>

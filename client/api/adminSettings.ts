@@ -39,6 +39,8 @@ export interface AdminSiteSettings {
     title: string;
     duration: string;
   };
+  /** SC-TOUR  Welcome tour video popup. */
+  welcomeVideo?: { enabled: boolean; url: string; poster: string; title: string; caption: string; version?: number };
   trustStats: {
     rating: number;
     reviewCount: number;

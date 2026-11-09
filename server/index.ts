@@ -16,6 +16,7 @@ import resellersRouter from "./routes/resellers";
 import partnerRouter from "./routes/partner";
 import vtuRouter from "./routes/vtu"; // SC-VTU
 import walletRouter from "./routes/wallet"; // SC-WAL
+import remindersRouter from "./routes/reminders"; // SC-REM
 import adminWalletRouter from "./routes/admin/wallet"; // SC-WAL
 import adminVtuRouter from "./routes/admin/vtu"; // SC-VTU
 import accountRouter from "./routes/account"; // SC-ACCT
@@ -48,6 +49,7 @@ import { accessGuard } from "./middleware/access";
 import { connectDB } from "./db";
 import { expireStalePendingOrders } from "./services/orderService";
 import { startDailySummary } from "./services/summaryService";
+import welcomeVideoRouter from "./routes/welcomeVideo"; // SC-TOUR
 
 export function createServer() {
   const app = express();
@@ -101,6 +103,8 @@ export function createServer() {
   app.use("/api/partner", partnerRouter);
   app.use("/api/vtu", vtuRouter); // SC-VTU
 app.use("/api/wallet", walletRouter); // SC-WAL
+app.use("/api/welcome-video", welcomeVideoRouter); // SC-TOUR
+app.use("/api/reminders", remindersRouter); // SC-REM
   app.use("/api/account", accountRouter); // SC-ACCT
 
   // Gifts: the shop can only READ active gifts. Changing gifts needs the admin login.

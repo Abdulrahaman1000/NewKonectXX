@@ -2,7 +2,7 @@
  * SC-VTU / SC-UI  /pay : buy airtime, data or electricity. No wallet: the customer pays for each purchase through Paystack.
  * The price shown here is only a preview. The server works out the real price again before payment.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, BadgeCheck, Check, CreditCard, Loader2, Lock, Mail, Minus, Plus, RotateCcw, ShieldCheck, Smartphone, Timer, Zap, Wallet, type LucideIcon } from 'lucide-react';
@@ -15,6 +15,7 @@ import { PaySheet } from '@/components/vtu/PaySheet';
 import { getWallet, hasCustomerToken } from '@/api/wallet';
 import { Link } from 'react-router-dom';
 import { savePayDraft, setReturnTo, takePayDraft } from '@/lib/customerSession';
+import { DueReminders } from '@/components/DueReminders';
 import { checkProfile, checkCard, checkMeter, getBouquets, getCatalog, getExamProducts, getPlans, startPurchase, type Plan, type Service } from '@/api/vtu';
 
 const store = {
@@ -84,19 +85,25 @@ export default function Pay() {
   const [productCode, setProductCode] = useState('');
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [busyVia, setBusyVia] = useState<'card' | 'wallet' | null>(null);
   const [sheet, setSheet] = useState(false);
   const signedIn = hasCustomerToken();
   const walletQ = useQuery({ queryKey: ['wallet'], queryFn: getWallet, enabled: signedIn, retry: false });
 
-  // Put back a form that was saved while the customer signed in or topped up the wallet.
-  useEffect(() => {
-    const d = takePayDraft(); if (!d) return;
+  // The bouquet or data plan from a saved form must survive the "reset when the choice above changes" effects below.
+  const keep = useRef<{ bouquet?: string; plan?: string }>({});
+  // Put values back into the form: used for a form saved during sign-in or top-up, and for "Buy again" on a reminder.
+  const applyDraft = (d: Record<string, any>) => {
+    keep.current = { bouquet: d.bouquetCode || undefined, plan: d.planCode || undefined };
+    setTimeout(() => { keep.current = {}; }, 20000);
     if (d.tab) setTab(d.tab); if (d.network) setNetwork(d.network); if (d.phone) setPhone(d.phone); if (d.email) setEmail(d.email);
     if (d.amount) setAmount(Number(d.amount)); if (d.cat) setCat(d.cat); if (d.planCode) setPlanCode(d.planCode);
     if (d.disco) setDisco(d.disco); if (d.meterType) setMeterType(d.meterType); if (d.meter) setMeter(d.meter);
     if (d.operator) setOperator(d.operator); if (d.card) setCard(d.card); if (d.bouquetCode) setBouquetCode(d.bouquetCode);
     if (d.exam) setExam(d.exam); if (d.productCode) setProductCode(d.productCode); if (d.qty) setQty(Number(d.qty));
-  }, []);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  useEffect(() => { const d = takePayDraft(); if (d) applyDraft(d); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const leaveForWallet = () => {
     savePayDraft({ tab, network, phone, email, amount, cat, planCode, disco, meterType, meter, operator, card, bouquetCode, exam, productCode, qty });
     setReturnTo('/pay');
@@ -116,13 +123,21 @@ export default function Pay() {
   const plan = plans.find((p) => p.code === planCode);
   const count = (c: string) => plans.filter((p) => p.category === c).length;
 
-  useEffect(() => { setPlanCode(''); }, [network, cat, tab]);
+  useEffect(() => { setPlanCode(keep.current.plan ?? ''); }, [network, cat, tab]);
+  // Buy again on a data plan: show the group (daily, weekly, monthly) the plan is in, then stop holding on to it.
+  useEffect(() => {
+    if (!keep.current.plan) return;
+    const p = plans.find((x) => x.code === keep.current.plan);
+    if (p) { if (p.category !== cat) setCat(p.category as any); else keep.current.plan = undefined; }
+    else if (plansQ.data) keep.current.plan = undefined;
+  }, [plans, cat]); // eslint-disable-line react-hooks/exhaustive-deps
   // Only the services this provider sells are shown. TV and exam pins appear when the catalog lists them.
   const offered: Service[] = ['airtime', 'data', 'electricity', ...(catalog?.tv ? ['tv' as const] : []), ...(catalog?.exam ? ['exam' as const] : [])];
   useEffect(() => { if (catalog && !offered.includes(tab)) setTab('airtime'); }, [catalog, tab]);
   useEffect(() => { if (catalog?.tv && !operator) setOperator(catalog.tv.operators[0]?.code ?? ''); }, [catalog, operator]);
   useEffect(() => { if (catalog?.exam && !exam) setExam(catalog.exam.types[0]?.code ?? ''); }, [catalog, exam]);
-  useEffect(() => { setBouquetCode(''); }, [operator, tab]);
+  useEffect(() => { setBouquetCode(keep.current.bouquet ?? ''); }, [operator, tab]);
+  useEffect(() => { if (keep.current.bouquet && bouquets.length) keep.current.bouquet = undefined; }, [bouquets]);
   useEffect(() => { setProductCode(''); setQty(1); }, [exam, tab]);
   useEffect(() => { if (tab === 'exam' && products.length === 1 && !productCode) setProductCode(products[0].code); }, [tab, products, productCode]);
   useEffect(() => { setMeterInfo(null); }, [disco, meterType, meter]);
@@ -205,7 +220,7 @@ export default function Pay() {
   })();
 
   const pay = async (via: 'card' | 'wallet' = 'card') => {
-    setBusy(true); setErr('');
+    setBusyVia(via); setBusy(true); setErr('');
     try {
       if (tab === 'electricity' && !meterInfo) throw new Error('Please verify the meter first.');
       if (tab === 'tv' && !cardInfo) throw new Error(isPhoneId ? 'Enter the phone number on your Showmax account.' : 'Please verify the smartcard first.');
@@ -218,7 +233,7 @@ export default function Pay() {
       if (via === 'wallet') body.payWith = 'wallet';
       const r = await startPurchase(body);
       window.location.href = r.paidFromWallet ? `/pay/result?reference=${encodeURIComponent(r.reference)}` : r.authorizationUrl;
-    } catch (e: any) { setErr(e.message); setBusy(false); setSheet(false); }
+    } catch (e: any) { setErr(e.message); setBusy(false); setBusyVia(null); setSheet(false); }
   };
 
   const off = !isLoading && !catalog?.enabled;
@@ -258,7 +273,8 @@ export default function Pay() {
               <span className="text-[13px] font-black text-primary">Sign in ›</span>
             </Link>
           )}
-          {signedIn && <div className="-mt-3 mb-5 text-right"><Link to="/spending" className={`inline-flex items-center min-h-[44px] px-1 text-[13px] font-bold text-white/70 hover:text-primary ${FOCUS}`}>My spending ›</Link></div>}
+          {signedIn && <div className="-mt-3 mb-4 flex items-center justify-end gap-4"><Link to="/reminders" className={`inline-flex items-center min-h-[44px] px-1 text-[13px] font-bold text-white/70 hover:text-primary ${FOCUS}`}>Reminders ›</Link><Link to="/spending" className={`inline-flex items-center min-h-[44px] px-1 text-[13px] font-bold text-white/70 hover:text-primary ${FOCUS}`}>My spending ›</Link></div>}
+          <DueReminders onBuyAgain={applyDraft} />
 
           {isLoading && <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" /></div>}
           {off && <p className="rounded-2xl border border-white/10 p-5 text-sm text-white/75" style={surface}>Recharge is coming soon. Please check back shortly.</p>}
@@ -645,7 +661,7 @@ export default function Pay() {
           )}
         </div>
       </main>
-      <PaySheet open={sheet} onClose={() => setSheet(false)} total={total || 0} busy={busy} signedIn={signedIn}
+      <PaySheet open={sheet} onClose={() => setSheet(false)} total={total || 0} busy={busy} busyVia={busyVia} signedIn={signedIn}
         balance={walletQ.data ? walletQ.data.balance : null} balanceLoading={walletQ.isLoading}
         onCard={() => pay('card')} onWallet={() => pay('wallet')} onLeave={leaveForWallet} />
       <Footer />

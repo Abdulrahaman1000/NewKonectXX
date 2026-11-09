@@ -28,6 +28,7 @@ function Row({ o, onAct, busy }: { o: AdminVtuOrder; onAct: (a: any) => void; bu
         {' '}· cost {naira(o.cost)} · profit {naira(o.amount - o.cost)}
       </p>
       {(o.providerMessage || o.refundNote) && <p className="text-[11px] text-white/45">{o.providerMessage} {o.refundNote}</p>}
+      {o.providerCode && ({ '016': 'VTpass code 016 = transaction failed. On the sandbox this usually means the phone/meter is not a VTpass test number. On live, check the number and that the product is switched on in VTpass.', '018': 'VTpass code 018 = your VTpass wallet is low. Fund it.', '027': 'VTpass code 027 = this server IP is not whitelisted in VTpass.', '028': 'VTpass code 028 = this product is not whitelisted in VTpass.' } as Record<string, string>)[o.providerCode] && <p className="text-[11px] text-amber-300/90">{({ '016': 'VTpass code 016 = transaction failed. On the sandbox this usually means the phone/meter is not a VTpass test number. On live, check the number and that the product is switched on in VTpass.', '018': 'VTpass code 018 = your VTpass wallet is low. Fund it.', '027': 'VTpass code 027 = this server IP is not whitelisted in VTpass.', '028': 'VTpass code 028 = this product is not whitelisted in VTpass.' } as Record<string, string>)[o.providerCode]}</p>} {/* SC-SRCH */}
       <p className="text-[10px] text-white/35 break-all">{o.reference}{o.provider ? ` · via ${o.provider}` : ''}{o.providerCode ? ` · code ${o.providerCode}` : ''}{o.providerReference ? ` · provider ref ${o.providerReference}` : ''}</p>
       <div className="flex flex-wrap gap-2 pt-1">
         {/* SC-RETRY */}
@@ -178,7 +179,9 @@ function ProviderPanel() {
 export default function AdminVtu() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState('attention');
-  const list = useQuery({ queryKey: ['vtu-admin', filter], queryFn: () => adminVtuList(filter), refetchInterval: 20000 });
+  const [qText, setQText] = useState(''); // SC-SRCH
+  const [search, setSearch] = useState('');
+  const list = useQuery({ queryKey: ['vtu-admin', filter, search], queryFn: () => adminVtuList(filter, search), refetchInterval: 20000 });
   const settingsQ = useQuery({ queryKey: ['vtu-settings'], queryFn: adminVtuSettings });
   const [s, setS] = useState<VtuSettings | null>(null);
   useEffect(() => { if (settingsQ.data) setS(settingsQ.data); }, [settingsQ.data]);
@@ -217,6 +220,15 @@ export default function AdminVtu() {
       )}
       {sum && sum.mismatches > 0 && <p className="mb-3 text-sm text-amber-300">{sum.mismatches} payment(s) did not match the amount. Check them in Paystack before doing anything.</p>}
 
+      {/* SC-SRCH */}
+      <form className="mb-3" onSubmit={(e) => { e.preventDefault(); setSearch(qText.trim()); }}>
+        <div className="flex gap-2">
+          <input value={qText} onChange={(e) => setQText(e.target.value)} placeholder="Search: reference (SC-VTU-...), phone, email, meter, smartcard, token" aria-label="Search purchases" className="flex-1 min-h-[44px] rounded-xl bg-white/5 border border-white/15 px-3 text-sm text-white placeholder-white/35" />
+          <button type="submit" className="min-h-[44px] px-4 rounded-xl bg-primary text-black text-sm font-black">Search</button>
+          {search && <button type="button" onClick={() => { setQText(''); setSearch(''); }} className="min-h-[44px] px-3 rounded-xl border border-white/20 text-sm font-bold text-white/80">Clear</button>}
+        </div>
+        <p className="text-[11px] text-white/45 mt-1.5">{search ? `Showing purchases matching "${search}" (all dates, filters ignored). At least 3 characters.` : 'Ask the customer for: the reference on their receipt page, or the phone/meter/smartcard, their email, the amount and the time.'}</p>
+      </form>
       <div className="flex flex-wrap gap-2 mb-4">
         {FILTERS.map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} className={`min-h-[40px] px-3 rounded-xl border text-xs font-bold ${filter === k ? 'border-primary bg-primary/15 text-primary' : 'border-white/15 text-white/70'}`}>{label}</button>

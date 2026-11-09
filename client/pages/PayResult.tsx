@@ -8,12 +8,36 @@ import { CartDrawer } from '@/components/shared/CartDrawer';
 import { SEO } from '@/components/shared/SEO';
 import { ServiceBadge, naira } from '@/components/vtu/brand';
 import { getPurchase, type VtuView } from '@/api/vtu';
+import { addReminder } from '@/api/reminders';
+import { hasCustomerToken } from '@/api/wallet';
 
 const groups = (t: string) => (/^\d{12,}$/.test(t.replace(/\D/g, '')) && /^[\d\s-]+$/.test(t) ? t.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ') : t);
 const REFUND: Record<string, string> = {
   required: 'Your refund is being arranged.', refund_requested: 'Your refund has been sent to Paystack. It can take a few days to show in your account.',
   refunded: 'Your refund has been made.', failed: 'We are arranging your refund by hand. We will contact you.',
 };
+
+/** SC-REM  "Remind me to renew" after a delivered airtime, data, electricity or TV purchase. */
+function RemindMe({ reference }: { reference: string }) {
+  const [days, setDays] = useState(30);
+  const [st, setSt] = useState<'idle' | 'busy' | 'done'>('idle');
+  const [err, setErr] = useState('');
+  if (!hasCustomerToken()) return <p className="text-xs text-white/50 mt-4">Want a reminder to renew? <Link to="/account" className="underline">Sign in</Link> and set one from your next receipt.</p>;
+  if (st === 'done') return <p role="status" className="text-sm text-emerald-300 mt-4">Reminder set. We will tell you on the Pay page. <Link to="/reminders" className="underline">See reminders</Link></p>;
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 p-3.5 text-left" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <p className="text-[14px] font-black text-white">Remind me to renew</p>
+      <div className="mt-2 flex items-center gap-2">
+        <select aria-label="Remind me every" value={days} onChange={(e) => setDays(Number(e.target.value))} className="flex-1 min-h-[44px] rounded-xl bg-black/40 border border-white/15 px-3 text-white outline-none focus-visible:ring-2 focus-visible:ring-white/70">
+          {[7, 14, 30, 60, 90].map((d) => <option key={d} value={d}>Every {d} days</option>)}
+        </select>
+        <button type="button" disabled={st === 'busy'} onClick={async () => { setSt('busy'); setErr(''); try { await addReminder(reference, days); setSt('done'); } catch (e: any) { setErr(e.message); setSt('idle'); } }}
+          className="min-h-[44px] px-4 rounded-xl bg-primary text-black text-[13px] font-black disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-white/70">{st === 'busy' ? 'Saving…' : 'Set reminder'}</button>
+      </div>
+      {err && <p role="alert" className="text-xs text-red-300 mt-2">{err}</p>}
+    </div>
+  );
+}
 
 export default function PayResult() {
   const [params] = useSearchParams();
@@ -114,6 +138,7 @@ export default function PayResult() {
             {state === 'ok' && !o?.token && !o?.pins?.length && o?.service !== 'tv' && <p className="text-sm text-white/70 mt-4">It has been sent. It can take a minute to show on the phone.</p>}
             {state === 'fail' && <p className="text-sm text-white/75 mt-4">{o?.payMethod === 'wallet' ? (o.refundStatus === 'refunded' ? 'Your money has been returned to your wallet.' : 'We are returning your money to your wallet.') : (REFUND[o?.refundStatus ?? 'required'] ?? REFUND.required)}</p>}
             {state === 'unpaid' && <p className="text-sm text-white/75 mt-4">No money was taken. You can try again.</p>}
+            {state === 'ok' && o && o.service !== 'exam' && <RemindMe reference={o.reference} />}
             {o?.payMethod === 'wallet' && (state === 'ok' || stillWorking) && <p className="text-xs text-white/55 mt-3">Paid from your wallet.</p>}
             {state === 'check' && <p className="text-sm text-white/75 mt-4">The amount paid did not match this purchase. We will sort it out and contact you.</p>}
             {stillWorking && <p className="text-xs text-white/55 mt-4">This can take up to a minute. You can keep this page open.</p>}
