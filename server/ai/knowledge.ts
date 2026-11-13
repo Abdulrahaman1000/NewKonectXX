@@ -16,6 +16,7 @@ import siteContent from "./siteContent.json";
 import { GIFT_THRESHOLD, GIFT_WINDOW_DAYS } from "../services/giftProgress";
 import type { KDoc } from "./retrieve";
 import { applyDeliveryPolicy } from "./deliveryPolicy";
+import { APP_DOCS } from "./appKnowledge"; // SC-KB
 
 const TTL_MS = 60_000;
 let cache: { at: number; docs: KDoc[] } | null = null;
@@ -202,7 +203,7 @@ export async function getKnowledge(): Promise<KDoc[]> {
         ((categories as any[]).length
           ? ` Categories: ${(categories as any[]).map((c) => cut(c.name, 40)).join(", ")}.`
           : "") +
-        " Customers can also build their own combo, win a free gift as they spend, and become partners to earn commission.",
+        " Customers can also build their own combo, win a free gift as they spend, pay bills (airtime, data, electricity, TV and exam pins), keep a Smart Combo wallet, and become partners to earn commission.",
     });
   }
 
@@ -309,6 +310,7 @@ export async function getKnowledge(): Promise<KDoc[]> {
     });
   }
 
+  docs.push(...APP_DOCS); // SC-KB bills, wallet, account, instalments, bulk, pre-order
   applyDeliveryPolicy(docs);
   cache = { at: Date.now(), docs };
   return docs;

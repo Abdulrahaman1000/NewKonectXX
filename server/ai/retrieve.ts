@@ -18,6 +18,10 @@ export interface KDoc {
   price?: number;
   /** For lists built from the catalogue: ids of the combos listed, in order. */
   refs?: string[];
+  /** SC-KB buttons shown under an answer that used this entry */
+  actions?: { label: string; link: string }[];
+  /** SC-KB tappable next questions */
+  followUps?: string[];
 }
 
 const STOP = new Set(
@@ -104,7 +108,20 @@ const INTENTS: { ids?: string[]; prefix?: string; words: string[] }[] = [
     prefix: "order:",
     words: ["track", "tracking", "my order", "order number", "order status", "status", "where is my", "how to order", "how do i order", "place an order", "checkout", "how to buy", "how do i buy", "shipped", "delivered"],
   },
-  { prefix: "site:", words: ["return", "refund", "warranty", "guarantee", "privacy", "data", "terms", "policy", "exchange", "damaged", "faulty", "cancel"] },
+  // SC-KB paying bills, wallet, account, instalments
+  { ids: ["bills:tv"], words: ["dstv", "gotv", "startimes", "showmax", "cable", "tv", "decoder", "smartcard", "bouquet"] },
+  { ids: ["bills:electricity"], words: ["electricity", "light", "nepa", "prepaid", "postpaid", "meter", "token", "disco"] },
+  { ids: ["bills:exam"], words: ["waec", "jamb", "neco", "exam", "pin", "gce", "result checker"] },
+  { ids: ["bills:data"], words: ["data", "bundle", "gb", "mb"] },
+  { ids: ["bills:airtime"], words: ["airtime", "recharge"] },
+  { ids: ["bills:problem"], words: ["fail", "failed", "pending", "not come", "did not", "didnt", "didn't", "missing", "not received", "stuck", "never", "not arrive", "not show"] },
+  { ids: ["wallet:fund"], words: ["fund", "add money", "top up", "topup", "deposit"] },
+  { ids: ["wallet:pay"], words: ["pay from", "wallet balance", "use my wallet"] },
+  { prefix: "bills:", words: ["airtime", "recharge", "data", "bundle", "mtn", "airtel", "glo", "9mobile", "electricity", "light", "nepa", "prepaid", "postpaid", "meter", "token", "dstv", "gotv", "startimes", "showmax", "cable", "tv", "waec", "jamb", "neco", "exam", "pin", "bill", "vtu", "subscription", "decoder", "smartcard", "pay bills"] },
+  { prefix: "wallet:", words: ["wallet", "balance", "fund", "add money", "top up", "topup", "deposit", "withdraw"] },
+  { prefix: "account:", words: ["sign in", "signin", "login", "log in", "account", "otp", "verification", "spending", "spent", "reminder", "remind", "renew", "renewal", "buy again", "history"] },
+  { prefix: "shop:", words: ["instalment", "installment", "pay small", "part payment", "pay later", "in parts", "bulk", "wholesale", "pre-order", "preorder", "pre order", "carton", "dozen", "many pieces"] },
+  { prefix: "site:", words: ["return", "refund", "warranty", "guarantee", "privacy", "terms", "policy", "exchange", "damaged", "faulty", "cancel"] },
 ];
 
 const BROWSE = /\b(available|in stock|what do you (have|sell)|products?|catalog(ue)?|list|options?|show me|everything)\b/i;

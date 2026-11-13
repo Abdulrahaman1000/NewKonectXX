@@ -30,6 +30,10 @@ import { AIProductCards } from '@/components/AIProductCards';
 const QUICK = ['Is this available?', 'How long is delivery?', 'Can I get a discount?'];
 const AI_STARTERS = [
   'What can I buy within ₦50,000?',
+  'How do I buy data or airtime?', // SC-KB
+  'How do I add money to my wallet?',
+  'How do I track my order?',
+  'Can I pay in instalments?',
   'How does the combo offer work?',
   'How do I get the free gift?',
   'What is your delivery fee?',
@@ -45,6 +49,8 @@ interface AIMsg {
   cards?: AICard[];
   needsHuman?: boolean;
   direct?: boolean;
+  actions?: { label: string; link: string }[]; // SC-KB
+  followUps?: string[];
 }
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -223,6 +229,8 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
             text: r.answer,
             sources: r.sources,
             cards: r.cards ?? [],
+            actions: r.actions ?? [], // SC-KB
+            followUps: r.followUps ?? [],
             needsHuman: r.needsHuman,
             direct: r.mode === 'direct',
           },
@@ -267,7 +275,7 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
             <div className="rounded-2xl bg-muted p-4">
               <p className="font-bold">Hi, I'm the Smart Combo assistant 👋</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Ask me about our combos, prices, free gifts or delivery. I only answer from what's
+                Ask me about combos, paying bills, your wallet, delivery and more. I only answer from what's
                 really in our shop.
               </p>
             </div>
@@ -302,6 +310,26 @@ function AIChat({ onHuman, whatsappLink }: { onHuman: (q?: string) => void; what
               </div>
 
               {hasCards && <AIProductCards cards={m.cards!} onNavigate={close} />}
+
+              {/* SC-KB buttons to the right page, then tappable next questions */}
+              {!mine && m.actions && m.actions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {m.actions.map((a) => (
+                    <Link key={a.link} to={a.link} onClick={close} className="px-4 h-10 rounded-full bg-primary text-primary-foreground text-sm font-bold inline-flex items-center">
+                      {a.label} ›
+                    </Link>
+                  ))}
+                </div>
+              )}
+              {!mine && !busy && m.followUps && m.followUps.length > 0 && m.id === messages[messages.length - 1]?.id && (
+                <div className="mt-2 flex flex-wrap gap-2 max-w-[92%]">
+                  {m.followUps.map((f) => (
+                    <button key={f} type="button" onClick={() => void ask(f, messages)} className="px-3 py-2 rounded-full border border-primary/40 text-sm text-primary text-left hover:bg-primary/10">
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {!mine && m.direct && (
                 <p className="mt-1 text-[10px] text-muted-foreground">Quick answer from our info pages</p>

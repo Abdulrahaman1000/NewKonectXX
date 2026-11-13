@@ -26,6 +26,9 @@ export interface AIReply {
   sources: AISource[];
   cards?: AICard[];
   needsHuman: boolean;
+  /** SC-KB buttons and tappable next questions */
+  actions?: { label: string; link: string }[];
+  followUps?: string[];
   /** "direct" = built from our own pages because the AI was unavailable */
   mode?: "ai" | "direct" | "list";
 }

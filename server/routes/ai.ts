@@ -102,7 +102,7 @@ router.post("/chat", async (req: Request, res: Response) => {
       return res.json({
         data: {
           answer:
-            "Hi! 👋 I can help with our combos, prices, free gifts and delivery. What would you like to know?",
+            "Hi! 👋 I can help with our combos, paying bills (airtime, data, electricity, TV), your wallet, free gifts and delivery. What would you like to know?",
           sources: [],
           cards: [],
           needsHuman: false,
@@ -118,7 +118,7 @@ router.post("/chat", async (req: Request, res: Response) => {
       return res.json({
         data: {
           answer:
-            "I don't have that information. I can help with our combos, prices, free gifts and delivery, or you can talk to our team.",
+            "I don't have that information. I can help with our combos, paying bills, your wallet, free gifts and delivery, or you can talk to our team.",
           sources: [],
           cards: [],
           needsHuman: true,
@@ -137,6 +137,18 @@ router.post("/chat", async (req: Request, res: Response) => {
           return { id: d.id, title: d.title, link: d.link ?? null };
         });
 
+    // SC-KB Buttons (from the entries used) and tappable next questions
+    const extras = (ids: string[], modelFollowUps: string[] = []) => {
+      const docsUsed = ids.map((id) => byId.get(id) ?? everything.get(id)).filter(Boolean) as any[];
+      const seen = new Set<string>();
+      const actions: { label: string; link: string }[] = [];
+      for (const dd of docsUsed) for (const a of dd.actions ?? []) if (!seen.has(a.link) && actions.length < 3) { seen.add(a.link); actions.push(a); }
+      const asked = last.text.trim().toLowerCase();
+      const clean = (list: string[]) => list.map((s) => String(s).trim()).filter((s) => s.length > 3 && s.length <= 60 && s.toLowerCase() !== asked);
+      let followUps = clean(modelFollowUps).slice(0, 3);
+      if (!followUps.length) followUps = clean(docsUsed.find((dd) => dd.followUps?.length)?.followUps ?? []).slice(0, 3);
+      return { actions, followUps };
+    };
     // Product cards (photo, name, price) for the combos among these ids.
     // Built from the shop's own data, not written by the AI.
     const images = await getComboImages();
@@ -184,7 +196,7 @@ router.post("/chat", async (req: Request, res: Response) => {
         }
 
         return res.json({
-          data: { answer, sources: toSources(list.refs), cards, needsHuman: false, mode: "list" },
+          data: { answer, sources: toSources(list.refs), cards, needsHuman: false, mode: "list", ...extras(list.refs) },
         });
       }
     }
@@ -202,6 +214,7 @@ router.post("/chat", async (req: Request, res: Response) => {
           cards: toCards(d.sourceIds, 4),
           needsHuman: false,
           mode: "direct",
+          ...extras(d.sourceIds),
         },
       };
     };
@@ -243,6 +256,7 @@ router.post("/chat", async (req: Request, res: Response) => {
       cards: toCards(result.sources, 4),
       needsHuman: result.needsHuman || !result.answer,
       mode: "ai",
+      ...extras(result.sources, result.followUps),
     };
     if (cacheKey && result.answer) cacheSet(cacheKey, data);
     res.json({ data });
