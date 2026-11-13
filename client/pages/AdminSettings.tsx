@@ -387,7 +387,7 @@ export default function AdminSettings() {
         </Section>
 
         {/* SC-TOUR Welcome tour video */}
-        <Section title="Welcome tour video" subtitle="A popup with your video, shown once to every new visitor on any page. After you upload a NEW video it shows again to everyone once. Click Save settings when done.">
+        <Section title="Welcome tour video" subtitle="A popup with your video, shown full-screen like an ad to every visitor once every 24 hours, and straight away to everyone when you upload a NEW video. Click Save settings when done.">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={!!form.welcomeVideo?.enabled} onChange={(e) => set('welcomeVideo.enabled', e.target.checked)} className="w-4 h-4" />
             <span className="text-sm text-white">Show the welcome tour to new visitors</span>
