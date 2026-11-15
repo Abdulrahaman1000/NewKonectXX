@@ -11,6 +11,7 @@ const MAP: [string, string | null][] = [
   ["/admin/ads", "ads.use"],
   ["/admin/faqs", "faqs.use"],
   ["/admin/chats", "chats.use"],
+  ["/admin/vtu-lookup", "vtu.lookup"], // SC-SUPPORT
   ["/admin/expenses", "expenses.use"],
   ["/admin/reports", "reports.view"],
 ];

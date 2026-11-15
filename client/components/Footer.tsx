@@ -1,11 +1,15 @@
 import { Link } from 'react-router-dom';
 import { Mail, MapPin, MessageCircle, Phone } from 'lucide-react';
 import { useSettings } from '@/contexts/SettingsContext';
+import { useQuery } from '@tanstack/react-query'; // SC-TOURLINK
+import { openTour } from '@/lib/tourState';
+import { fetchWelcomeVideo } from '@/api/welcomeVideo';
 import Logo from '@/components/shared/Logo';
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
   const { settings } = useSettings();
+  const { data: tourVideo } = useQuery({ queryKey: ['welcome-video-link'], queryFn: fetchWelcomeVideo, staleTime: 5 * 60 * 1000 }); // SC-TOURLINK
 
   const storeName = settings?.storeName ?? 'Smart Combo';
   const tagline = settings?.tagline ?? 'Premium lifestyle gadgets for the modern professional.';
@@ -50,6 +54,7 @@ export function Footer() {
               <li><Link to="/" className="text-foreground/70 hover:text-primary transition-colors">Home</Link></li>
               <li><Link to="/products" className="text-foreground/70 hover:text-primary transition-colors">Products</Link></li>
               <li><Link to="/order-tracking" className="text-foreground/70 hover:text-primary transition-colors">Track Order</Link></li>
+              {tourVideo && <li><button type="button" onClick={openTour} className="text-foreground/70 hover:text-primary transition-colors">Watch the tour</button></li>} {/* SC-TOURLINK */}
               <li><Link to="/contact" className="text-foreground/70 hover:text-primary transition-colors">Contact Us</Link></li>
             </ul>
           </div>

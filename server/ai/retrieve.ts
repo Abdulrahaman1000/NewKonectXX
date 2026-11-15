@@ -254,7 +254,8 @@ export function directAnswer(r: Retrieval): { text: string; sourceIds: string[] 
   const body = picked
     .map((d) => (d.type === "faq" ? `${d.title}\n${d.text}` : `${d.title}: ${d.text}`))
     .join("\n\n");
-  return { text: `Here's what I have on that:\n\n${body}`, sourceIds: picked.map((d) => d.id) };
+  // SC-BUSY
+  return { text: `Our assistant is a bit busy right now, but here is what I can tell you straight away:\n\n${body}\n\nIf that is not what you needed, please ask again in a minute.`, sourceIds: picked.map((d) => d.id) };
 }
 
 

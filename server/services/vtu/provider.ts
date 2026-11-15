@@ -53,6 +53,8 @@ export interface VtuProvider {
   examTypes?(): ExamType[];
   examProducts?(exam: string): Promise<ExamProduct[]>;
   verifyProfile?(p: { exam: string; product: string; profile: string }): Promise<CardCheck>;
+  /** SC-LOWBAL optional: the money left in our account with the provider (naira), or null if unknown */
+  balance?(): Promise<number | null>;
   buy(req: BuyRequest): Promise<BuyResult>;
   query(reference: string, requestId?: string): Promise<QueryResult>;
 }

@@ -303,6 +303,16 @@ export class VtpassProvider implements VtuProvider {
     return this.interpret(await this.post("/pay", { request_id, serviceID: d.id, billersCode: req.meter.number, variation_code: req.meter.type, amount: req.amount, phone: req.phone }), req.amount);
   }
 
+  /** SC-LOWBAL GET /api/balance  ->  { code: 1, contents: { balance: 1081.82 } } */
+  async balance(): Promise<number | null> {
+    try {
+      const res = await this.fetchFn(`${base()}/balance`, { headers: { "api-key": env("VTPASS_API_KEY"), "public-key": env("VTPASS_PUBLIC_KEY") }, signal: AbortSignal.timeout(15000) });
+      const j: any = await res.json();
+      const n = Number(j?.contents?.balance);
+      return Number.isFinite(n) ? n : null;
+    } catch { return null; }
+  }
+
   async query(reference: string, requestId?: string): Promise<QueryResult> {
     if (!requestId) return { status: "not_found", message: "No VTpass reference was saved for this purchase." };
     const j = await this.post("/requery", { request_id: requestId }, 25000);

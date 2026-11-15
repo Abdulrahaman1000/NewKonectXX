@@ -18,6 +18,7 @@ import vtuRouter from "./routes/vtu"; // SC-VTU
 import walletRouter from "./routes/wallet"; // SC-WAL
 import remindersRouter from "./routes/reminders"; // SC-REM
 import adminWalletRouter from "./routes/admin/wallet"; // SC-WAL
+import adminVtuLookupRouter from "./routes/admin/vtuLookup"; // SC-SUPPORT
 import adminVtuRouter from "./routes/admin/vtu"; // SC-VTU
 import accountRouter from "./routes/account"; // SC-ACCT
 import giftRoutes from "./routes/admin/giftRoutes";
@@ -130,6 +131,7 @@ app.use("/api/reminders", remindersRouter); // SC-REM
   app.use("/api/admin/withdrawals", requireAuth, adminWithdrawalsRouter);
   app.use("/api/admin/profit", requireAuth, adminProfitRouter);
   app.use("/api/admin/fulfilment", requireAuth, adminFulfilmentRouter);
+  app.use("/api/admin/vtu-lookup", requireAuth, adminVtuLookupRouter); // SC-SUPPORT
   app.use("/api/admin/vtu", requireAuth, adminVtuRouter); // SC-VTU
 app.use("/api/admin/wallet", requireAuth, adminWalletRouter); // SC-WAL
   app.use("/api/admin/to-get", requireAuth, adminToGetRouter);

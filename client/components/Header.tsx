@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronDown, CreditCard, Menu, Search, ShoppingCart, Sparkles, User, X } from 'lucide-react';
+import { ChevronDown, CreditCard, Menu, Play, Search, ShoppingCart, Sparkles, User, X } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useCart } from '@/stores/cart';
@@ -9,6 +9,8 @@ import { SearchBar } from '@/components/shared/SearchBar';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import Logo from '@/components/shared/Logo';
 import { showAccountLinks, useVtuEnabled } from '@/hooks/useVtuEnabled';
+import { openTour } from '@/lib/tourState'; // SC-TOURLINK
+import { fetchWelcomeVideo } from '@/api/welcomeVideo';
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false);
@@ -19,6 +21,7 @@ export function Header() {
   const { settings } = useSettings();
   const storeName = settings?.storeName ?? 'Smart Combo';
   const vtuOn = useVtuEnabled();
+  const { data: tourVideo } = useQuery({ queryKey: ['welcome-video-link'], queryFn: fetchWelcomeVideo, staleTime: 5 * 60 * 1000 }); // SC-TOURLINK
 
   const { data: categories = [] } = useQuery({
     queryKey: ['categories'],
@@ -30,21 +33,22 @@ export function Header() {
   return (
     <>
     <header className="sticky top-0 z-40 glass-card border-b border-[rgba(255,255,255,0.1)]">
-      <div className="container-premium">
+      {/* SC-HEADER2 */}
+      <div className="container-premium" style={{ maxWidth: 1480 }}>
         <div className="flex items-center justify-between h-20 gap-3 md:gap-4 px-4 md:px-0">
           <Link to="/" className="flex items-center gap-2 group flex-shrink-0">
             <Logo variant="header" alt={storeName} className="h-11 md:h-14 w-auto transition-transform group-hover:scale-105" />
           </Link>
 
           {/* Desktop search bar */}
-          <div className="hidden md:block flex-1 max-w-md">
+          <div className="hidden md:block flex-1 min-w-[120px] max-w-md">
             <SearchBar variant="inline" />
           </div>
 
-          <nav className="hidden lg:flex items-center gap-5" aria-label="Primary">
+          <nav className="hidden lg:flex items-center gap-4 xl:gap-5 whitespace-nowrap shrink-0" aria-label="Primary">
             <Link
               to="/"
-              className="text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
+              className="hidden xl:inline text-sm font-medium text-foreground/80 hover:text-primary transition-colors"
             >
               Home
             </Link>
@@ -119,6 +123,12 @@ export function Header() {
             >
               Track Order
             </Link>
+            {tourVideo && (
+              <button type="button" onClick={openTour} aria-label="Watch the tour" title="Watch the tour" className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 hover:text-primary transition-colors">
+                <Play className="w-3.5 h-3.5" />
+                <span className="hidden 2xl:inline">Watch the tour</span>
+              </button>
+            )} {/* SC-TOURLINK */}
 
             <Link
               to="/products?mode=combo-builder"
@@ -129,7 +139,7 @@ export function Header() {
             </Link>
           </nav>
 
-          <div className="hidden md:flex items-center gap-3 flex-shrink-0">
+          <div className="hidden md:flex items-center gap-3 flex-shrink-0 whitespace-nowrap">
             <ThemeToggle />
             {showAccountLinks && (
               <Link to="/account" aria-label="My account" className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 hover:text-primary transition-colors">
@@ -228,6 +238,12 @@ export function Header() {
               </Link>
             ))}
             <Link to="/order-tracking" onClick={toggleMenu} className="block py-2 text-sm">Track Order</Link>
+            {tourVideo && (
+              <button type="button" onClick={() => { toggleMenu(); openTour(); }} className="flex items-center gap-1.5 py-2 text-sm font-bold text-primary w-full text-left">
+                <Play className="w-3.5 h-3.5" />
+                Watch the tour
+              </button>
+            )} {/* SC-TOURLINK */}
             {vtuOn && (
               <Link to="/pay" onClick={toggleMenu} className="flex items-center gap-1.5 py-2 text-sm font-bold text-primary">
                 <CreditCard className="w-3.5 h-3.5" />

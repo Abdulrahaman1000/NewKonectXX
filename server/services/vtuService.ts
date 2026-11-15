@@ -64,9 +64,36 @@ export async function activeProvider(s?: any): Promise<VtuProvider | null> {
 
 /** SC-PROV  Admin > VTU > Provider: what is ready, which one is in use, and any "fix your setup" warning. */
 export async function adminProviders() {
+  await checkBalance(true); // SC-LOWBAL
   const s = await getSettings();
   const p = await activeProvider(s);
   return { active: p?.name ?? "", chosen: s.activeProvider || "", providers: listProviders(), alert: s.providerAlert ?? null };
+}
+
+/**
+ * SC-LOWBAL  Warns the owner (the red banner in Admin > VTU) when the money we hold with the provider is running low.
+ * Limit: VTPASS_LOW_BALANCE in the server .env (naira, default 5000, 0 turns it off). Asks the provider at most every 10 minutes.
+ * Never throws: a failed check must never break a purchase.
+ */
+let lastBalanceCheck = 0;
+export async function checkBalance(force = false) {
+  try {
+    const limit = Number(process.env.VTPASS_LOW_BALANCE ?? 5000);
+    if (!(limit > 0)) return;
+    if (!force && Date.now() - lastBalanceCheck < 10 * 60 * 1000) return;
+    if (force && Date.now() - lastBalanceCheck < 60 * 1000) return;
+    lastBalanceCheck = Date.now();
+    const s = await getSettings();
+    const p = await activeProvider(s);
+    if (!p?.balance) return;
+    const bal = await p.balance();
+    if (bal === null) return;
+    if (bal < limit) {
+      await raiseAlert(p.name, "LOWBAL", `Your ${p.name} balance is low: \u20A6${Math.round(bal).toLocaleString("en-NG")} left (warning limit \u20A6${limit.toLocaleString("en-NG")}).${p.simulated ? " This is the test wallet." : ""} Add money on the ${p.name} website so customers can keep buying.`);
+    } else if (s.providerAlert?.code === "LOWBAL") {
+      await (VtuSetting as any).findOneAndUpdate({ key: "main" }, { $set: { providerAlert: null } });
+    }
+  } catch { /* never block anything */ }
 }
 
 export async function setActiveProvider(name: string) {
@@ -344,6 +371,7 @@ const apply = async (reference: string, r: BuyResult) => {
   if (r.status === "success") {
     const plain = o?.service === "tv" || o?.service === "exam"; // no electricity token for these
     await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "successful", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "", token: plain ? "" : r.token ?? "", units: plain ? "" : r.units ?? "", ...(hasPins ? { pins: r.pins ?? [] } : {}), ...(r.cost ? { cost: r.cost } : {}) } });
+    void checkBalance(); // SC-LOWBAL
   } else if (r.status === "failed") {
     await (VtuOrder as any).findOneAndUpdate({ reference }, { $set: { fulfilmentStatus: "failed", providerReference: r.providerReference ?? "", providerCode: code, providerMessage: r.message ?? "Failed", refundStatus: "required" } });
     if (r.setupProblem) await raiseAlert(o?.provider || "", code, `${o?.provider || "The provider"} refused a purchase (code ${code}). The customer is being refunded. Fix this before selling more.`);

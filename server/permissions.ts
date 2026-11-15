@@ -3,19 +3,21 @@
  * The server sends each user's permission list to the browser, so the menu
  * and the server can never disagree.
  */
-export type StaffRole = "packer" | "sales" | "content" | "bookkeeper" | "manager";
-export const STAFF_ROLES: StaffRole[] = ["packer", "sales", "content", "bookkeeper", "manager"];
+export type StaffRole = "packer" | "sales" | "content" | "bookkeeper" | "manager" | "support"; // SC-SUPPORT
+export const STAFF_ROLES: StaffRole[] = ["packer", "sales", "content", "bookkeeper", "manager", "support"];
 export const ROLE_LABELS: Record<StaffRole, string> = {
   packer: "Packer / dispatch",
   sales: "Sales assistant (WhatsApp)",
   content: "Content / marketing",
   bookkeeper: "Bookkeeper",
   manager: "Manager",
+  support: "Customer support (find purchases)",
 };
 
 const PACKER = ["fulfilment.use", "stock.use"];
 const SALES = ["sale.record", "orders.view", "chats.use", "faqs.use"];
 const CONTENT = ["products.edit", "slides.use", "testimonials.use", "ads.use"];
+const SUPPORT = ["vtu.lookup"]; // SC-SUPPORT read-only purchase lookup, no cost or profit
 const BOOKKEEPER = ["expenses.use", "reports.view"]; // pages for these come later
 
 export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
@@ -23,7 +25,8 @@ export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
   sales: SALES,
   content: CONTENT,
   bookkeeper: BOOKKEEPER,
-  manager: [...PACKER, ...SALES, ...CONTENT, "partners.approve"],
+  support: SUPPORT,
+  manager: [...PACKER, ...SALES, ...CONTENT, ...SUPPORT, "partners.approve"],
 };
 
 export function isOwnerRole(role?: string): boolean {
@@ -72,6 +75,7 @@ export function requiredFor(method: string, path: string): string[] | null {
     case "ads": return ["ads.use"];
     case "faqs": return ["faqs.use"];
     case "chats": return ["chats.use"];
+    case "vtu-lookup": return ["vtu.lookup"]; // SC-SUPPORT
     case "bookkeeping":
       // expenses (and the expenses export) need expenses.use; sales reports and exports need reports.view
       return p.includes("expenses") ? ["expenses.use"] : ["reports.view"];

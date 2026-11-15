@@ -24,6 +24,7 @@ import OrderConfirmation from './pages/OrderConfirmation';
 import OrderTracking from './pages/OrderTracking';
 import Pay from './pages/Pay'; // SC-VTU
 import PayResult from './pages/PayResult'; // SC-VTU
+import AdminVtuLookup from './pages/AdminVtuLookup'; // SC-SUPPORT
 import AdminVtu from './pages/AdminVtu'; // SC-VTU
 import Account from './pages/Account'; // SC-ACCT
 import Dashboard from './pages/Dashboard';
@@ -115,6 +116,7 @@ const App = () => (
                   <Route path="/wallet" element={<Wallet />} />
                   <Route path="/spending" element={<Spending />} /> {/* SC-SPEND */}
                   <Route path="/reminders" element={<Reminders />} /> {/* SC-REM */}
+                  <Route path="/admin/vtu-lookup" element={<AdminProtectedRoute perm="vtu.lookup"><AdminVtuLookup /></AdminProtectedRoute>} /> {/* SC-SUPPORT */}
                   <Route path="/admin/vtu" element={<AdminProtectedRoute perm="owner"><AdminVtu /></AdminProtectedRoute>} />
                   <Route path="/admin/wallet" element={<AdminProtectedRoute perm="owner"><AdminWallet /></AdminProtectedRoute>} /> {/* SC-WAL */}
                   <Route path="/account" element={<Account />} />
