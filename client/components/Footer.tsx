@@ -19,7 +19,7 @@ export function Footer() {
   const phone = settings?.contact.phone ?? '';
   const address = settings?.contact.address ?? '';
 
-  if (isInApp()) return null; // SC-INAPP no footer inside the phone app
+  if (isInApp() || (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches)) return null; // SC-FOOTMOBILE // SC-INAPP no footer inside the phone app
 
   return (
     <footer className="border-t border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.2)] pb-20 md:pb-0">
