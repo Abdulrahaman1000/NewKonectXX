@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Play, Volume2, VolumeX, X } from 'lucide-react';
 import { fetchWelcomeVideo } from '@/api/welcomeVideo';
 import { setTourOpen } from '@/lib/tourState';
+import { isInApp } from '@/lib/inApp'; // SC-TOURSOUND
 
 const SEEN_KEY = 'sc_tour_last'; // { t: time it was closed, v: video version }
 const EVERY_MS = 24 * 60 * 60 * 1000;
@@ -18,6 +19,8 @@ function youTubeId(url: string): string | null {
   const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
   return m ? m[1] : null;
 }
+// SC-TOURSOUND: in the phone app the tour starts with sound (YouTube links stay muted).
+const startMuted = (url?: string) => !isInApp() || !!(url && youTubeId(url));
 const posterOf = (poster: string, url: string) =>
   poster || (url.includes('res.cloudinary.com') ? url.replace(/\.(mp4|mov|webm|m4v)(\?.*)?$/i, '.jpg') : '');
 
@@ -40,13 +43,13 @@ export function WelcomeVideoModal() {
     const forced = new URLSearchParams(search).get('tour') === '1';
     const seen = readSeen();
     if (!forced && seen.v >= data.version && Date.now() - seen.t < EVERY_MS) return;
-    const t = setTimeout(() => { setMuted(true); setBlocked(false); setProgress(0); setOpen(true); }, 1000);
+    const t = setTimeout(() => { setMuted(startMuted(data.url)); setBlocked(false); setProgress(0); setOpen(true); }, 1000);
     return () => clearTimeout(t);
   }, [data, skip, search]);
 
   // "Watch the tour" buttons anywhere on the site.
   useEffect(() => {
-    const h = () => { if (data) { setMuted(true); setBlocked(false); setProgress(0); setOpen(true); } };
+    const h = () => { if (data) { setMuted(startMuted(data.url)); setBlocked(false); setProgress(0); setOpen(true); } };
     window.addEventListener('sc-open-tour', h);
     return () => window.removeEventListener('sc-open-tour', h);
   }, [data]);
@@ -69,7 +72,12 @@ export function WelcomeVideoModal() {
   useEffect(() => {
     if (!open || !video.current) return;
     const p = video.current.play();
-    if (p && typeof p.catch === 'function') p.catch(() => setBlocked(true));
+    if (p && typeof p.catch === 'function') p.catch(() => {
+      const v = video.current;
+      // SC-TOURSOUND: Android refused sound, so fall back to muted (the sound button still works).
+      if (isInApp() && v && !v.muted) { v.muted = true; setMuted(true); v.play().catch(() => setBlocked(true)); }
+      else setBlocked(true);
+    });
   }, [open]);
 
   if (!open || !data) return null;
