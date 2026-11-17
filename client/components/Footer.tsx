@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'; // SC-TOURLINK
 import { openTour } from '@/lib/tourState';
 import { fetchWelcomeVideo } from '@/api/welcomeVideo';
 import Logo from '@/components/shared/Logo';
+import { isInApp } from '@/lib/inApp'; // SC-INAPP
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -17,6 +18,8 @@ export function Footer() {
   const email = settings?.contact.email ?? '';
   const phone = settings?.contact.phone ?? '';
   const address = settings?.contact.address ?? '';
+
+  if (isInApp()) return null; // SC-INAPP no footer inside the phone app
 
   return (
     <footer className="border-t border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.2)] pb-20 md:pb-0">
